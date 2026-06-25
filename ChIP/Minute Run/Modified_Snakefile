@@ -1,0 +1,934 @@
+#! bin/env/python
+import os
+import sys
+
+from minute import se_bam
+from minute import (
+    read_libraries,
+    read_scaling_groups,
+    parse_flagstat,
+    compute_scaling,
+    parse_duplication_metrics,
+    parse_insert_size_metrics,
+    parse_stats_fields,
+    read_int_from_file,
+    compute_genome_size,
+    get_sample_replicates,
+    format_metadata_overview,
+    is_snakemake_calling_itself,
+    map_fastq_prefix_to_list_of_libraries,
+    make_references,
+    flatten_scaling_groups,
+    get_all_pools,
+    get_all_replicates,
+    get_maplib_by_name,
+    Pool,
+    MultiplexedReplicate,
+    estimate_library_size,
+)
+
+from xopen import xopen
+
+configfile: "minute.yaml"
+
+
+localrules: 
+    final,
+    multiqc,
+    clean,
+    barcodes,
+    remove_exclude_regions,
+    summarize_scaling_factors,
+    extract_fragment_size,
+    pooled_stats,
+    pooled_stats_summary,
+    replicate_stats,
+    replicate_stats_summary,
+    convert_to_single_end,
+    mark_duplicates,
+    samtools_index,
+    samtools_flagstat,
+    samtools_flagstat_final,
+    insert_size_metrics,
+
+
+references = make_references(config["references"], config.get("aligner", "bowtie2"))
+libraries = list(read_libraries("libraries.tsv"))
+multiplexed_libraries = [lib for lib in libraries if isinstance(lib, MultiplexedReplicate)]
+direct_libraries = [lib for lib in libraries if not isinstance(lib, MultiplexedReplicate)]
+scaling_groups = list(read_scaling_groups("groups.tsv", libraries))
+maplibs = list(flatten_scaling_groups(scaling_groups))
+
+if not is_snakemake_calling_itself():
+    print(format_metadata_overview(references, libraries, maplibs, scaling_groups), file=sys.stderr)
+
+multiqc_unscaled_inputs = (
+    [
+        "reports/stats_summary.txt",
+        "reports/pooled_stats_summary.txt"
+    ]
+    + expand("reports/fastqc/{library.fastqbase}_R{read}_fastqc/fastqc_data.txt", library=multiplexed_libraries, read=(1, 2))
+    + expand("log/2-noadapters/{library.fastqbase}.trimmed.log", library=multiplexed_libraries)
+    + expand("log/4-mapped/{maplib.name}.log", maplib=get_all_replicates(maplibs))
+    + expand("stats/7-dupmarked/{maplib.name}.metrics", maplib=get_all_replicates(maplibs))
+    + expand("stats/final/{maplib.name}.insertsizes.txt", maplib=get_all_replicates(maplibs))
+    + expand("stats/final/{maplib.name}.idxstats.txt", maplib=[m for m in maplibs])
+)
+
+multiqc_inputs = (
+    multiqc_unscaled_inputs
+    + [
+        "reports/scalinginfo.txt",
+        "reports/scaling_barplot.png",
+        "reports/grouped_scaling_barplot.png",
+        "reports/barcode_representation.png",
+        "reports/barcode_representation_perc.png"
+    ]
+)
+
+unscaled_bigwigs = expand("final/bigwig/{maplib.name}.unscaled.bw", maplib=maplibs)
+bigwigs = (
+    unscaled_bigwigs
+    + expand("final/bigwig/{maplib.name}.scaled.bw",
+        maplib=flatten_scaling_groups(scaling_groups, controls=False))
+)
+mapping_quality_bigwigs = (
+    expand("final/bigwig/{maplib.name}.unscaled.mapq.bw", maplib=maplibs)
+    + expand("final/bigwig/{maplib.name}.scaled.mapq.bw",
+        maplib=flatten_scaling_groups(scaling_groups, controls=False))
+)
+pool_bigwigs = (
+    expand("final/bigwig/{maplib.name}.unscaled.bw", maplib=get_all_pools(maplibs))
+    + expand("final/bigwig/{maplib.name}.scaled.bw",
+        maplib=get_all_pools(flatten_scaling_groups(scaling_groups, controls=False)))
+)
+
+rule final:
+    input:
+        bigwigs,
+        "reports/multiqc_report.html",
+
+
+rule quick:
+    input:
+        bigwigs,
+        "reports/multiqc_report.html",
+
+
+rule full:
+    input:
+        bigwigs,
+        "reports/multiqc_report_full.html",
+
+
+rule pooled_only:
+    input:
+        pool_bigwigs,
+        "reports/multiqc_report.html"
+
+
+rule mapq_bigwigs:
+    input:
+        bigwigs,
+        mapping_quality_bigwigs,
+        "reports/multiqc_report.html"
+
+
+rule no_bigwigs:
+    input:
+        "reports/multiqc_report.html",
+
+
+rule no_scaling:
+    input:
+        unscaled_bigwigs,
+        "reports/multiqc_report_unscaled.html"
+
+
+rule multiqc_full:
+    priority: 10
+    output: "reports/multiqc_report_full.html"
+    input:
+        multiqc_inputs,
+        expand("stats/final/{maplib.name}.fingerprint.log", maplib=maplibs),
+        expand("stats/final/{maplib.name}.fingerprint.metrics", maplib=maplibs),
+        multiqc_config=os.path.join(os.path.dirname(workflow.snakefile), "multiqc_config.yaml")
+    log:
+        "log/multiqc_report_full.log"
+    shell:
+        "multiqc -f -o reports/ -c {input.multiqc_config} {input} 'stats/final' 2> {log}"
+        " && "
+        " mv reports/multiqc_report.html {output}"
+
+
+rule multiqc:
+    priority: 10
+    output: "reports/multiqc_report.html"
+    input:
+        multiqc_inputs,
+        multiqc_config=os.path.join(os.path.dirname(workflow.snakefile), "multiqc_config.yaml")
+    log:
+        "log/multiqc_report.log"
+    shell:
+        "multiqc -f -o reports/ -c {input.multiqc_config} {input} 'stats/final' 2> {log}"
+
+
+rule multiqc_no_scaling:
+    priority: 10
+    output: "reports/multiqc_report_unscaled.html"
+    input:
+        multiqc_unscaled_inputs,
+        multiqc_config=os.path.join(os.path.dirname(workflow.snakefile), "multiqc_config.yaml")
+    log:
+        "log/multiqc_report_unscaled.log"
+    shell:
+        "multiqc -f -o reports/ -c {input.multiqc_config} {input} 'stats/final' 2> {log}"
+        " && "
+        " mv reports/multiqc_report.html {output}"
+
+
+rule clean:
+    shell:
+        "rm -rf"
+        " tmp"
+        " final"
+        " stats"
+        " reports"
+        " log"
+
+
+rule fastqc_input:
+    output:
+        html="reports/fastqc/{name}_fastqc.html",
+        zip=temp("reports/fastqc/{name}_fastqc.zip"),
+        data="reports/fastqc/{name}_fastqc/fastqc_data.txt",
+    input:
+        fastq="fastq/{name}.fastq.gz"
+    log:
+        "log/1-fastqc/{name}_fastqc.html.log"
+    shell:
+        "fastqc --extract -o reports/fastqc {input.fastq} > {log} 2>&1 "
+
+
+rule remove_contamination:
+    threads:
+        8
+    output:
+        r1=temp("tmp/2-noadapters/{name}.1.fastq.gz"),
+        r2=temp("tmp/2-noadapters/{name}.2.fastq.gz"),
+    input:
+        r1="fastq/{name}_R1.fastq.gz",
+        r2="fastq/{name}_R2.fastq.gz",
+    log:
+        "log/2-noadapters/{name}.trimmed.log"
+    shell:
+        "cutadapt"
+        " -j {threads}"
+        " -Z"
+        " -u {config[umi_length]}"
+        " --rename '{{id}}_{{r1.cut_prefix}} {{comment}}'"
+        " -e 0.15"
+        " -A TTTTTCTTTTCTTTTTTCTTTTCCTTCCTTCTAA"
+        " --nextseq-trim=20"
+        " --discard-trimmed"
+        " -o {output.r1}"
+        " -p {output.r2}"
+        " {input.r1}"
+        " {input.r2}"
+        " > {log}"
+
+
+rule barcodes:
+    """File with list of barcodes needed for demultiplexing"""
+    output:
+        barcodes_fasta=temp("tmp/3-barcodes/{fastqbase}.fasta")
+    run:
+        with open(output.barcodes_fasta, "w") as f:
+            for library in multiplexed_libraries:
+                if library.fastqbase != wildcards.fastqbase:
+                    continue
+                f.write(f">{library.name}\n^{library.barcode}\n")
+
+
+for fastq_base, libs in map_fastq_prefix_to_list_of_libraries(multiplexed_libraries).items():
+
+    rule:
+        output:
+            expand("final/demultiplexed/{library.name}_R{read}.fastq.gz", library=libs, read=(1, 2)),
+        input:
+            r1="tmp/2-noadapters/{fastqbase}.1.fastq.gz".format(fastqbase=fastq_base),
+            r2="tmp/2-noadapters/{fastqbase}.2.fastq.gz".format(fastqbase=fastq_base),
+            barcodes_fasta="tmp/3-barcodes/{fastqbase}.fasta".format(fastqbase=fastq_base),
+        params:
+            r1=lambda wildcards: "final/demultiplexed/{name}_R1.fastq.gz",
+            r2=lambda wildcards: "final/demultiplexed/{name}_R2.fastq.gz",
+            fastqbase=fastq_base,
+        threads: 8
+        log:
+            "log/3-demultiplexed/{fastqbase}.log".format(fastqbase=fastq_base)
+        shell:
+            "cutadapt"
+            " -j {threads}"
+            " -e {config[max_barcode_errors]}"
+            " --compression-level=4"
+            " -g file:{input.barcodes_fasta}"
+            " --rename '{{header}} barcode={{r1.match_sequence}}'"
+            " -o {params.r1}"
+            " -p {params.r2}"
+            " --discard-untrimmed"
+            " {input.r1}"
+            " {input.r2}"
+            " > {log}"
+
+
+for lib in direct_libraries:
+
+    rule:
+        output:
+            fastq="final/demultiplexed/{lib.name}_R{{r}}.fastq.gz".format(lib=lib)
+        input:
+            fastq="fastq/{lib.fastqbase}_R{{r}}.fastq.gz".format(lib=lib)
+        shell:
+            "ln -s ../../{input} {output}"
+
+
+rule demultiplex_stats:
+    input:
+        fastq="final/demultiplexed/{library}_R1.fastq.gz",
+    output:
+        stats="stats/final/{library}.nreads.txt",
+    run:
+        with xopen(input.fastq) as f:
+            lines = sum(1 for _ in f)
+        
+        with open(output.stats, "w") as fo:
+            # PE data: FASTQ have 4 lines per read, but
+            # we have to count both mates (because flagstat does)
+            print(lines // 2, file=fo)
+
+
+def read_group_flags(wildcards, sep=" "):
+    return (f" --rg-id {wildcards.sample}_rep{wildcards.replicate}"
+            f" --rg{sep}SM:{wildcards.sample}"
+            f" --rg{sep}LB:{wildcards.sample}_rep{wildcards.replicate}")
+
+
+rule sort:
+    input: "tmp/X-unsorted/{sample}_rep{replicate}.{reference}.bam"
+    output: bam=temp("tmp/4-mapped/{sample}_rep{replicate}.{reference}.bam")
+    resources:
+      mem_mb=50000,
+      time='24:00:00'
+    log:
+      "log/X-samtools_sort/{sample}_rep{replicate}_{reference}.log"
+    shell:"""
+          samtools sort {input} -o {output.bam} -T /data/cephfs-1/home/users/newmana_c/scratch/tmp
+          """
+
+
+
+rule align_to_reference:
+    threads: 16  # One fewer than available to allow other jobs to run in parallel
+    output:
+        bam=temp("tmp/X-unsorted/{sample}_rep{replicate}.{reference}.bam")
+    input:
+        r1="final/demultiplexed/{sample}_rep{replicate}_R1.fastq.gz",
+        r2="final/demultiplexed/{sample}_rep{replicate}_R2.fastq.gz",
+    resources:
+      mem_mb=125000,
+      disk_mb=50000,
+      time='24:00:00'
+    params:
+        reference=lambda wildcards: references[wildcards.reference]
+    log:
+        "log/4-mapped/{sample}_rep{replicate}.{reference}.log"
+    # TODO
+    # - --sensitive (instead of --fast) would be default
+    # - write uncompressed BAM?
+    # - filter unmapped reads directly? (samtools view -F 4 or bowtie2 --no-unal)
+    run:
+        aligner = config.get("aligner", "bowtie2")
+        if aligner == "bowtie2":
+            bowtie_mode = config.get("bowtie2_mode", "fast")
+            group_flags = read_group_flags(wildcards)
+            shell("bowtie2"
+                  " --reorder"
+                  " -p {threads}"
+                  " -x {params.reference.bowtie_index}"
+                  " -1 {input.r1}"
+                  " -2 {input.r2}"
+                  " --{bowtie_mode}"
+                  " {group_flags}"
+                  " 2> {log}"
+                  " | samtools view -Sb - > {output.bam}"
+            )
+        elif aligner == "strobealign":
+            group_flags = read_group_flags(wildcards, sep = "=")
+            shell("strobealign"
+                  " -t {threads}"
+                  " {params.reference.fasta}"
+                  " {input.r1}"
+                  " {input.r2}"
+                  " {group_flags}"
+                  " 2> {log}"
+                  " "
+                  "| samtooles view -F 4 - | samtools sort -@ 16 -o {output.bam} -"
+            )
+        else:
+            msg = f"Unknown aligner: {aligner}. Valid choices: bowtie2, strobealign"
+            raise ValueError(msg)
+
+
+rule filter_by_mapq:
+    output:
+        bam=temp("tmp/5-mapq-filtered/{sample}_rep{replicate}.{reference}.bam")
+    input:
+        bam="tmp/4-mapped/{sample}_rep{replicate}.{reference}.bam"
+    run:
+        mapq = config.get("mapping_quality", 0)
+        if mapq == 0:
+            os.link(input.bam, output.bam)
+        else:
+            shell("samtools view -q {mapq} -o {output.bam} {input.bam}")
+
+
+rule pool_replicates:
+    output:
+        bam="final/bam/{sample}_pooled.{reference}.bam"
+    input:
+        bam_replicates=lambda wildcards: expand(
+            "final/bam/{{sample}}_rep{replicate}.{{reference}}.bam",
+            replicate=get_sample_replicates(libraries, wildcards.sample))
+    run:
+        if len(input.bam_replicates) == 1:
+            os.link(input.bam_replicates[0], output.bam)
+        else:
+            # samtools merge output is already sorted
+            shell("samtools merge {output.bam} {input.bam_replicates}")
+
+
+rule convert_to_single_end:
+    """Convert SAM files to single-end for marking duplicates"""
+    output:
+        bam=temp("tmp/6-mapped_se/{library}.bam")
+    input:
+        bam="tmp/5-mapq-filtered/{library}.bam"
+    group: "duplicate_marking"
+    run:
+        se_bam.convert_paired_end_to_single_end_bam(
+            input.bam,
+            output.bam,
+            keep_unmapped=False)
+
+
+def dupmark_command(wildcards):
+    maplibname = wildcards.maplib
+    commands = {
+        True:
+            "LC_ALL=C je"
+            " markdupes"
+            " MISMATCHES=1"
+            " SLOTS=-1"
+            " SPLIT_CHAR=_",
+        False:
+            "picard"
+            " MarkDuplicates"
+            " VALIDATION_STRINGENCY=SILENT",
+    }
+    for maplib in maplibs:
+        if maplib.name == maplibname:
+            return commands[maplib.library.has_umi()]
+    return commands[True]
+
+
+rule mark_duplicates:
+    """UMI-aware duplicate marking with je suite (or MarkDuplicates if UMIs are missing)"""
+    output:
+        bam=temp("tmp/7-dupmarked/{maplib}.bam"),
+        metrics="stats/7-dupmarked/{maplib}.metrics"
+    input:
+        bam="tmp/6-mapped_se/{maplib}.bam"
+    log:
+        "log/7-dupmarked/{maplib}.bam.log"
+    group: "duplicate_marking"
+    resources:
+        time='04:00:00'
+    params: command=dupmark_command
+    shell:
+        "{params.command}"
+        " REMOVE_DUPLICATES=FALSE"
+        " I={input.bam}"
+        " O={output.bam}"
+        " M={output.metrics}"
+        " 2> {log}"
+
+
+rule mark_pe_duplicates:
+    """Select duplicate-flagged alignments and mark them in the PE file"""
+    resources:
+        mem_mb = lambda wildcards, attempt: attempt * 6400,
+        time='04:00:00'
+    output:
+        bam=temp("tmp/8-dedup/{library}.bam")
+    input:
+        target_bam="tmp/5-mapq-filtered/{library}.bam",
+        proxy_bam="tmp/7-dupmarked/{library}.bam"
+    run:
+        se_bam.mark_duplicates_by_proxy_bam(
+            input.target_bam,
+            input.proxy_bam,
+            output.bam)
+
+
+def exclude_bed(wildcards):
+    bed = references[wildcards.reference].exclude_bed
+    return str(bed) if bed else []
+
+
+rule remove_exclude_regions:
+    output:
+        bam="final/bam/{library}.{reference}.bam"
+    input:
+        bam="tmp/8-dedup/{library}.{reference}.bam",
+        bed=exclude_bed,
+    run:
+        if input.bed:
+            shell(
+                "bedtools"
+                " intersect"
+                " -v"
+                " -abam {input.bam}"
+                " -b {input.bed}"
+                " > {output.bam}"
+            )
+        else:
+            os.link(input.bam, output.bam)
+
+
+rule insert_size_metrics:
+    output:
+        txt="stats/final/{name}.insertsizes.txt",
+        pdf="stats/final/{name}.insertsizes.pdf",
+    input:
+        bam="final/bam/{name}.bam"
+    log:
+        "log/final/{name}.insertsizes.txt.log"
+    resources:
+        mem_mb=22000,
+        time='04:00:00'
+    run:
+        picard_cmd = (
+            "picard"
+            " CollectInsertSizeMetrics"
+            " I={input.bam}"
+            " O={output.txt}"
+            " HISTOGRAM_FILE={output.pdf}"
+            " MINIMUM_PCT=0.5"
+            " STOP_AFTER=10000000"
+            " 2> {log}"
+        )
+        shell(picard_cmd)
+        # Picard does not produce any output on empty BAM files
+        if not os.path.isfile(output.txt):
+            open(output.txt, "a").close()
+            open(output.pdf, "a").close()
+
+
+rule unscaled_bigwig:
+    output:
+        bw="final/bigwig/{library}.{reference}.unscaled.bw"
+    input:
+        bam="final/bam/{library}.{reference}.bam",
+        bai="final/bam/{library}.{reference}.bai",
+        fragsize="stats/final/{library}.{reference}.fragsize.txt",
+        genome_size="stats/genome.{reference}.size.txt",
+    log:
+        "log/final/{library}.{reference}.unscaled.bw.log"
+    resources:
+        time='04:00:00',
+        mem_mb=20000
+    threads: 19
+    shell:
+        "bamCoverage"
+        " -p {threads}"
+        " --normalizeUsing RPGC"
+        " --effectiveGenomeSize $(< {input.genome_size})"
+        " --extendReads $(< {input.fragsize})"
+        " -b {input.bam}"
+        " -o {output.bw}"
+        " --binSize 1"
+        " 2> {log}"
+
+
+rule unscaled_mapq_bigwig:
+    output:
+        bw="final/bigwig/{library}.{reference}.unscaled.mapq.bw"
+    input:
+        bam="final/bam/{library}.{reference}.bam",
+        bai="final/bam/{library}.{reference}.bai",
+        fragsize="stats/final/{library}.{reference}.fragsize.txt",
+        genome_size="stats/genome.{reference}.size.txt",
+    log:
+        log="log/final/{library}.{reference}.unscaled.mapq.bw.log",
+        stdout="log/final/{library}.{reference}.unscaled.mapq.bw.out",
+    threads: 19
+    resources:
+        mem_mb=20000,
+        time='04:00:00'
+    shell:
+        "bamCoverage"
+        " -p {threads}"
+        " --normalizeUsing RPGC"
+        " --effectiveGenomeSize $(< {input.genome_size})"
+        " --extendReads $(< {input.fragsize})"
+        " --minMappingQuality {config[mapping_quality_bigwig]}"
+        " -b {input.bam}"
+        " -o {output.bw}"
+        " --binSize 1"
+        " > {log.stdout}"
+        " 2> {log.log}"
+
+
+for group in scaling_groups:
+    rule:
+        output:
+            factors=temp(["stats/8-factors/{library.name}.factor.txt".format(library=np.treatment) for np in group.normalization_pairs]),
+            info="stats/8-scalinginfo/{scaling_group_name}.txt".format(scaling_group_name=group.name)
+        input:
+            treatments=["stats/final/{maplib.name}.flagstat.txt".format(maplib=np.treatment) for np in group.normalization_pairs],
+            controls=["stats/final/{maplib.name}.flagstat.txt".format(maplib=np.control) for np in group.normalization_pairs],
+            genome_sizes=["stats/genome.{maplib.reference}.size.txt".format(maplib=np.treatment) for np in group.normalization_pairs],
+        params:
+            scaling_group=group,
+        run:
+            with open(output.info, "w") as outf:
+                factors = compute_scaling(
+                    params.scaling_group,
+                    input.treatments,
+                    input.controls,
+                    outf,
+                    genome_sizes=[read_int_from_file(gs) for gs in input.genome_sizes],
+                    fragment_size=config["fragment_size"],
+                )
+                for factor, factor_path in zip(factors, output.factors):
+                    with open(factor_path, "w") as f:
+                        print(factor, file=f)
+
+
+rule summarize_scaling_factors:
+    priority: 10
+    output:
+        info="reports/scalinginfo.txt"
+    input:
+        factors=["stats/8-scalinginfo/{scaling_group_name}.txt".format(scaling_group_name=group.name) for group in scaling_groups]
+    run:
+        with open(output.info, "w") as f:
+            print("sample_name", "#reads", "n_scaled_reads", "input_name", "n_input_reads", "factor", "scaling_group", sep="\t", file=f)
+            for factor in input.factors:
+                with open(factor) as factor_file:
+                    for line in factor_file:
+                        print(line.rstrip(), file=f)
+
+
+rule summary_scaled_barplots:
+    priority: 10
+    output:
+        plot=expand("reports/scaling_barplot.{ext}", ext=["png", "pdf"]),
+        grouped_plot=expand("reports/grouped_scaling_barplot.{ext}", ext=["png", "pdf"]),
+        barcode_plot=expand("reports/barcode_representation.{ext}", ext=["png", "pdf"]),
+        barcode_plot_perc=expand("reports/barcode_representation_perc.{ext}", ext=["png", "pdf"])
+    input:
+        info="reports/scalinginfo.txt"
+    script:
+        "summary_plots.R"
+
+
+rule extract_fragment_size:
+    input:
+        insertsizes="{base}.insertsizes.txt"
+    output:
+        fragsize=temp("{base}.fragsize.txt")
+    run:
+        with open(output.fragsize, "w") as f:
+            try:
+                is_metrics = parse_insert_size_metrics(input.insertsizes)
+            except StopIteration:
+                is_metrics = dict()
+
+            median_size = is_metrics.get("median_insert_size", "NA")
+            # bamCoverage needs an --int value for --extendReads
+            try:
+                median_size = int(median_size)
+            except ValueError:
+                print(
+                    f"Median insert size not numerical. Resorting to config "
+                    f"fragment size {config['fragment_size']} for bigWig "
+                    f"generation."
+                )
+                median_size = int(config["fragment_size"])
+            print(median_size, file=f)
+
+
+rule scaled_bigwig:
+    output:
+        bw="final/bigwig/{library}.scaled.bw"
+    input:
+        factor="stats/8-factors/{library}.factor.txt",
+        fragsize="stats/final/{library}.fragsize.txt",
+        bam="final/bam/{library}.bam",
+        bai="final/bam/{library}.bai",
+    threads: 19
+    resources:
+        time='04:00:00',
+        mem_mb=20000
+    log:
+        "log/final/{library}.scaled.bw.log"
+    shell:
+        # TODO also run this
+        # - with "--binSize 50 --smoothLength 150"
+        # - with "--binSize 500 --smoothLength 5000"
+        "bamCoverage"
+        " -p {threads}"
+        " --binSize 1"
+        " --extendReads $(< {input.fragsize})"
+        " --scaleFactor $(< {input.factor})"
+        " --bam {input.bam}"
+        " -o {output.bw}"
+        " 2> {log}"
+
+
+rule scaled_mapq_bigwig:
+    output:
+        bw="final/bigwig/{library}.scaled.mapq.bw"
+    input:
+        factor="stats/8-factors/{library}.factor.txt",
+        fragsize="stats/final/{library}.fragsize.txt",
+        bam="final/bam/{library}.bam",
+        bai="final/bam/{library}.bai",
+    threads: 19
+    resources:
+        time='04:00:00',
+        mem_mb=20000
+    log:
+        log="log/final/{library}.scaled.mapq.bw.log",
+        stdout="log/final/{library}.scaled.mapq.bw.out",
+    shell:
+        "bamCoverage"
+        " -p {threads}"
+        " --binSize 1"
+        " --extendReads $(< {input.fragsize})"
+        " --scaleFactor $(< {input.factor})"
+        " --minMappingQuality {config[mapping_quality_bigwig]}"
+        " --bam {input.bam}"
+        " -o {output.bw}"
+        " > {log.stdout}"
+        " 2> {log.log}"
+
+
+rule replicate_stats:
+    output:
+        txt="stats/9-stats/{library}.{reference}.txt"
+    input:
+        mapped_flagstat="stats/4-mapped/{library}.{reference}.flagstat.txt",
+        mapq_flagstat="stats/5-mapq-filtered/{library}.{reference}.flagstat.txt",
+        metrics="stats/7-dupmarked/{library}.{reference}.metrics",
+        dedup_flagstat="stats/8-dedup/{library}.{reference}.flagstat.txt",
+        final_flagstat="stats/final/{library}.{reference}.flagstat.txt",
+        insertsizes="stats/final/{library}.{reference}.insertsizes.txt",
+        demux_stats="stats/final/{library}.nreads.txt",
+    run:
+        d = dict(
+                map_id=f"{wildcards.library}.{wildcards.reference}",
+                library=wildcards.library,
+                reference=wildcards.reference
+            )
+        d["barcode"] = "."
+        mlib = get_maplib_by_name(maplibs, wildcards.library)
+        if isinstance(mlib.library, MultiplexedReplicate):
+            d["barcode"] = mlib.library.barcode
+
+        for flagstat, name in [
+            (input.mapped_flagstat, "raw_mapped"),
+            (input.mapq_flagstat, "mapq_mapped"),
+            (input.dedup_flagstat, "dedup_mapped"),
+            (input.final_flagstat, "final_mapped"),
+        ]:
+            d[name] = parse_flagstat(flagstat).mapped_reads
+
+        d["raw_demultiplexed"] = read_int_from_file(input.demux_stats)
+
+        try:
+            d["frac_mapq_filtered"] = (d["raw_mapped"] - d["mapq_mapped"]) / d["raw_mapped"]
+        except ZeroDivisionError:
+            d["frac_mapq_filtered"] = "NA"
+
+        # Note that here we use as total/unique single ended fragments, because we deduplicate
+        # based on 1st mate. However if we used proper-pairs the result would be very similar,
+        # since in any case the paired-end read is a single sequencing event.
+        d["library_size"] = estimate_library_size(
+            parse_duplication_metrics(input.metrics)["unpaired_reads_examined"],
+            parse_duplication_metrics(input.metrics)["unpaired_read_duplicates"])
+
+        try:
+            is_metrics = parse_insert_size_metrics(input.insertsizes)
+        except StopIteration:
+            is_metrics = dict()
+
+        d["percent_duplication"] = parse_duplication_metrics(input.metrics)["percent_duplication"]
+        d["insert_size"] = is_metrics.get("median_insert_size", "NA")
+        with open(output.txt, "w") as f:
+            print(*d.keys(), sep="\t", file=f)
+            print(*d.values(), sep="\t", file=f)
+
+
+rule pooled_stats:
+    output:
+        txt = "stats/9-stats/{library}_pooled.{reference}.txt"
+    input:
+        final_flagstat="stats/final/{library}_pooled.{reference}.flagstat.txt",
+        insertsizes="stats/final/{library}_pooled.{reference}.insertsizes.txt",
+    run:
+        d = dict(
+                map_id=f"{wildcards.library}_pooled.{wildcards.reference}",
+                library=f"{wildcards.library}_pooled",
+                reference=wildcards.reference
+            )
+        for key in ["raw_demultiplexed", "raw_mapped", "mapq_mapped", "dedup_mapped", "library_size", "percent_duplication", "frac_mapq_filtered"]:
+            d[key] = "."
+        d["final_mapped"] = parse_flagstat(input.final_flagstat).mapped_reads
+
+        try:
+            is_metrics = parse_insert_size_metrics(input.insertsizes)
+        except StopIteration:
+            is_metrics = dict()
+        d["insert_size"] = is_metrics.get("median_insert_size", "NA")
+        with open(output.txt, "w") as f:
+            print(*d.keys(), sep="\t", file=f)
+            print(*d.values(), sep="\t", file=f)
+
+
+rule replicate_stats_summary:
+    priority: 10
+    output:
+        txt="reports/stats_summary.txt"
+    input:
+        expand("stats/9-stats/{maplib.name}.txt", maplib=[m for m in maplibs if not isinstance(m.library, Pool)])
+    run:
+        header = [
+            "map_id",
+            "library",
+            "barcode",
+            "reference",
+            "raw_demultiplexed",
+            "raw_mapped",
+            "mapq_mapped",
+            "dedup_mapped",
+            "final_mapped",
+            "library_size",
+            "percent_duplication",
+            "frac_mapq_filtered",
+            "insert_size",
+        ]
+
+        with open(output.txt, "w") as f:
+            print(*header, sep="\t", file=f)
+            for stats_file in sorted(input):
+                summary = parse_stats_fields(stats_file)
+                row = [summary[k] for k in header]
+                print(*row, sep="\t", file=f)
+
+
+rule pooled_stats_summary:
+    priority: 10
+    output:
+        txt="reports/pooled_stats_summary.txt"
+    input:
+        expand("stats/9-stats/{maplib.name}.txt", maplib=[m for m in maplibs if isinstance(m.library, Pool)])
+    run:
+        header = [
+            "map_id",
+            "library",
+            "reference",
+            "final_mapped",
+            "insert_size",
+        ]
+
+        with open(output.txt, "w") as f:
+            print(*header, sep="\t", file=f)
+            for stats_file in sorted(input):
+                summary = parse_stats_fields(stats_file)
+                row = [summary[k] for k in header]
+                print(*row, sep="\t", file=f)
+
+
+rule compute_effective_genome_size:
+    output:
+        txt="stats/genome.{reference}.size.txt"
+    input:
+        fasta=lambda wildcards: str(references[wildcards.reference].fasta)
+    run:
+        with open(output.txt, "w") as f:
+            print(compute_genome_size(input.fasta), file=f)
+
+
+rule deeptools_fingerprint:
+    output:
+        counts="stats/final/{library}.fingerprint.log",
+        qc="stats/final/{library}.fingerprint.metrics"
+    input:
+        bam="final/bam/{library}.bam",
+        bai="final/bam/{library}.bai"
+    threads: 8
+    resources:
+        mem_mb=40000,
+        time='04:00:00'
+    shell:
+        "plotFingerprint"
+        " -b {input.bam}"
+        " --outRawCounts {output.counts}"
+        " --outQualityMetrics {output.qc}"
+        " -p {threads}"
+        " --extendReads"
+
+
+rule samtools_index:
+    output:
+        "{name}.bai"
+    input:
+        "{name}.bam"
+    shell:
+        "samtools index {input} {output}"
+
+
+rule samtools_idxstats:
+    output:
+        txt="stats/final/{name}.idxstats.txt"
+    input:
+        bam="final/bam/{name}.bam",
+        bai="final/bam/{name}.bai",
+    shell:
+        "samtools idxstats {input.bam} > {output.txt}"
+
+
+rule samtools_flagstat:
+    output:
+        txt="stats/{name}.flagstat.txt"
+    input:
+        bam="tmp/{name}.bam"
+    resources:
+        mem_mb=15000,
+        time='04:00:00'
+    shell:
+        "samtools flagstat {input.bam} > {output.txt}"
+
+
+rule samtools_flagstat_final:
+    output:
+        txt="stats/final/{name}.flagstat.txt"
+    input:
+        bam="final/bam/{name}.bam"
+    resources:
+        mem_mb=10000,
+        time='04:00:00'
+    shell:
+        "samtools flagstat {input.bam} > {output.txt}"

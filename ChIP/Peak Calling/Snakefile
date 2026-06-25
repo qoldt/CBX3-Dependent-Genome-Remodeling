@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+
+import os
+from glob import glob
+
+BAM_DIR = "/data/cephfs-2/unmirrored/groups/newman/depot/CBX3_Multiplex_ChIP/minute_out/final/bam"
+GENOME_SIZE = "mm"  # mouse genome
+
+# Collect BAM files
+bam_files = sorted(glob(os.path.join(BAM_DIR, "*.bam")))
+
+# Build sample information
+
+samples = []
+for bam in bam_files:
+    fname = os.path.basename(bam)
+    if "Input" in fname:
+        continue
+    if "pooled" in fname:
+        continue  # Skip pooled ChIP samples
+
+    parts = fname.split("_")
+    chip = parts[2]
+    condition = parts[5]
+    replicate = parts[6].split(".")[0]  # rep1, rep2, etc.
+
+    # Inputs always start with A4435_1_Input_S1_L008
+    matches = glob(os.path.join(
+        BAM_DIR,
+        f"A4435_1_Input_S1_L008_{condition}_{replicate}*.bam"
+    ))
+
+    # fallback to pooled input if replicate input not found
+    if not matches:
+        matches = glob(os.path.join(
+            BAM_DIR,
+            f"A4435_1_Input_S1_L008_{condition}_pooled*.bam"
+        ))
+
+    if not matches:
+        raise FileNotFoundError(f"No input BAM found for {fname}")
+
+    samples.append({
+        "name": fname.replace(".bam", ""),
+        "bam": bam,
+        "input": matches[0],
+        "chip": chip
+    })
+
+
+
+
+# Separate output file lists
+narrow_samples = [s for s in samples if s["chip"] == "H3K4me3"]
+broad_samples  = [s for s in samples if s["chip"] != "H3K4me3"]
+
+rule all:
+    input:
+        expand("macs3_output/narrow/{name}_peaks.narrowPeak", name=[s["name"] for s in narrow_samples]),
+        expand("macs3_output/broad/{name}_peaks.broadPeak", name=[s["name"] for s in broad_samples])
+
+rule macs3_narrow:
+    input:
+        bam=lambda wildcards: next(s["bam"] for s in samples if s["name"] == wildcards.name),
+        ctrl=lambda wildcards: next(s["input"] for s in samples if s["name"] == wildcards.name)
+    output:
+        "macs3_output/narrow/{name}_peaks.narrowPeak"
+    shell:
+        """
+        macs3 callpeak \
+            -t {input.bam} \
+            -c {input.ctrl} \
+            -n {wildcards.name} \
+            --outdir macs3_output/narrow \
+            -f BAM \
+            -g {GENOME_SIZE} \
+            -q 0.01
+        """
+
+rule macs3_broad:
+    input:
+        bam=lambda wildcards: next(s["bam"] for s in samples if s["name"] == wildcards.name),
+        ctrl=lambda wildcards: next(s["input"] for s in samples if s["name"] == wildcards.name)
+    output:
+        "macs3_output/broad/{name}_peaks.broadPeak"
+    shell:
+        """
+        macs3 callpeak \
+            -t {input.bam} \
+            -c {input.ctrl} \
+            -n {wildcards.name} \
+            --outdir macs3_output/broad \
+            -f BAM \
+            -g {GENOME_SIZE} \
+            --broad \
+            --max-gap 2000 \
+            -q 0.01
+        """
+
