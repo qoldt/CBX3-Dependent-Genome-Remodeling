@@ -1,0 +1,202 @@
+# ================================
+# Enrichment (Hypergeometric) per ChIP and Annotation
+# ================================
+
+combined_sig <- do.call(rbind, lapply(names(annotated_results), function(mark) {
+  df <- annotated_results[[mark]]
+  df$ChIP <- mark
+  df$peak_id <- paste0(df$chr, ":", df$start, "-", df$end)
+  df
+}))
+
+
+
+# Filter with ChIP-specific thresholds
+combined_sig <- combined_sig %>%
+  filter(
+    case_when(
+      ChIP == "H3K4me3"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.05,
+      ChIP == "H3K9me2"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.05,
+      ChIP == "H3K9me3"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.1,
+      ChIP == "H4K20me3"  ~ abs(log2FoldChange) > 0.5 & pvalue < 0.2,
+      ChIP == "H3K36me3"  ~ abs(log2FoldChange) > 0.5 & pvalue < 0.2,
+      TRUE                ~ FALSE
+    )
+  )
+
+
+try({
+  seqlevelsStyle(line_gr) <- "UCSC"
+  seqlevelsStyle(sine_gr) <- "UCSC"
+  seqlevelsStyle(ltr_gr)  <- "UCSC"
+  seqlevelsStyle(tad_gr)  <- "UCSC"
+}, silent = TRUE)
+
+# Helper to compute one hypergeometric row + OR + direction
+hyper_row <- function(chip, annotation, all_df, sig_df, flag_all) {
+  # Universe counts
+  N <- nrow(all_df)
+  K <- sum(flag_all, na.rm = TRUE)
+  n <- nrow(sig_df)
+  
+  # Map sig -> all via peak_id
+  idx_sig_in_all <- match(sig_df$peak_id, all_df$peak_id)
+  flag_sig <- flag_all[idx_sig_in_all]
+  k <- sum(flag_sig, na.rm = TRUE)
+  
+  # Hypergeometric (one-sided for enrichment)
+  if (is.na(N) || N == 0 || is.na(n) || is.na(K) || K < 0) {
+    pval <- NA_real_
+    expected <- NA_real_
+    enrich <- NA_real_
+  } else {
+    expected <- if (N > 0) n * (K / N) else NA_real_
+    pval <- if (n > 0 && K > 0 && N > K) phyper(k - 1, K, N - K, n, lower.tail = FALSE) else NA_real_
+    enrich <- if (!is.na(expected) && expected > 0) k / expected else NA_real_
+  }
+  
+  # 2x2 table for OR
+  a <- k
+  b <- n - k
+  c <- K - k
+  d <- N - K - b
+  # continuity correction if any cell is zero or negative (safety)
+  needs_cc <- any(c(a, b, c, d) <= 0)
+  if (needs_cc) {
+    a <- a + 0.5; b <- b + 0.5; c <- c + 0.5; d <- d + 0.5
+  }
+  or_val <- (a * d) / (b * c)
+  if (!is.finite(or_val)) or_val <- NA_real_
+  
+  # Direction from median log2FC among significant peaks overlapping the annotation
+  # (enriched if median > 0, depleted if median <= 0; NA if no overlapping significant peaks)
+  if (!is.null(sig_df$log2FoldChange) && k > 0) {
+    l2fc_med <- stats::median(sig_df$log2FoldChange[which(flag_sig)], na.rm = TRUE)
+    direction <- if (is.finite(l2fc_med) && !is.na(l2fc_med) && l2fc_med > 0) "enriched" else "depleted"
+  } else {
+    l2fc_med <- NA_real_
+    direction <- NA_character_
+  }
+  
+  data.frame(
+    ChIP = chip,
+    annotation = annotation,
+    N_total = N,
+    K_in_annotation = K,
+    n_signif = n,
+    k_signif_in_annotation = k,
+    expected_overlap = expected,
+    enrichment = enrich,
+    odds_ratio = or_val,
+    l2fc_median_sig_in_annotation = l2fc_med,
+    direction = direction,
+    p_value = pval,
+    stringsAsFactors = FALSE
+  )
+}
+
+# Build per-ChIP enrichment with direction
+enrichment_list <- lapply(names(annotated_results), function(mark) {
+  all_df <- annotated_results[[mark]]
+  all_df$ChIP <- mark
+  all_df$peak_id <- paste0(all_df$chr, ":", all_df$start, "-", all_df$end)
+  
+  peak_gr <- GRanges(seqnames = all_df$chr, ranges = IRanges(all_df$start, all_df$end))
+  seqlevelsStyle(peak_gr) <- "UCSC"
+  
+  # Flags over ALL measured peaks
+  flag_TAD <- isTRUE(all_df$overlaps_with_Tad_boundary) | (all_df$overlaps_with_Tad_boundary %in% TRUE)
+  
+  flag_LINE <- rep(FALSE, length(peak_gr))
+  flag_SINE <- rep(FALSE, length(peak_gr))
+  flag_LTR  <- rep(FALSE, length(peak_gr))
+  if (exists("line_gr")) flag_LINE[queryHits(findOverlaps(peak_gr, line_gr, ignore.strand = TRUE))] <- TRUE
+  if (exists("sine_gr")) flag_SINE[queryHits(findOverlaps(peak_gr, sine_gr, ignore.strand = TRUE))] <- TRUE
+  if (exists("ltr_gr"))  flag_LTR[ queryHits(findOverlaps(peak_gr, ltr_gr,  ignore.strand = TRUE))] <- TRUE
+  
+  fam <- if ("repeat_family" %in% names(all_df)) all_df$repeat_family else rep("", nrow(all_df))
+  fam <- ifelse(is.na(fam), "", fam)
+  flag_ERVK      <- grepl("\\bERVK\\b", fam)
+  flag_ERVL_MaLR <- grepl("\\bERVL-MaLR\\b", fam)
+  flag_ERV1      <- grepl("\\bERV1\\b", fam)
+  
+  nm <- if ("repeat_name" %in% names(all_df)) all_df$repeat_name else rep("", nrow(all_df))
+  nm <- ifelse(is.na(nm), "", nm)
+  flag_IAPEz_int <- grepl("\\bIAPEz-int\\b", nm)
+  flag_IAPLTR1a  <- grepl("\\bIAPLTR1a_Mm\\b", nm)
+  
+  # Significant set for this ChIP
+  sig_df <- combined_sig %>%
+    dplyr::filter(ChIP == mark) %>%
+    dplyr::mutate(peak_id = paste0(chr, ":", start, "-", end))
+  
+  rows <- list(
+    hyper_row(mark, "TAD_boundary",        all_df, sig_df, flag_TAD),
+    hyper_row(mark, "LINE",                all_df, sig_df, flag_LINE),
+    hyper_row(mark, "SINE",                all_df, sig_df, flag_SINE),
+    hyper_row(mark, "LTR",                 all_df, sig_df, flag_LTR),
+    hyper_row(mark, "LTR:ERVK",            all_df, sig_df, flag_ERVK),
+    hyper_row(mark, "LTR:ERVL-MaLR",       all_df, sig_df, flag_ERVL_MaLR),
+    hyper_row(mark, "LTR:ERV1",            all_df, sig_df, flag_ERV1),
+    hyper_row(mark, "LTR:ERVK:IAPEz-int",  all_df, sig_df, flag_IAPEz_int),
+    hyper_row(mark, "LTR:ERVK:IAPLTR1a_Mm",   all_df, sig_df, flag_IAPLTR1a)
+  )
+  do.call(rbind, rows)
+})
+
+enrichment_df <- do.call(rbind, enrichment_list) %>%
+  dplyr::arrange(ChIP, annotation) %>%
+  dplyr::group_by(ChIP) %>%
+  dplyr::mutate(p_adj_BH = p.adjust(p_value, method = "BH")) %>%
+  dplyr::ungroup()
+
+# Inspect
+enrichment_df
+
+library(dplyr)
+library(ggplot2)
+
+# Prepare plotting data --------------------------------------------
+plot_df <- enrichment_df %>%
+  # keep rows we can actually plot
+  filter(!is.na(odds_ratio), is.finite(odds_ratio),
+         !is.na(p_adj_BH), !is.na(direction)) %>%
+  mutate(
+    neglog10FDR = -log10(pmax(p_adj_BH, .Machine$double.xmin)),  # avoid Inf
+    direction = factor(direction, levels = c("depleted", "enriched")),
+    # order annotations within each ChIP by OR (optional but helpful)
+    annotation = as.factor(annotation)
+  )
+
+# If you’d like a consistent annotation order across facets, uncomment:
+# plot_df$annotation <- factor(plot_df$annotation,
+#                              levels = unique(plot_df$annotation))
+
+# Plot --------------------------------------------------------------
+p_enrich <- ggplot(plot_df,
+                   aes(x = annotation,
+                       y = odds_ratio,
+                       size = neglog10FDR,
+                       color = direction)) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point(alpha = 0.9) +
+  facet_wrap(~ ChIP, nrow = 1) +
+  scale_y_log10() +
+  scale_color_manual(values = c(depleted = "steelblue3",
+                                enriched = "firebrick2")) +
+  labs(x = "Annotation",
+       y = "Odds ratio (log10 scale)",
+       size = expression(-log[10]("FDR")),
+       color = NULL) +
+  theme_bw(base_size = 12) +
+  coord_flip()+
+  theme(
+    panel.grid.minor = element_blank(),
+    axis.text.x = element_text(angle = 45, hjust = 1),
+    legend.position = "right"
+  )+
+  theme_minimal()
+
+p_enrich
+
+
