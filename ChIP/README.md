@@ -162,6 +162,54 @@ are always identical.
 
 ---
 
+## How significant peaks are called
+
+Per mark, `MINUTE_1`:
+
+1. **Regions** — the consensus/master peak BED for that mark (from `Peak
+   Calling/`). H3K9me3 and H4K20me3 share one **2 kb-merged** peak set
+   (`2000bp_merge_H3K9me3_H4K20me3.bed`).
+2. **Quantify** — `wigglescout::bw_loci()` reads each of the 11 scaled bigWigs
+   (6 WT + 5 HP1gKO) over every peak, giving a peaks × samples matrix. `bw_loci`
+   returns the **mean coverage** per interval (i.e. length-normalized), which is
+   then `round()`-ed to integer pseudo-counts for DESeq2.
+3. **Filter** — drop peaks with `rowSums(counts) ≤ 10`.
+4. **Test** — DESeq2 with `sizeFactors = 1` (no renormalization — the bigWigs are
+   already input-scaled), design `~condition`, Wald test, contrast **HP1gKO vs
+   WT** → a `log2FoldChange` and raw `pvalue` per peak.
+5. **Call significance** — `is_significant()`: `|log2FoldChange| > 0.5` **and**
+   raw `pvalue <` the per-mark threshold (see table above). The same rule is used
+   by MINUTE_2 and MINUTE_3.
+
+Two deliberate but "soft" choices to keep in mind: significance uses the **raw**
+`pvalue`, not BH-adjusted `padj`, and the broad heterochromatin marks
+(H4K20me3, H3K36me3) get **lenient** `p < 0.20` cutoffs.
+
+### How peak length relates to significance
+
+Length is **not a term in the test**, but it shapes the outcome three ways:
+
+1. **Signal is a mean, so length doesn't inflate the count directly** — a 20 kb
+   domain and a 500 bp peak with the same average coverage get the same value.
+   Longer intervals do average over more bins, giving a **more stable estimate
+   (lower within-group variance)** → DESeq2 estimates lower dispersion → more
+   power. So longer peaks are, all else equal, *easier* to call significant — not
+   because of bigger numbers, but because of steadier ones.
+2. **Peak length is confounded with the mark.** H3K9me3/H4K20me3 use the broad
+   2 kb-merged domain set, while H3K4me3 is narrow promoter peaks — so "length"
+   and "which mark / which p-threshold" move together. Don't read a
+   length↔significance trend as biology without accounting for that.
+3. **Length is carried downstream, not into the call.** MINUTE_3 annotates each
+   significant peak with `peak_size_kb` (capped at 2 kb for heatmap color), and
+   ChIPseeker tends to label very large domains as "Promoter" (a length artifact,
+   flagged in a MINUTE_1 comment). Length affects interpretation, not the flag.
+
+> **Caveat:** points above assume `bw_loci` aggregates by **mean**. If the
+> quantification were ever switched to summed/total coverage, length *would*
+> scale the counts directly and bias long peaks toward significance.
+
+---
+
 ## Outputs (all under `results/`)
 
 | File | Produced by | Contents |
