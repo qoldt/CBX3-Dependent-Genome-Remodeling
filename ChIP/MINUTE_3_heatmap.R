@@ -43,20 +43,15 @@ sig_gr <- keepStandardChromosomes(sig_gr, pruning.mode = "coarse")
 library(GenomicRanges)
 library(parallel)
 
-# Create master bigwig list across all ChIPs
-all_bigwigs <- unlist(lapply(chips, function(prefix) {
-  get_bigwig_files(prefix, bigwigDir)
-}))
-
-# Metadata for columns (samples)
+# Column metadata (samples) — straight from the sample sheet, all marks
 col_annot <- data.frame(
-  Sample = names(all_bigwigs),
-  File = unname(all_bigwigs),
+  Sample    = samples$sample_id,
+  File      = samples$bigwig_path,
+  ChIP      = as.character(samples$mark),
+  Genotype  = as.character(samples$genotype),
+  Replicate = samples$replicate,
   stringsAsFactors = FALSE
 )
-col_annot$ChIP <- rep(names(chips), each = 11)  # 11 samples per ChIP
-col_annot$Genotype <- ifelse(grepl("HP1gKO", col_annot$Sample), "HP1gKO", "WT")
-col_annot$Replicate <- sub("^[^.]+\\.", "", col_annot$Sample)
 
 
 
@@ -196,7 +191,7 @@ ht <- Heatmap(
 
 #draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
 
-pdf("2000maxgap_indsignificance_with_TAD.pdf", width = 10, height = 16)  # adjust size as needed
+pdf(file.path(fig_dir, "2000maxgap_indsignificance_with_TAD.pdf"), width = 10, height = 16)  # adjust size as needed
 ht_drawn <- draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
 dev.off()
 
@@ -227,7 +222,7 @@ mcols(sig_gr_bed)$name    <- sig_df$peak_id
 mcols(sig_gr_bed)$score   <- round(sig_df$log2FoldChange, 3)
 mcols(sig_gr_bed)$ChIP    <- sig_df$ChIP
 mcols(sig_gr_bed)$Cluster <- sig_df$Cluster
-export(sig_gr_bed, "significant_peaks_with_metadata.bed", format = "BED")
+export(sig_gr_bed, file.path(bed_dir, "significant_peaks_with_metadata.bed"), format = "BED")
 
 # --- One BED per mark (NCBI seqnames; score = -log10(pvalue)) ---
 bed_style <- "NCBI"   # switch to "UCSC" for chr-prefixed names
@@ -243,7 +238,7 @@ for (chip in unique(sig_df$ChIP)) {
   mcols(gr)$score   <- -log10(df_chip$pvalue)
   mcols(gr)$cluster <- df_chip$Cluster
   mcols(gr)$chip    <- df_chip$ChIP
-  out_file <- paste0("significant_peaks_", chip, ".bed")
+  out_file <- file.path(bed_dir, paste0("significant_peaks_", chip, ".bed"))
   export(gr, con = out_file, format = "BED")
   message("Exported: ", out_file)
 }

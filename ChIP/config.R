@@ -2,18 +2,44 @@
 # MINUTE pipeline — shared configuration & parameters
 # ----------------------------------------------------------------
 # Sourced by MINUTE_1, MINUTE_2, MINUTE_3 and by run_MINUTE.R.
-# This is the SINGLE SOURCE OF TRUTH for parameters — edit values
-# here only; the stage scripts must not redefine them.
+# SINGLE SOURCE OF TRUTH for parameters — edit values here only;
+# the stage scripts must not redefine them.
+#
+# Run the pipeline FROM the ChIP/ directory (the folder holding
+# this file); all repo-relative paths below assume that:
+#     cd ChIP && Rscript run_MINUTE.R
+#
+# I/O layout
+#   Inputs (read-only):
+#     samples.tsv                sample sheet — SINGLE SOURCE OF TRUTH for samples
+#     data/peaks/                consensus / master peak BEDs      (committed, small)
+#     $MINUTE_DATA/bigwig/       scaled mm39 bigWigs               (external, large)
+#     $MINUTE_DATA/annotation/   LINE / SINE / LTR / TAD BEDs      (external)
+#   Outputs (generated, git-ignored except results/rds/):
+#     results/counts/  results/rds/  results/tables/  results/figures/  results/bed/
 # ================================================================
 
-# --- Working directory & paths ---
-setwd("~/SynologyDrive/MINUTE/")
-bigwigDir <- "~/SynologyDrive/MINUTE/bigwig/"
-outputDir <- "counts"
-if (!dir.exists(outputDir)) dir.create(outputDir)
+# --- Roots -------------------------------------------------------
+# Large raw inputs live OUTSIDE the repo. Point MINUTE_DATA at wherever
+# the MINUTE pipeline output was staged; it defaults to the Synology mount.
+data_ext   <- path.expand(Sys.getenv("MINUTE_DATA", unset = "~/SynologyDrive/MINUTE"))
+bigwig_dir <- file.path(data_ext, "bigwig")
+annot_dir  <- file.path(data_ext, "annotation")
+
+# Repo-relative input / output dirs (scripts are run from ChIP/)
+peaks_dir   <- "data/peaks"
+results_dir <- "results"
+counts_dir  <- file.path(results_dir, "counts")
+rds_dir     <- file.path(results_dir, "rds")
+tables_dir  <- file.path(results_dir, "tables")
+fig_dir     <- file.path(results_dir, "figures")
+bed_dir     <- file.path(results_dir, "bed")
+for (d in c(counts_dir, rds_dir, tables_dir, fig_dir, bed_dir)) {
+  if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+}
 
 # File written by MINUTE_1, read by MINUTE_2 and MINUTE_3
-annotated_rds <- "annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds"
+annotated_rds <- file.path(rds_dir, "annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds")
 
 # --- Libraries (union used across the pipeline) ---
 # For wigglescout you may need these pinned versions of furrr & future:
@@ -39,41 +65,36 @@ suppressPackageStartupMessages({
   library(circlize)
 })
 
-# --- ChIP marks and corresponding BigWig file prefixes ---
-chips <- list(
-  "H3K4me3"  = "A4435_2_H3K4me3_S2_L008",
-  "H3K9me2"  = "A4435_3_H3K9me2_S3_L008",
-  "H3K9me3"  = "A4435_4_H3K9me3_S4_L008",
-  "H4K20me3" = "A4435_5_H4K20me3_S5_L008",
-  "H3K36me3" = "A4435_6_H3K36me3_S6_L008"
-)
+# --- Sample sheet: SINGLE SOURCE OF TRUTH for samples ------------
+# Columns: sample_id, mark, genotype (WT/HP1gKO), replicate, bigwig (filename).
+# Genotype and replicate are read from here — NOT hard-coded in the stages.
+samples <- as.data.frame(data.table::fread("samples.tsv"))
+samples$genotype    <- factor(samples$genotype, levels = c("WT", "HP1gKO"))
+samples$bigwig_path <- file.path(bigwig_dir, samples$bigwig)
+marks <- unique(as.character(samples$mark))   # preserves sample-sheet order
 
-# --- Associated peak files per mark ---
+# --- Associated peak files per mark (under data/peaks) ---
 regions <- list(
-  "H3K4me3"  = "peaks/master_peaks_consensus/H3K4me3_consensus_masterPeak.bed",
-  "H3K9me2"  = "peaks/merged_H3K9me2_masterPeak.bed",
-  "H3K9me3"  = "peaks/2000bp_merge_H3K9me3_H4K20me3.bed",
-  "H4K20me3" = "peaks/2000bp_merge_H3K9me3_H4K20me3.bed",
-  "H3K36me3" = "peaks/merged_H3K36me3_masterPeak.bed"
+  "H3K4me3"  = file.path(peaks_dir, "master_peaks_consensus/H3K4me3_consensus_masterPeak.bed"),
+  "H3K9me2"  = file.path(peaks_dir, "merged_H3K9me2_masterPeak.bed"),
+  "H3K9me3"  = file.path(peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed"),
+  "H4K20me3" = file.path(peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed"),
+  "H3K36me3" = file.path(peaks_dir, "merged_H3K36me3_masterPeak.bed")
 )
 
-# --- Repeat / TAD annotation files ---
-repeat_bed_files <- list(LINE = "LINE.mm39.bed", SINE = "SINE.mm39.bed", LTR = "LTR.mm39.bed")
-tad_bed_file     <- "TAD_boundaries_mm39.bed"
+# --- Repeat / TAD annotation files (external, under $MINUTE_DATA/annotation) ---
+repeat_bed_files <- list(
+  LINE = file.path(annot_dir, "LINE.mm39.bed"),
+  SINE = file.path(annot_dir, "SINE.mm39.bed"),
+  LTR  = file.path(annot_dir, "LTR.mm39.bed")
+)
+tad_bed_file <- file.path(annot_dir, "TAD_boundaries_mm39.bed")
 
-# --- Helper: build the 11 BigWig paths for a given mark prefix ---
-get_bigwig_files <- function(prefix, dir = bigwigDir) {
-  names <- c(
-    "WT_1", "WT_2", "WT_3", "WT_4", "WT_5", "WT_6",
-    "HP1gKO_2", "HP1gKO_3", "HP1gKO_4", "HP1gKO_5", "HP1gKO_6"
-  )
-  suffixes <- c(
-    "_WT_rep1.mm39.scaled.bw", "_WT_rep2.mm39.scaled.bw", "_WT_rep3.mm39.scaled.bw",
-    "_WT_rep4.mm39.scaled.bw", "_WT_rep5.mm39.scaled.bw", "_WT_rep6.mm39.scaled.bw",
-    "_HP1gKO_rep2.mm39.scaled.bw", "_HP1gKO_rep3.mm39.scaled.bw", "_HP1gKO_rep4.mm39.scaled.bw",
-    "_HP1gKO_rep5.mm39.scaled.bw", "_HP1gKO_rep6.mm39.scaled.bw"
-  )
-  setNames(paste0(dir, prefix, suffixes), names)
+# --- Helper: bigWig paths for one mark, named by sample_id ---
+# Order follows the sample sheet (WT rep1-6, then HP1gKO rep2-6).
+get_bigwig_files <- function(mark) {
+  s <- samples[as.character(samples$mark) == mark, , drop = FALSE]
+  setNames(s$bigwig_path, s$sample_id)
 }
 
 # --- Helper: load a UCSC-style repeat BED into a GRanges ---

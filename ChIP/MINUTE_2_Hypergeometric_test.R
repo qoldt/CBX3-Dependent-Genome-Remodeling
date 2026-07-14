@@ -157,6 +157,9 @@ enrichment_df <- do.call(rbind, enrichment_list) %>%
   dplyr::mutate(p_adj_BH = p.adjust(p_value, method = "BH")) %>%
   dplyr::ungroup()
 
+# Persist the enrichment table
+fwrite(enrichment_df, file.path(tables_dir, "enrichment_hypergeometric.tsv"), sep = "\t")
+
 # Inspect
 enrichment_df
 
@@ -204,6 +207,7 @@ p_enrich <- ggplot(plot_df,
   )+
   theme_minimal()
 
+ggsave(file.path(fig_dir, "enrichment_dotplot.pdf"), p_enrich, width = 12, height = 5)
 p_enrich
 
 

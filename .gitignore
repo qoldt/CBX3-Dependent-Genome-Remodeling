@@ -6,10 +6,16 @@
 .RData
 .Rproj.user/
 
-# Large raw inputs (provide locally — see each folder's README)
+# Generated analysis outputs — regenerable from the pipeline.
+# results/rds/ is intentionally NOT ignored (the handoff .rds is tracked).
+ChIP/results/counts/
+ChIP/results/tables/
+ChIP/results/figures/
+ChIP/results/bed/
+
+# Large raw inputs — provided locally via $MINUTE_DATA, never committed
 bigwig/
 *.bw
-*.mm39.bed
 LINE.mm39.bed
 SINE.mm39.bed
 LTR.mm39.bed

@@ -15,25 +15,63 @@ enrichment statistics, and BED tracks.
 
 ---
 
+## Where things come from — the two upstream steps
+
+The R analysis **starts from bigWigs + peaks + repeat/TAD annotation**. Those
+are produced by two cluster steps that live in this folder but are run
+separately on the HPC (Slurm), not by the R runner:
+
+1. **`Minute Run/`** — the [MINUTE](https://github.com/NBISweden/minute)
+   Snakemake pipeline. Demultiplexes, aligns to mm39, and emits the
+   **input-scaled bigWigs** (`*_<genotype>_rep*.mm39.scaled.bw`). Submit with
+   `Minute Run/submit_skeleton.sh`.
+2. **`Peak Calling/`** — MACS3 + `MergePeaks_to_masterPeak.R`, producing the
+   consensus/master **peak BEDs** in `data/peaks/`.
+
+After those finish on the cluster, stage the outputs locally (see **Data setup**)
+and run the R pipeline below.
+
+---
+
 ## Overview
 
 ```
-config.R                         ← all parameters live here (edit this only)
+config.R                         ← all parameters + the sample sheet load (edit this only)
+samples.tsv                      ← one row per bigWig: sample_id, mark, genotype, replicate
   │
   ▼
 MINUTE_1_Count_and_Annotate.R    Quantify + DESeq2 + annotate
   │                                bigWigs × peaks → counts → DESeq2 → annotated table
-  │                                ⇒ annotated_results_...rds   (handoff file)
+  │                                ⇒ results/rds/annotated_results_...rds   (handoff file)
   ├─▶ MINUTE_2_Hypergeometric_test.R   Enrichment of significant peaks vs
   │                                     TAD boundaries / LINE / SINE / LTR (+ subfamilies)
   │
   └─▶ MINUTE_3_heatmap.R               Heatmap of significant peaks + BED export
-                                        ⇒ significant_peaks_<mark>.bed
-                                        ⇒ significant_peaks_with_metadata.bed
 ```
 
 Stage 1 produces one `.rds` that stages 2 and 3 each read. Stages 2 and 3 are
 independent — run either, or both, in any order after stage 1.
+
+---
+
+## Directory layout
+
+```
+ChIP/
+  config.R  run_MINUTE.R  MINUTE_1..3.R      # code
+  samples.tsv                                 # sample sheet (single source of truth)
+  data/peaks/                                 # consensus/master peak BEDs (committed)
+  results/                                    # ALL generated output (git-ignored except rds/)
+    counts/  rds/  tables/  figures/  bed/
+  Minute Run/  Peak Calling/                  # cluster (Slurm) steps — see above
+
+$MINUTE_DATA/          # large raw inputs, OUTSIDE the repo (default ~/SynologyDrive/MINUTE)
+  bigwig/              # *_<genotype>_rep*.mm39.scaled.bw
+  annotation/          # LINE.mm39.bed  SINE.mm39.bed  LTR.mm39.bed  TAD_boundaries_mm39.bed
+```
+
+**Run the R pipeline from the `ChIP/` directory** — repo-relative paths assume it.
+There is no `setwd()`; the only machine-specific path is `$MINUTE_DATA`.
 
 ---
 
@@ -47,8 +85,8 @@ R (≥ 4.2) with the following packages:
 `AnnotationDbi`, `org.Mm.eg.db`, `TxDb.Mmusculus.UCSC.mm39.knownGene`,
 `ComplexHeatmap`
 
-**GitHub:** [`wigglescout`](https://github.com/cnluzon/wigglescout) — used to
-read signal from bigWigs. It needs specific pinned dependencies:
+**GitHub:** [`wigglescout`](https://github.com/cnluzon/wigglescout) — reads
+signal from bigWigs. It needs specific pinned dependencies:
 
 ```r
 install.packages("remotes")
@@ -62,37 +100,35 @@ remotes::install_github("cnluzon/wigglescout")
 
 ## Data setup
 
-Large inputs are **not** stored in the repo. Place them under the project root:
+Small inputs (peak BEDs, `samples.tsv`) are committed. Large raw inputs are
+**not** — place them under `$MINUTE_DATA` (default `~/SynologyDrive/MINUTE`,
+override with the env var):
 
 | Path | What | Source |
 |------|------|--------|
-| `bigwig/` | scaled mm39 bigWigs (`*_WT_rep*.mm39.scaled.bw`, `*_HP1gKO_rep*...`) | MINUTE pipeline output |
-| `LINE.mm39.bed`, `SINE.mm39.bed`, `LTR.mm39.bed` | RepeatMasker annotation | UCSC Table Browser (mm39, rmsk) |
-| `peaks/…` | master/consensus peak BEDs | included for the 4 files used; see `config.R$regions` |
-| `TAD_boundaries_mm39.bed` | TAD boundaries | included |
+| `$MINUTE_DATA/bigwig/` | scaled mm39 bigWigs (`*_WT_rep*.mm39.scaled.bw`, `*_HP1gKO_rep*…`) | `Minute Run/` pipeline output |
+| `$MINUTE_DATA/annotation/LINE.mm39.bed`, `SINE.mm39.bed`, `LTR.mm39.bed` | RepeatMasker annotation | UCSC Table Browser (mm39, rmsk) |
+| `$MINUTE_DATA/annotation/TAD_boundaries_mm39.bed` | TAD boundaries | Hi-C boundary calls (mm39) |
+| `data/peaks/…` | master/consensus peak BEDs | `Peak Calling/` output (committed) |
 
-Sample naming is defined by `get_bigwig_files()` in `config.R` — adjust it if
-your bigWig filenames differ.
+The bigWig filename for every sample is listed in **`samples.tsv`** — if your
+filenames differ, edit that sheet (nothing else).
 
 ---
 
 ## Usage
 
-Run the whole pipeline from the repo root:
-
 ```bash
-Rscript run_MINUTE.R
+cd ChIP
+Rscript run_MINUTE.R                      # all three stages
+# or, if the store is elsewhere:
+MINUTE_DATA=/path/to/store Rscript run_MINUTE.R
 ```
 
-or interactively:
-
-```r
-source("run_MINUTE.R")
-```
-
-Run a single stage (stage 1 must have produced the `.rds` first):
+Single stage (stage 1 must have produced the `.rds` first):
 
 ```bash
+cd ChIP
 Rscript MINUTE_1_Count_and_Annotate.R
 Rscript MINUTE_3_heatmap.R
 ```
@@ -101,14 +137,17 @@ Rscript MINUTE_3_heatmap.R
 
 ## Configuration
 
-**All parameters live in `config.R` — edit it there and nowhere else.** It defines:
+**All parameters live in `config.R`; all samples live in `samples.tsv`.** Between
+them they define:
 
-- Paths (`bigwigDir`, `outputDir`, the handoff `.rds` name)
-- `chips` — mark → bigWig sample prefix
+- Roots/paths (`$MINUTE_DATA`, `data/peaks`, `results/…`, the handoff `.rds`)
+- `samples.tsv` — mark, genotype, replicate, bigWig filename per sample
 - `regions` — mark → input peak BED
 - `sig_thresholds` + `is_significant()` — the significance rule
 
-Significance is `|log2FoldChange| > lfc & pvalue < p`, per mark:
+Genotype and replicate are read from the sample sheet by column name, so the
+DESeq2 design and the heatmap annotation can never drift from the actual bigWig
+set. Significance is `|log2FoldChange| > lfc & pvalue < p`, per mark:
 
 | Mark | log2FC | p-value |
 |------|--------|---------|
@@ -123,16 +162,17 @@ are always identical.
 
 ---
 
-## Outputs
+## Outputs (all under `results/`)
 
 | File | Produced by | Contents |
 |------|-------------|----------|
 | `counts/<mark>_bigwig_counts.tsv` | MINUTE_1 | per-peak signal matrix |
-| `annotated_results_...rds` | MINUTE_1 | all peaks + DESeq2 stats + annotation |
-| enrichment tables / plots | MINUTE_2 | odds ratios & hypergeometric p-values per annotation |
-| `2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_3 | clustered heatmap of significant peaks |
-| `significant_peaks_<mark>.bed` | MINUTE_3 | significant regions per mark (NCBI seqnames, score = −log10 p) |
-| `significant_peaks_with_metadata.bed` | MINUTE_3 | all significant regions + ChIP/cluster metadata |
+| `rds/annotated_results_...rds` | MINUTE_1 | all peaks + DESeq2 stats + annotation (tracked handoff) |
+| `tables/enrichment_hypergeometric.tsv` | MINUTE_2 | odds ratios & hypergeometric p-values per annotation |
+| `figures/enrichment_dotplot.pdf` | MINUTE_2 | enrichment dot plot |
+| `figures/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_3 | clustered heatmap of significant peaks |
+| `bed/significant_peaks_<mark>.bed` | MINUTE_3 | significant regions per mark (NCBI seqnames, score = −log10 p) |
+| `bed/significant_peaks_with_metadata.bed` | MINUTE_3 | all significant regions + ChIP/cluster metadata |
 
 ---
 
@@ -140,10 +180,7 @@ are always identical.
 
 - **Seqnames:** counts/DESeq2 use NCBI style (`1`); exported BEDs are NCBI. Set
   `bed_style <- "UCSC"` in MINUTE_3 for `chr`-prefixed output.
-- The `*_sig.ucsc.bed` / `all_histone_marks.ucsc.bed` browser tracks (UCSC
-  `track` headers, `chr` prefixes) are a **separate downstream conversion**, not
-  produced by this workflow.
-- DESeq2 runs with `sizeFactors = 1` — the bigWigs are already scaled, so no
-  further normalization is applied.
-- `archive_superseded/` holds the old monolithic scripts, fully replaced by
-  MINUTE_1–3; `MINUTE_4_deeptools-like.R` is unused.
+- DESeq2 runs with `sizeFactors = 1` — the bigWigs are already input-scaled, so
+  no further normalization is applied.
+- Significance uses the **raw** `pvalue` (not BH-adjusted `padj`), with lenient
+  per-mark thresholds for the broad heterochromatin marks (see table above).

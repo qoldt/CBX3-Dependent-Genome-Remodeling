@@ -12,12 +12,11 @@ source("config.R")
 
 count_tables <- list()  # in-memory storage
 
-for (mark in names(chips)) {
+for (mark in marks) {
   cat("\n=== Generating counts for:", mark, "===\n")
-  
-  chip_prefix <- chips[[mark]]
+
   region_file <- regions[[mark]]
-  bigwigs <- get_bigwig_files(chip_prefix, bigwigDir)
+  bigwigs <- get_bigwig_files(mark)
   
   if (!file.exists(region_file)) {
     cat("⚠️  Skipping", mark, "- region file not found:", region_file, "\n")
@@ -59,7 +58,7 @@ for (mark in names(chips)) {
   
   # Save to memory and file
   count_tables[[mark]] <- count_df
-  out_file <- file.path(outputDir, paste0(mark, "_bigwig_counts.tsv"))
+  out_file <- file.path(counts_dir, paste0(mark, "_bigwig_counts.tsv"))
   fwrite(cbind(peak_id = row_ids, count_df), out_file, sep = "\t", quote = FALSE, row.names = FALSE)
   cat("✅ Saved:", out_file, "\n")
 }
@@ -94,12 +93,13 @@ for (mark in names(count_tables)) {
   keep <- which(rowSums(raw_counts_int) > 10)
   filtered_counts <- raw_counts_int[keep, ]
   
-  # Sample metadata
+  # Sample metadata — genotype pulled from the sample sheet by column name,
+  # so it never drifts from the actual bigWig set. WT is the reference level.
+  geno <- samples$genotype[match(colnames(filtered_counts), samples$sample_id)]
   metadata <- data.frame(
     row.names = colnames(filtered_counts),
-    condition = factor(c(rep("Control", 6), rep("HP1gKO", 5)))
+    condition = factor(as.character(geno), levels = c("WT", "HP1gKO"))
   )
-  metadata$condition <- relevel(metadata$condition, ref = "Control")
   
   # DESeq2
   dds <- DESeqDataSetFromMatrix(countData = filtered_counts, colData = metadata, design = ~ condition)
@@ -111,7 +111,7 @@ for (mark in names(count_tables)) {
   dds_objects[[mark]] <- dds
   norm_counts[[mark]] <- counts(dds, normalized = TRUE)
   
-  res <- as.data.frame(results(dds, contrast = c("condition", "HP1gKO", "Control")))
+  res <- as.data.frame(results(dds, contrast = c("condition", "HP1gKO", "WT")))
   rownames(res) <- rownames(filtered_counts)
   deseq_results[[mark]] <- res
   
