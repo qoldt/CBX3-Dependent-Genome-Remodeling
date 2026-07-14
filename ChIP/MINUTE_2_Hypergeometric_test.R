@@ -1,3 +1,20 @@
+# ================================================================
+# MINUTE_2 — Hypergeometric enrichment of significant peaks vs annotations
+# Runs standalone after MINUTE_1, or in sequence via run_MINUTE.R
+# ================================================================
+source("config.R")
+
+# DESeq2 + annotation results produced by MINUTE_1
+annotated_results <- readRDS(annotated_rds)
+
+# Repeat + TAD annotation (shared loader from config.R)
+ann     <- load_annotation()
+line_gr <- ann$line
+sine_gr <- ann$sine
+ltr_gr  <- ann$ltr
+tad_gr  <- ann$tad
+
+
 # ================================
 # Enrichment (Hypergeometric) per ChIP and Annotation
 # ================================
@@ -11,18 +28,8 @@ combined_sig <- do.call(rbind, lapply(names(annotated_results), function(mark) {
 
 
 
-# Filter with ChIP-specific thresholds
-combined_sig <- combined_sig %>%
-  filter(
-    case_when(
-      ChIP == "H3K4me3"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.05,
-      ChIP == "H3K9me2"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.05,
-      ChIP == "H3K9me3"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.1,
-      ChIP == "H4K20me3"  ~ abs(log2FoldChange) > 0.5 & pvalue < 0.2,
-      ChIP == "H3K36me3"  ~ abs(log2FoldChange) > 0.5 & pvalue < 0.2,
-      TRUE                ~ FALSE
-    )
-  )
+# Keep only significant peaks (thresholds defined in config.R)
+combined_sig <- combined_sig[is_significant(combined_sig), ]
 
 
 try({

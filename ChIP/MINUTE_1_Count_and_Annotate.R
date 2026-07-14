@@ -6,67 +6,7 @@
 ### All regions are intersected with Genomic annotation, gene annotation and repeat annotation.
 ### It then returns a list of annotated dataframes for each ChIPseq
 
-library(ChIPseeker)
-library(AnnotationDbi)
-library(TxDb.Mmusculus.UCSC.mm39.knownGene)
-library(org.Mm.eg.db)
-library(GenomicRanges)
-library(ggplot2)
-library(rtracklayer)
-
-# For wigglescout should use these versions of furr & future 
-#install.packages(c('devtools', 'remotes'))
-#remotes::install_version("furrr", version = "0.2.3")
-#remotes::install_version("future", version = "1.23.0")
-#remotes::install_version("globals", version = "0.14.0")
-#library(remotes)
-#remotes::install_github('cnluzon/wigglescout')
-
-library(wigglescout) #
-library(parallel)
-library(data.table)
-library(DESeq2)
-library(dplyr)
-library(ggrepel)
-
-# Set working directory
-setwd("~/SynologyDrive/MINUTE/")
-bigwigDir <- "~/SynologyDrive/MINUTE/bigwig/"
-outputDir <- "counts"
-if (!dir.exists(outputDir)) dir.create(outputDir)
-
-# ChIP marks and corresponding BigWig file prefixes
-chips <- list(
-  "H3K4me3" = "A4435_2_H3K4me3_S2_L008",
-  "H3K9me2" = "A4435_3_H3K9me2_S3_L008",
-  "H3K9me3" = "A4435_4_H3K9me3_S4_L008",
-  "H4K20me3" = "A4435_5_H4K20me3_S5_L008",
-  "H3K36me3" = "A4435_6_H3K36me3_S6_L008"
-)
-
-# Associated peak files
-regions <- list(
-  "H3K4me3"   = "peaks/master_peaks_consensus/H3K4me3_consensus_masterPeak.bed",
-  "H3K9me2"   = "peaks/merged_H3K9me2_masterPeak.bed",
-  "H3K9me3"   = "peaks/2000bp_merge_H3K9me3_H4K20me3.bed",
-  "H4K20me3"  = "peaks/2000bp_merge_H3K9me3_H4K20me3.bed",
-  "H3K36me3"  = "peaks/merged_H3K36me3_masterPeak.bed"
-)
-
-# Helper to generate BigWig paths
-get_bigwig_files <- function(prefix, dir) {
-  names <- c(
-    "WT_1", "WT_2", "WT_3", "WT_4", "WT_5", "WT_6",
-    "HP1gKO_2", "HP1gKO_3", "HP1gKO_4", "HP1gKO_5", "HP1gKO_6"
-  )
-  suffixes <- c(
-    "_WT_rep1.mm39.scaled.bw", "_WT_rep2.mm39.scaled.bw", "_WT_rep3.mm39.scaled.bw",
-    "_WT_rep4.mm39.scaled.bw", "_WT_rep5.mm39.scaled.bw", "_WT_rep6.mm39.scaled.bw",
-    "_HP1gKO_rep2.mm39.scaled.bw", "_HP1gKO_rep3.mm39.scaled.bw", "_HP1gKO_rep4.mm39.scaled.bw",
-    "_HP1gKO_rep5.mm39.scaled.bw", "_HP1gKO_rep6.mm39.scaled.bw"
-  )
-  setNames(paste0(dir, prefix, suffixes), names)
-}
+source("config.R")
 
 # Generate and store count matrices
 
@@ -213,37 +153,12 @@ for (chip in names(deseq_results)) {
 
 ### LOAD ANNOTATIONS
 
-# --- Load Repeat BEDs ---
-loadRepeatBED <- function(filepath) {
-  expected_colnames <- c("bin", "swScore", "milliDiv", "milliDel", "milliIns",
-                         "genoName", "genoStart", "genoEnd", "genoLeft", "strand",
-                         "repName", "repClass", "repFamily", "repStart", "repEnd",
-                         "repLeft", "id")
-  df <- read.table(filepath, sep = "\t", header = FALSE, comment.char = "#", quote = "",
-                   fill = TRUE, stringsAsFactors = FALSE,
-                   col.names = expected_colnames, colClasses = rep("character", 17))
-  df$genoStart <- suppressWarnings(as.numeric(df$genoStart))
-  df$genoEnd <- suppressWarnings(as.numeric(df$genoEnd))
-  df <- df[!is.na(df$genoStart) & !is.na(df$genoEnd), ]
-  
-  GRanges(
-    seqnames = df$genoName,
-    ranges = IRanges(start = df$genoStart + 1, end = df$genoEnd),
-    strand = df$strand,
-    repName = df$repName,
-    repClass = df$repClass,
-    repFamily = df$repFamily
-  )
-}
-
-line_gr <- loadRepeatBED("LINE.mm39.bed")
-sine_gr <- loadRepeatBED("SINE.mm39.bed")
-ltr_gr  <- loadRepeatBED("LTR.mm39.bed")
-
-
-# import TAD boundary annotation
-tad_gr <- import("TAD_boundaries_mm39.bed", format = "bed")
-seqlevelsStyle(tad_gr) <- "UCSC"
+# --- Load Repeat + TAD annotation (shared loader from config.R) ---
+ann     <- load_annotation()
+line_gr <- ann$line
+sine_gr <- ann$sine
+ltr_gr  <- ann$ltr
+tad_gr  <- ann$tad
 
 
 # --- Annotation Loop ---
@@ -363,6 +278,5 @@ for (mark in names(deseq_results)) {
   cat("✅ Completed:", mark, "\n")
 }
 
-saveRDS(annotated_results, file = "annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds")
+saveRDS(annotated_results, file = annotated_rds)
 
-table <- readRDS("annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds")

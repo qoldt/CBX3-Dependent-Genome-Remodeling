@@ -1,0 +1,15 @@
+# macOS
+.DS_Store
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Large raw inputs (provide locally — see each folder's README)
+bigwig/
+*.bw
+*.mm39.bed
+LINE.mm39.bed
+SINE.mm39.bed
+LTR.mm39.bed

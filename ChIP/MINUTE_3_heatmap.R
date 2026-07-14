@@ -1,9 +1,16 @@
+# ================================================================
+# MINUTE_3 — Heatmap of significant peaks + significant-region BED export
+# Runs standalone after MINUTE_1, or in sequence via run_MINUTE.R
+# ================================================================
+source("config.R")
+
+# DESeq2 + annotation results produced by MINUTE_1
+annotated_results <- readRDS(annotated_rds)
+
 
 ###### HEATMAPS
 
 ###### ONE LARGE HEATMAP OF ALL SIG CHANGES
-library(ComplexHeatmap)
-library(circlize)  # for color functions
 
 # Combine all annotated results
 combined_sig <- do.call(rbind, lapply(names(annotated_results), function(mark) {
@@ -14,18 +21,8 @@ combined_sig <- do.call(rbind, lapply(names(annotated_results), function(mark) {
 }))
 
 
-# Filter with ChIP-specific thresholds
-combined_sig <- combined_sig %>%
-  filter(
-    case_when(
-      ChIP == "H3K4me3"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.05,
-      ChIP == "H3K9me2"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.05,
-      ChIP == "H3K9me3"   ~ abs(log2FoldChange) > 0.5 & pvalue < 0.1,
-      ChIP == "H4K20me3"  ~ abs(log2FoldChange) > 0.5 & pvalue < 0.2,
-      ChIP == "H3K36me3"  ~ abs(log2FoldChange) > 0.5 & pvalue < 0.2,
-      TRUE                ~ FALSE
-    )
-  )
+# Keep only significant peaks (thresholds defined in config.R)
+combined_sig <- combined_sig[is_significant(combined_sig), ]
 
 combined_sig <- combined_sig[unique(combined_sig$peak_id),]
 
@@ -200,5 +197,53 @@ ht <- Heatmap(
 #draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
 
 pdf("2000maxgap_indsignificance_with_TAD.pdf", width = 10, height = 16)  # adjust size as needed
-draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
+ht_drawn <- draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
 dev.off()
+
+
+# ---------------------------
+# 5. Extract k-means clusters and export significant-region BED files
+#     (rehomed from Minute_count_and_annotate_from_scaled_bw_v2.R)
+# ---------------------------
+
+# Read the row k-means assignment back off the heatmap we just drew
+main_ht        <- ht_drawn@ht_list[[1]]
+km_assignments <- ComplexHeatmap::row_order(main_ht)   # list of row indices, one element per cluster
+
+cluster_vector <- rep(NA_integer_, nrow(signal_mat))
+names(cluster_vector) <- rownames(signal_mat)
+for (k in seq_along(km_assignments)) {
+  cluster_vector[km_assignments[[k]]] <- k
+}
+sig_df$Cluster <- cluster_vector[rownames(sig_df)]
+
+# --- Combined BED of all marks (score = log2FoldChange) ---
+sig_gr_bed <- GRanges(
+  seqnames = sig_df$chr,
+  ranges   = IRanges(start = sig_df$start, end = sig_df$end),
+  strand   = "*"
+)
+mcols(sig_gr_bed)$name    <- sig_df$peak_id
+mcols(sig_gr_bed)$score   <- round(sig_df$log2FoldChange, 3)
+mcols(sig_gr_bed)$ChIP    <- sig_df$ChIP
+mcols(sig_gr_bed)$Cluster <- sig_df$Cluster
+export(sig_gr_bed, "significant_peaks_with_metadata.bed", format = "BED")
+
+# --- One BED per mark (NCBI seqnames; score = -log10(pvalue)) ---
+bed_style <- "NCBI"   # switch to "UCSC" for chr-prefixed names
+for (chip in unique(sig_df$ChIP)) {
+  df_chip <- subset(sig_df, ChIP == chip)
+  gr <- GRanges(
+    seqnames = df_chip$chr,
+    ranges   = IRanges(start = df_chip$start, end = df_chip$end),
+    strand   = "*"
+  )
+  seqlevelsStyle(gr) <- bed_style
+  mcols(gr)$name    <- df_chip$peak_id
+  mcols(gr)$score   <- -log10(df_chip$pvalue)
+  mcols(gr)$cluster <- df_chip$Cluster
+  mcols(gr)$chip    <- df_chip$ChIP
+  out_file <- paste0("significant_peaks_", chip, ".bed")
+  export(gr, con = out_file, format = "BED")
+  message("Exported: ", out_file)
+}
