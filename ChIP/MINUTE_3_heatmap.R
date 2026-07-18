@@ -172,6 +172,7 @@ signal_scaled <- t(scale(t(signal_mat)))  # row Z-score
 # 4. Plot
 # ---------------------------
 
+set.seed(42)   # reproducible k-means cluster assignment/numbering across runs
 ht <- Heatmap(
   signal_scaled,
   name = "Z-score",
@@ -211,6 +212,22 @@ for (k in seq_along(km_assignments)) {
   cluster_vector[km_assignments[[k]]] <- k
 }
 sig_df$Cluster <- cluster_vector[rownames(sig_df)]
+
+# --- Persist cluster table + signal matrix for downstream analysis (MINUTE_4) --
+# rtracklayer BED export keeps only standard columns (it DROPS Cluster/ChIP), so
+# the metadata BED below is browser-only. Save the real cluster table + the
+# per-sample signal matrix here so MINUTE_4 can run without re-reading bigWigs.
+cluster_cols <- intersect(
+  c("peak_id", "chr", "start", "end", "ChIP", "Cluster", "log2FoldChange",
+    "pvalue", "baseMean", "peak_size_kb", "genomic_region", "repeat_class",
+    "repeat_family", "SYMBOL", "label", "overlaps_with_Tad_boundary",
+    "chromHMM_state", "chromHMM_purity"),
+  names(sig_df))
+saveRDS(list(sig_df = sig_df, signal_mat = signal_mat, col_annot = col_annot),
+        file.path(rds_dir, "cluster_analysis_inputs.rds"))
+fwrite(sig_df[, cluster_cols],
+       file.path(tables_dir, "significant_peaks_clusters.tsv"), sep = "\t")
+message("Saved: cluster_analysis_inputs.rds + significant_peaks_clusters.tsv")
 
 # --- Combined BED of all marks (score = log2FoldChange) ---
 sig_gr_bed <- GRanges(
@@ -483,10 +500,11 @@ message("Saved: ", file.path(fig_dir, "log2FC_distribution_by_mark.png"))
 
 
 # ================================================================
-# 8. Relationship: domain size x ChIP signal (baseMean) x log2FC
-#    The change-plots use x=size and size=size (redundant). These three views
-#    put domain size, baseMean and log2FC on separate channels to reveal how
-#    the change depends jointly on domain length and signal intensity.
+# 8. Relationship: domain size x ChIP signal (baseMean) x log2FC  [TOTAL]
+#    Genome-wide ("total") across all peaks; MINUTE_4 produces the per-cluster
+#    counterparts. The change-plots use x=size and size=size (redundant). These
+#    three views put domain size, baseMean and log2FC on separate channels to
+#    reveal how the change depends jointly on domain length and signal intensity.
 #    (baseMean is length-normalised mean coverage, so size and baseMean are
 #    ~independent axes: cor ~ 0.)
 #    All peaks are used (no highlight filter) — binning/averaging also tames
@@ -516,9 +534,9 @@ g_rel_heat <- ggplot(rel_df, aes(kb, baseMean, z = log2FoldChange)) +
        x = "Domain Size (kb)", y = "baseMean (ChIP signal)") +
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_size_baseMean_log2FC_binned.png"),
+ggsave(file.path(fig_dir, "relationship_total_size_baseMean_log2FC_binned.png"),
        g_rel_heat, width = 13, height = 8, dpi = plot_dpi)
-message("Saved: relationship_size_baseMean_log2FC_binned.png")
+message("Saved: relationship_total_size_baseMean_log2FC_binned.png")
 
 # --- 8b. Scatter: log2FC vs domain size, coloured by baseMean ----------------
 g_rel_scatter <- ggplot(rel_df, aes(kb, log2FoldChange, colour = baseMean)) +
@@ -531,9 +549,9 @@ g_rel_scatter <- ggplot(rel_df, aes(kb, log2FoldChange, colour = baseMean)) +
        x = "Domain Size (kb)", y = "log2FoldChange") +
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_log2FC_vs_size_by_baseMean.png"),
+ggsave(file.path(fig_dir, "relationship_total_log2FC_vs_size_by_baseMean.png"),
        g_rel_scatter, width = 13, height = 8, dpi = plot_dpi)
-message("Saved: relationship_log2FC_vs_size_by_baseMean.png")
+message("Saved: relationship_total_log2FC_vs_size_by_baseMean.png")
 
 # --- 8c. Interaction: mean log2FC vs size bin, stratified by baseMean tertile -
 # Direct visual of the size x baseMean interaction: a line per baseMean tertile.
@@ -560,6 +578,115 @@ g_inter <- ggplot(inter, aes(size_bin, mean_l2fc, colour = base_tertile, group =
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank(),
         axis.text.x = element_text(angle = 45, hjust = 1, size = base_size - 3))
-ggsave(file.path(fig_dir, "relationship_interaction_size_x_baseMean.png"),
+ggsave(file.path(fig_dir, "relationship_total_interaction_size_x_baseMean.png"),
        g_inter, width = 13, height = 8, dpi = plot_dpi)
-message("Saved: relationship_interaction_size_x_baseMean.png")
+message("Saved: relationship_total_interaction_size_x_baseMean.png")
+
+
+# ================================================================
+# 9. Relationship BY K-MEANS CLUSTER (size x baseMean x log2FC)
+#    The same three views as Section 8, but faceted by cluster (using sig_df,
+#    the clustered significant peaks) instead of genome-wide. Complements the
+#    _total versions; shows whether the size/signal/change structure differs
+#    between the chromatin-signature clusters.
+# ================================================================
+
+clus_df <- sig_df[is.finite(sig_df$log2FoldChange) & is.finite(sig_df$baseMean) &
+                  sig_df$peak_size_kb > 0 & sig_df$baseMean > 0 & !is.na(sig_df$Cluster), ]
+clus_df$Cluster <- factor(paste("Cluster", clus_df$Cluster),
+                          levels = paste("Cluster", sort(unique(sig_df$Cluster))))
+
+# --- 9a. Binned heatmap per cluster ---
+g_c_heat <- ggplot(clus_df, aes(peak_size_kb, baseMean, z = log2FoldChange)) +
+  stat_summary_2d(fun = mean, bins = 25) +
+  scale_x_log10() + scale_y_log10() +
+  scale_fill_gradient2(low = "#2166ac", mid = "grey95", high = "#b2182b",
+                       midpoint = 0, limits = c(-1, 1), oob = scales::squish,
+                       name = "mean\nlog2FC") +
+  facet_wrap(~Cluster, ncol = 3) +
+  labs(title = "log2FC across domain size x ChIP signal, by cluster",
+       x = "Domain Size (kb)", y = "baseMean (ChIP signal)") +
+  theme_minimal(base_size = base_size) +
+  theme(panel.grid.minor = element_blank())
+ggsave(file.path(fig_dir, "relationship_bycluster_size_baseMean_log2FC_binned.png"),
+       g_c_heat, width = 12, height = 8, dpi = plot_dpi)
+message("Saved: relationship_bycluster_size_baseMean_log2FC_binned.png")
+
+# --- 9b. Scatter per cluster ---
+g_c_scatter <- ggplot(clus_df, aes(peak_size_kb, log2FoldChange, colour = baseMean)) +
+  geom_point(size = 0.5, alpha = 0.4) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  scale_x_log10() +
+  scale_colour_viridis_c(trans = "log10", name = "baseMean") +
+  facet_wrap(~Cluster, ncol = 3) +
+  labs(title = "log2FC vs domain size by cluster, coloured by baseMean",
+       x = "Domain Size (kb)", y = "log2FoldChange") +
+  theme_minimal(base_size = base_size) +
+  theme(panel.grid.minor = element_blank())
+ggsave(file.path(fig_dir, "relationship_bycluster_log2FC_vs_size_by_baseMean.png"),
+       g_c_scatter, width = 12, height = 8, dpi = plot_dpi)
+message("Saved: relationship_bycluster_log2FC_vs_size_by_baseMean.png")
+
+# --- 9c. Interaction per cluster (baseMean tertiles within each cluster) ---
+inter_c <- clus_df %>%
+  group_by(Cluster) %>%
+  mutate(base_tertile = factor(ntile(baseMean, 3), labels = c("low", "mid", "high")),
+         size_bin     = cut(peak_size_kb, size_breaks_kb, dig.lab = 4)) %>%
+  ungroup() %>%
+  filter(!is.na(size_bin)) %>%
+  group_by(Cluster, base_tertile, size_bin) %>%
+  summarise(mean_l2fc = mean(log2FoldChange), n = n(), .groups = "drop") %>%
+  filter(n >= 10)
+
+g_c_inter <- ggplot(inter_c, aes(size_bin, mean_l2fc, colour = base_tertile, group = base_tertile)) +
+  geom_hline(yintercept = 0, linewidth = 0.3) +
+  geom_line() + geom_point(size = 1) +
+  scale_colour_viridis_d(option = "C", end = 0.85, name = "baseMean\ntertile") +
+  facet_wrap(~Cluster, ncol = 3) +
+  labs(title = "Interaction: domain size x signal on log2FC, by cluster",
+       subtitle = "bins with n < 10 dropped",
+       x = "Domain size bin (kb)", y = "mean log2FoldChange") +
+  theme_minimal(base_size = base_size) +
+  theme(panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = base_size - 3))
+ggsave(file.path(fig_dir, "relationship_bycluster_interaction_size_x_baseMean.png"),
+       g_c_inter, width = 12, height = 8, dpi = plot_dpi)
+message("Saved: relationship_bycluster_interaction_size_x_baseMean.png")
+
+# --- 9d. Mark-vs-mark relationship per cluster ---
+# signal_mat holds EVERY sample (all marks) measured at each clustered peak, so
+# we can ask how the heterochromatin marks co-occur within a cluster: for each
+# peak, mean WT signal of mark A vs mark B, faceted by cluster, with Spearman rho.
+het_marks <- c("H3K9me2", "H3K9me3", "H4K20me3")
+wt_mark <- sapply(het_marks, function(mk) {
+  cols <- col_annot$Sample[as.character(col_annot$ChIP) == mk &
+                           as.character(col_annot$Genotype) == "WT"]
+  rowMeans(signal_mat[, cols, drop = FALSE], na.rm = TRUE)
+})
+rownames(wt_mark) <- rownames(signal_mat)
+wt_mark <- wt_mark[match(sig_df$peak_id, rownames(wt_mark)), , drop = FALSE]
+
+mark_pairs <- list(c("H3K9me3", "H4K20me3"),
+                   c("H3K9me2", "H3K9me3"),
+                   c("H3K9me2", "H4K20me3"))
+clus_lv <- paste("Cluster", sort(unique(sig_df$Cluster)))
+for (pr in mark_pairs) {
+  d <- data.frame(Cluster = factor(paste("Cluster", sig_df$Cluster), levels = clus_lv),
+                  x = wt_mark[, pr[1]], y = wt_mark[, pr[2]])
+  d <- d[is.finite(d$x) & is.finite(d$y) & !is.na(d$Cluster), ]
+  rlab <- d %>% group_by(Cluster) %>%
+    summarise(r = cor(x, y, method = "spearman", use = "complete.obs"), .groups = "drop")
+  g_mp <- ggplot(d, aes(x, y)) +
+    geom_point(size = 0.3, alpha = 0.15) +
+    geom_smooth(method = "lm", se = FALSE, colour = "firebrick", linewidth = 0.5) +
+    geom_text(data = rlab, aes(x = Inf, y = Inf, label = sprintf("rho = %.2f", r)),
+              hjust = 1.1, vjust = 1.5, size = 3, colour = "firebrick") +
+    facet_wrap(~Cluster, nrow = 1, scales = "free") +
+    labs(title = sprintf("%s vs %s (mean WT signal), by cluster", pr[1], pr[2]),
+         subtitle = "per-peak co-occurrence of the two marks within each chromatin-signature cluster",
+         x = paste(pr[1], "WT signal"), y = paste(pr[2], "WT signal")) +
+    theme_minimal(base_size = base_size) + theme(panel.grid.minor = element_blank())
+  out <- file.path(fig_dir, sprintf("relationship_bycluster_marks_%s_vs_%s.png", pr[1], pr[2]))
+  ggsave(out, g_mp, width = 14, height = 3.6, dpi = plot_dpi)
+  message("Saved: ", basename(out))
+}

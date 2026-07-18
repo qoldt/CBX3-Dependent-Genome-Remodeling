@@ -97,6 +97,59 @@ repeat_bed_files <- list(
 )
 tad_bed_file <- file.path(annot_dir, "TAD_boundaries_mm39.bed")
 
+# ChromHMM 18-state cortex (P0) segmentation, mm39. Annotated per-peak in
+# MINUTE_1 (column chromHMM_state), enriched in MINUTE_2, used in MINUTE_4.
+chromhmm_bed <- file.path(annot_dir, "ChromHMM_18state_CortexP0_mm39.bed")
+
+# --- Helper: load the ChromHMM segmentation as a GRanges (state in $state) ---
+# The file has a few overlapping same-state segments, which would double-count
+# coverage; merge overlapping segments within each state so per-state coverage
+# is well defined (fraction of a peak in any one state cannot exceed 1).
+load_chromHMM <- function() {
+  gr <- rtracklayer::import(chromhmm_bed, format = "bed")   # 4th BED col -> $name
+  mcols(gr)$state <- as.character(mcols(gr)$name)
+  red <- unlist(reduce(split(gr, mcols(gr)$state)))
+  mcols(red)$state <- names(red)
+  names(red) <- NULL
+  red
+}
+
+# --- Helper: per-peak coverage FRACTION of each ChromHMM state ---
+# Domains span many states, so we keep the full breakdown rather than a single
+# size-biased label. gr: peaks GRanges (any seqnames style). Returns a matrix
+# [peaks x states]; each value = fraction of that peak's width covered by the
+# state (rows sum to <= 1). Downstream: dominant label + coverage-based enrichment.
+chromHMM_coverage <- function(gr, chromhmm_gr) {
+  suppressWarnings(seqlevelsStyle(chromhmm_gr) <- seqlevelsStyle(gr)[1])
+  states <- sort(unique(as.character(mcols(chromhmm_gr)$state)))
+  m <- matrix(0, nrow = length(gr), ncol = length(states),
+              dimnames = list(NULL, states))
+  hits <- findOverlaps(gr, chromhmm_gr, ignore.strand = TRUE)
+  if (length(hits) > 0) {
+    ov  <- pintersect(gr[queryHits(hits)], chromhmm_gr[subjectHits(hits)],
+                      ignore.strand = TRUE)
+    agg <- data.table(q = queryHits(hits),
+                      s = as.character(mcols(chromhmm_gr)$state[subjectHits(hits)]),
+                      w = width(ov))[, .(w = sum(w)), by = .(q, s)]
+    m[cbind(agg$q, match(agg$s, states))] <- agg$w
+    m <- pmin(m / width(gr), 1)   # fraction; cap at 1 (rare cross-state overlaps)
+  }
+  m
+}
+
+# --- Helper: dominant state + its purity from a coverage matrix ---
+# Convenience single label = the state covering the largest fraction of the peak,
+# plus that fraction (purity). NA where a peak overlaps no ChromHMM segment.
+chromHMM_dominant <- function(cov) {
+  rs <- rowSums(cov)
+  mc <- max.col(cov, ties.method = "first")
+  data.frame(
+    chromHMM_state  = ifelse(rs > 0, colnames(cov)[mc], NA_character_),
+    chromHMM_purity = ifelse(rs > 0, cov[cbind(seq_len(nrow(cov)), mc)], NA_real_),
+    stringsAsFactors = FALSE
+  )
+}
+
 # --- Helper: bigWig paths for one mark, named by sample_id ---
 # Order follows the sample sheet (WT rep1-6, then HP1gKO rep2-6).
 get_bigwig_files <- function(mark) {

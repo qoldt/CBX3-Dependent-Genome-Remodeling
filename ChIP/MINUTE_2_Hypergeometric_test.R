@@ -211,3 +211,63 @@ ggsave(file.path(fig_dir, "enrichment_dotplot.pdf"), p_enrich, width = 12, heigh
 p_enrich
 
 
+# ================================================================
+# ChromHMM chromatin-state enrichment (coverage-based)
+# ----------------------------------------------------------------
+# ChromHMM is annotated per peak in MINUTE_1 as per-state COVERAGE FRACTIONS
+# (hmm_<state> columns) rather than a single size-biased label, because the
+# H4K20me3/H3K9me3 domains span many states. For each mark x state we compare
+# the mean coverage fraction in the significant set vs the background
+# (non-significant peaks): log2 ratio of means = effect size, Wilcoxon = test.
+# ================================================================
+
+hmm_cols   <- grep("^hmm_", names(annotated_results[[1]]), value = TRUE)
+hmm_states <- sub("^hmm_", "", hmm_cols)
+
+chromhmm_enrich <- do.call(rbind, lapply(names(annotated_results), function(mark) {
+  d   <- annotated_results[[mark]]
+  d$ChIP <- mark
+  sig <- is_significant(d)
+  do.call(rbind, lapply(hmm_states, function(st) {
+    col     <- paste0("hmm_", st)
+    cov_sig <- d[[col]][sig]
+    cov_bg  <- d[[col]][!sig]                       # background = non-significant
+    m_sig   <- mean(cov_sig, na.rm = TRUE)
+    m_bg    <- mean(cov_bg,  na.rm = TRUE)
+    pval    <- tryCatch(suppressWarnings(wilcox.test(cov_sig, cov_bg)$p.value),
+                        error = function(e) NA_real_)
+    data.frame(ChIP = mark, state = st, n_sig = sum(sig),
+               mean_cov_sig = m_sig, mean_cov_bg = m_bg,
+               log2_ratio = log2((m_sig + 1e-4) / (m_bg + 1e-4)),
+               p_value = pval, stringsAsFactors = FALSE)
+  }))
+}))
+
+chromhmm_enrich <- chromhmm_enrich %>%
+  dplyr::group_by(ChIP) %>%
+  dplyr::mutate(p_adj_BH = p.adjust(p_value, method = "BH")) %>%
+  dplyr::ungroup()
+
+fwrite(chromhmm_enrich, file.path(tables_dir, "enrichment_chromHMM.tsv"), sep = "\t")
+
+# Dot plot: state x mark, size = -log10 FDR, colour = log2 ratio (sig vs background)
+hmm_plot <- chromhmm_enrich %>%
+  dplyr::filter(is.finite(log2_ratio), !is.na(p_adj_BH)) %>%
+  dplyr::mutate(neglog10FDR = -log10(pmax(p_adj_BH, .Machine$double.xmin)),
+                state = factor(state, levels = sort(unique(state))))
+
+p_hmm <- ggplot(hmm_plot, aes(x = ChIP, y = state, size = neglog10FDR, colour = log2_ratio)) +
+  geom_point() +
+  scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
+                         midpoint = 0, name = expression(log[2]~"(sig/bg coverage)")) +
+  scale_size_continuous(name = expression(-log[10]("FDR"))) +
+  labs(title = "ChromHMM state enrichment of significant peaks (coverage-based)",
+       subtitle = "colour = log2 mean-coverage ratio (significant vs background); size = FDR",
+       x = NULL, y = "ChromHMM state") +
+  theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+
+ggsave(file.path(fig_dir, "enrichment_chromHMM_dotplot.pdf"), p_hmm, width = 8, height = 7)
+message("Saved: enrichment_chromHMM.tsv + enrichment_chromHMM_dotplot.pdf")
+
+

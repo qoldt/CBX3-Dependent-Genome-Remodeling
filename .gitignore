@@ -24,3 +24,6 @@ LINE.mm39.bed
 SINE.mm39.bed
 LTR.mm39.bed
 TAD_boundaries_mm39.bed
+
+# stray base-R plot device output
+Rplots.pdf

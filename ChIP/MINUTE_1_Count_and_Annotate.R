@@ -160,6 +160,9 @@ sine_gr <- ann$sine
 ltr_gr  <- ann$ltr
 tad_gr  <- ann$tad
 
+# --- Load ChromHMM 18-state segmentation (for per-peak state coverage) ---
+chromhmm_gr <- load_chromHMM()
+
 
 # --- Annotation Loop ---
 
@@ -269,6 +272,14 @@ for (mark in names(deseq_results)) {
     res$repeat_name[agg$q]   <- agg$repeat_name
     res$repeat_family[agg$q] <- agg$repeat_family
   }
+  # ChromHMM chromatin-state coverage (dominant label + purity + per-state
+  # fractions in hmm_<state> columns). peak_gr is UCSC here, matching ChromHMM.
+  cov <- chromHMM_coverage(peak_gr, chromhmm_gr)
+  dom <- chromHMM_dominant(cov)
+  res$chromHMM_state  <- dom$chromHMM_state
+  res$chromHMM_purity <- dom$chromHMM_purity
+  res[paste0("hmm_", colnames(cov))] <- as.data.frame(cov)
+
   # regenerate rownames based on peak coordinates
   res$peak_id <- paste0(res$chr, ":", res$start, "-", res$end)
   rownames(res) <- res$peak_id

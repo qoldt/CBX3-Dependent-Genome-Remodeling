@@ -16,7 +16,10 @@ source("MINUTE_1_Count_and_Annotate.R")
 message("=== MINUTE_2: hypergeometric enrichment ===")
 source("MINUTE_2_Hypergeometric_test.R")
 
-message("=== MINUTE_3: heatmap + significant-region BED export ===")
+message("=== MINUTE_3: heatmap + clusters + change/relationship plots ===")
 source("MINUTE_3_heatmap.R")
+
+message("=== MINUTE_4: k-means cluster characterisation ===")
+source("MINUTE_4_cluster_analysis.R")
 
 message("=== MINUTE pipeline complete ===")

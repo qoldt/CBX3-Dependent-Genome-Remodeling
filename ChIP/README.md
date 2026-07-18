@@ -42,15 +42,20 @@ samples.tsv                      ← one row per bigWig: sample_id, mark, genoty
   ▼
 MINUTE_1_Count_and_Annotate.R    Quantify + DESeq2 + annotate
   │                                bigWigs × peaks → counts → DESeq2 → annotated table
+  │                                annotation: genomic region, gene, repeats, TAD, ChromHMM state
   │                                ⇒ results/rds/annotated_results_...rds   (handoff file)
-  ├─▶ MINUTE_2_Hypergeometric_test.R   Enrichment of significant peaks vs
-  │                                     TAD boundaries / LINE / SINE / LTR (+ subfamilies)
+  ├─▶ MINUTE_2_Hypergeometric_test.R   Enrichment of significant peaks vs TAD / LINE / SINE /
+  │                                     LTR (+ subfamilies); separate ChromHMM-state enrichment
   │
-  └─▶ MINUTE_3_heatmap.R               Heatmap of significant peaks + BED export
+  └─▶ MINUTE_3_heatmap.R               Heatmap + k-means clusters + BED export; per-chromosome
+        │                              change plots; size×signal×log2FC relationship plots
+        │                              ⇒ results/rds/cluster_analysis_inputs.rds
+        └─▶ MINUTE_4_cluster_analysis.R   Characterise clusters: signal/loss profiles,
+                                           ChromHMM, repeat/region/gene-family composition
 ```
 
-Stage 1 produces one `.rds` that stages 2 and 3 each read. Stages 2 and 3 are
-independent — run either, or both, in any order after stage 1.
+Stage 1 produces one `.rds` that stages 2 and 3 each read (independently). Stage 4
+reads the cluster inputs persisted by stage 3, so it runs after stage 3.
 
 ---
 
@@ -317,17 +322,26 @@ unreliable — the distribution is the finding, not any single locus.
 |------|-------------|----------|
 | `counts/<mark>_bigwig_counts.tsv` | MINUTE_1 | per-peak signal matrix |
 | `rds/annotated_results_...rds` | MINUTE_1 | all peaks + DESeq2 stats + annotation (tracked handoff) |
-| `tables/enrichment_hypergeometric.tsv` | MINUTE_2 | odds ratios & hypergeometric p-values per annotation |
-| `figures/enrichment_dotplot.pdf` | MINUTE_2 | enrichment dot plot |
-| `figures/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_3 | clustered heatmap of significant peaks |
-| `figures/<mark>_changes_by_chr_coloured_by_genomic_region.png` | MINUTE_3 | per-chromosome domain-size vs log2FC, sized by baseMean, coloured by genomic region |
-| `figures/<mark>_changes_by_chr_coloured_by_repeat.png` | MINUTE_3 | same, coloured by repeat class |
+| `tables/enrichment_hypergeometric.tsv` | MINUTE_2 | odds ratios & hypergeometric p-values per repeat/TAD annotation |
+| `figures/enrichment_dotplot.pdf` | MINUTE_2 | repeat/TAD enrichment dot plot |
+| `tables/enrichment_chromHMM.tsv` | MINUTE_2 | ChromHMM-state enrichment (mean coverage sig vs background, log2 ratio + Wilcoxon) |
+| `figures/enrichment_chromHMM_dotplot.pdf` | MINUTE_2 | ChromHMM-state enrichment dot plot (states × marks) |
+| `figures/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_3 | clustered heatmap of significant peaks (k-means, seeded) |
+| `figures/<mark>_changes_by_chr_coloured_by_{genomic_region,repeat}.png` | MINUTE_3 | per-chromosome domain-size vs log2FC, sized by domain size, coloured by region/repeat |
 | `figures/log2FC_distribution_by_mark.png` | MINUTE_3 | per-mark log2FC density + median (global-shift diagnostic) |
-| `figures/relationship_size_baseMean_log2FC_binned.png` | MINUTE_3 | mean log2FC over the domain-size × baseMean plane (binned heatmap) |
-| `figures/relationship_log2FC_vs_size_by_baseMean.png` | MINUTE_3 | log2FC vs domain size, coloured by baseMean |
-| `figures/relationship_interaction_size_x_baseMean.png` | MINUTE_3 | mean log2FC vs size bin, by baseMean tertile (size × signal interaction) |
+| `figures/relationship_total_*.png` | MINUTE_3 | genome-wide size×baseMean×log2FC: binned heatmap, scatter, size×signal interaction |
+| `figures/relationship_bycluster_*.png` | MINUTE_3 | the same three relationship views, faceted by k-means cluster |
+| `figures/relationship_bycluster_marks_<A>_vs_<B>.png` | MINUTE_3 | mark-vs-mark WT-signal co-occurrence per cluster (H3K9me2/3, H4K20me3 pairs) + Spearman ρ |
+| `rds/cluster_analysis_inputs.rds` | MINUTE_3 | cluster table + per-sample signal matrix (handoff to MINUTE_4) |
+| `tables/significant_peaks_clusters.tsv` | MINUTE_3 | significant peaks with cluster + annotation (the metadata BED can't hold it) |
 | `bed/significant_peaks_<mark>.bed` | MINUTE_3 | significant regions per mark (NCBI seqnames, score = −log10 p) |
-| `bed/significant_peaks_with_metadata.bed` | MINUTE_3 | all significant regions + ChIP/cluster metadata |
+| `bed/significant_peaks_with_metadata.bed` | MINUTE_3 | significant regions, score = log2FC (browser BED; cluster/ChIP are in the TSV) |
+| `figures/cluster_signal_profile.png` | MINUTE_4 | mean signal per cluster × mark, WT vs KO (what each cluster is) |
+| `figures/cluster_loss_heatmap.png` | MINUTE_4 | log2(KO/WT) signal, cluster × mark |
+| `figures/cluster_chromHMM_coverage_{abs,zscore}.png` | MINUTE_4 | mean ChromHMM-state coverage per cluster (absolute + per-state z) |
+| `figures/cluster_{repeat,region}_composition.png` | MINUTE_4 | repeat-class / genomic-region composition per cluster |
+| `figures/cluster_gene_families.png` | MINUTE_4 | Pcdh / KRAB-Zfp / Vmn / Olfr and pericentromeric fractions per cluster |
+| `tables/cluster_summary.tsv` | MINUTE_4 | per-cluster n, median size/log2FC, top state/repeat, family fractions |
 
 ---
 
