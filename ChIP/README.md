@@ -314,6 +314,21 @@ unreliable — the distribution is the finding, not any single locus.
 > exports, and MINUTE_2 hypergeometric test still use `is_significant()`
 > (p-based) throughout.
 
+### Finding: H3K9me3 / H4K20me3 loss by chromatin type and domain size
+
+In the HP1γ knockout, H4K20me3 is lost broadly across all heterochromatin
+clusters (median log2FC ≈ −1.0) whereas H3K9me3 loss is milder and
+cluster-specific, and the two marks' per-peak losses are weakly *anti*-correlated
+(Spearman ρ ≈ −0.30 in the main heterochromatin clusters) — so they largely do
+not fall at the same peaks. Where H3K9me3 *does* co-fall with H4K20me3, the
+regions are enriched for constitutive-heterochromatin ChromHMM states (`Het`,
+`Quies3`), whereas H4K20me3-only loss dominates generic quiescent (`Quies`,
+`Quies2`) and distal-intergenic chromatin. This coupled loss is concentrated in
+the **largest domains** — size-weighting the enrichment by domain length
+strengthens the `Het`/`Quies3` signal (e.g. `Het` log2 ratio 0.38 → 1.33) —
+indicating the biggest constitutive-heterochromatin domains are where H3K9me3
+and H4K20me3 decline together.
+
 ---
 
 ## Outputs (all under `results/`)
