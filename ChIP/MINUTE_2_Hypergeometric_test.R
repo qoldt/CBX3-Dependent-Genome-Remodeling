@@ -328,15 +328,15 @@ k9_lollipop <- function(lr, fdr, ttl) {
                            midpoint = 0, name = expression(log[2]~"ratio")) +
     scale_size_continuous(name = expression(-log[10]("FDR"))) +
     labs(title = ttl,
-         subtitle = "red/right = higher where H3K9me3 also falls; blue/left = higher where H3K9me3 stays",
-         x = "log2 coverage ratio (H3K9me3-loss / unchanged)", y = "ChromHMM state") +
+         subtitle = "Every region here has H4K20me3 LOST. Split by H3K9me3: red/right = state enriched where H3K9me3 is ALSO lost; blue/left = where H3K9me3 is retained.",
+         x = "log2 coverage ratio (H3K9me3 co-lost / H3K9me3-retained)", y = "ChromHMM state") +
     theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
 }
 save_fig(k9_lollipop("log2_ratio", "p_adj_BH",
-                     "ChromHMM: H3K9me3-loss vs unchanged (H4K20me3-lost) - PER-REGION"),
+                     "Within H4K20me3-lost regions: chromatin where H3K9me3 is co-lost vs retained - PER-REGION"),
          "enrichment_chromHMM_H3K9me3_loss_vs_unchanged", "enrichment", width = 8, height = 7)
 save_fig(k9_lollipop("w_log2_ratio", "perm_p_adj",
-                     "ChromHMM: H3K9me3-loss vs unchanged (H4K20me3-lost) - SIZE-WEIGHTED"),
+                     "Within H4K20me3-lost regions: chromatin where H3K9me3 is co-lost vs retained - SIZE-WEIGHTED"),
          "enrichment_chromHMM_H3K9me3_loss_vs_unchanged_sizeweighted", "enrichment", width = 8, height = 7)
 
 
