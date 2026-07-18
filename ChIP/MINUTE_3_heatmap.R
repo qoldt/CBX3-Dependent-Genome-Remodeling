@@ -653,40 +653,75 @@ ggsave(file.path(fig_dir, "relationship_bycluster_interaction_size_x_baseMean.pn
        g_c_inter, width = 12, height = 8, dpi = plot_dpi)
 message("Saved: relationship_bycluster_interaction_size_x_baseMean.png")
 
-# --- 9d. Mark-vs-mark relationship per cluster ---
-# signal_mat holds EVERY sample (all marks) measured at each clustered peak, so
-# we can ask how the heterochromatin marks co-occur within a cluster: for each
-# peak, mean WT signal of mark A vs mark B, faceted by cluster, with Spearman rho.
-het_marks <- c("H3K9me2", "H3K9me3", "H4K20me3")
-wt_mark <- sapply(het_marks, function(mk) {
-  cols <- col_annot$Sample[as.character(col_annot$ChIP) == mk &
-                           as.character(col_annot$Genotype) == "WT"]
-  rowMeans(signal_mat[, cols, drop = FALSE], na.rm = TRUE)
-})
-rownames(wt_mark) <- rownames(signal_mat)
-wt_mark <- wt_mark[match(sig_df$peak_id, rownames(wt_mark)), , drop = FALSE]
+# --- 9d/9e. Mark CHANGE (log2 KO/WT) per cluster ---
+# signal_mat holds every sample, so per peak we can compute each mark's change
+# (log2 of mean-KO / mean-WT signal). 9d asks whether two marks' changes are
+# coordinated per peak; 9e shows how each mark's change is distributed across
+# clusters (uniform = a constant effect; cluster-specific = differs by cluster).
+eps_sig <- 0.25   # stabilises the log2 ratio where signal is near zero
+mark_change_mat <- function(marks) {
+  m <- sapply(marks, function(mk) {
+    wt <- rowMeans(signal_mat[, col_annot$Sample[as.character(col_annot$ChIP) == mk &
+                    as.character(col_annot$Genotype) == "WT"],     drop = FALSE], na.rm = TRUE)
+    ko <- rowMeans(signal_mat[, col_annot$Sample[as.character(col_annot$ChIP) == mk &
+                    as.character(col_annot$Genotype) == "HP1gKO"], drop = FALSE], na.rm = TRUE)
+    log2((ko + eps_sig) / (wt + eps_sig))
+  })
+  rownames(m) <- rownames(signal_mat)
+  m[match(sig_df$peak_id, rownames(m)), , drop = FALSE]
+}
+clus_lv <- paste("Cluster", sort(unique(sig_df$Cluster)))
 
+# 9d: change vs change, per heterochromatin-mark pair
+het_marks  <- c("H3K9me2", "H3K9me3", "H4K20me3")
+chg        <- mark_change_mat(het_marks)
 mark_pairs <- list(c("H3K9me3", "H4K20me3"),
                    c("H3K9me2", "H3K9me3"),
                    c("H3K9me2", "H4K20me3"))
-clus_lv <- paste("Cluster", sort(unique(sig_df$Cluster)))
 for (pr in mark_pairs) {
   d <- data.frame(Cluster = factor(paste("Cluster", sig_df$Cluster), levels = clus_lv),
-                  x = wt_mark[, pr[1]], y = wt_mark[, pr[2]])
+                  x = chg[, pr[1]], y = chg[, pr[2]])
   d <- d[is.finite(d$x) & is.finite(d$y) & !is.na(d$Cluster), ]
   rlab <- d %>% group_by(Cluster) %>%
     summarise(r = cor(x, y, method = "spearman", use = "complete.obs"), .groups = "drop")
   g_mp <- ggplot(d, aes(x, y)) +
+    geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
+    geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey55") +
     geom_point(size = 0.3, alpha = 0.15) +
     geom_smooth(method = "lm", se = FALSE, colour = "firebrick", linewidth = 0.5) +
     geom_text(data = rlab, aes(x = Inf, y = Inf, label = sprintf("rho = %.2f", r)),
               hjust = 1.1, vjust = 1.5, size = 3, colour = "firebrick") +
     facet_wrap(~Cluster, nrow = 1, scales = "free") +
-    labs(title = sprintf("%s vs %s (mean WT signal), by cluster", pr[1], pr[2]),
-         subtitle = "per-peak co-occurrence of the two marks within each chromatin-signature cluster",
-         x = paste(pr[1], "WT signal"), y = paste(pr[2], "WT signal")) +
+    labs(title = sprintf("Change in %s vs %s (log2 KO/WT), by cluster", pr[1], pr[2]),
+         subtitle = "are the two marks' per-peak changes coordinated within each cluster?",
+         x = sprintf("delta %s (log2 KO/WT)", pr[1]),
+         y = sprintf("delta %s (log2 KO/WT)", pr[2])) +
     theme_minimal(base_size = base_size) + theme(panel.grid.minor = element_blank())
-  out <- file.path(fig_dir, sprintf("relationship_bycluster_marks_%s_vs_%s.png", pr[1], pr[2]))
+  out <- file.path(fig_dir, sprintf("relationship_bycluster_change_%s_vs_%s.png", pr[1], pr[2]))
   ggsave(out, g_mp, width = 14, height = 3.6, dpi = plot_dpi)
   message("Saved: ", basename(out))
 }
+
+# 9e: per-mark change distribution across clusters (all five marks)
+all_marks <- c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3")
+chg_all   <- mark_change_mat(all_marks)
+cdf <- data.table(Cluster = factor(paste("Cluster", sig_df$Cluster), levels = clus_lv),
+                  as.data.frame(chg_all))
+cdf <- melt(cdf, id.vars = "Cluster", variable.name = "mark", value.name = "delta")
+cdf <- cdf[is.finite(delta) & !is.na(Cluster)]
+cdf[, mark := factor(mark, levels = all_marks)]
+
+g_chg <- ggplot(cdf, aes(Cluster, delta, fill = Cluster)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
+  geom_boxplot(outlier.size = 0.2, outlier.alpha = 0.15, linewidth = 0.3) +
+  facet_wrap(~mark, nrow = 1, scales = "free_y") +
+  scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
+  labs(title = "Per-mark change (log2 KO/WT) across clusters",
+       subtitle = "a mark uniform across clusters = constant effect; spread across clusters = cluster-specific change",
+       x = "Cluster", y = "delta signal (log2 KO/WT)") +
+  theme_minimal(base_size = base_size) +
+  theme(panel.grid.minor = element_blank(),
+        axis.text.x = element_text(angle = 45, hjust = 1, size = base_size - 3))
+ggsave(file.path(fig_dir, "relationship_bycluster_mark_change_distribution.png"),
+       g_chg, width = 15, height = 4, dpi = plot_dpi)
+message("Saved: relationship_bycluster_mark_change_distribution.png")
