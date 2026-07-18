@@ -47,13 +47,25 @@ prof <- sm[!is.na(Cluster),
 prof[, Genotype := factor(Genotype, levels = c("WT", "HP1gKO"))]
 prof[, ChIP := factor(ChIP, levels = c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3"))]
 
-g_prof <- ggplot(prof, aes(Cluster, mean_signal, fill = Genotype)) +
-  geom_col(position = position_dodge(0.8), width = 0.75) +
+# per-peak signal distribution (mean across each genotype's replicates), so the
+# profile shows spread across peaks rather than a single mean bar
+peak_prof <- sm[!is.na(Cluster),
+                .(signal = mean(signal, na.rm = TRUE)),
+                by = .(peak_id, Cluster, ChIP, Genotype)]
+peak_prof[, Genotype := factor(Genotype, levels = c("WT", "HP1gKO"))]
+peak_prof[, ChIP := factor(ChIP, levels = c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3"))]
+peak_prof[, Cluster := factor(Cluster)]
+# winsorize per mark at 99.5% for display so extreme peaks don't dwarf the boxes
+# (per-mark cap keeps free_y's per-mark scaling; only the top whisker is clipped)
+peak_prof[, signal_disp := pmin(signal, quantile(signal, 0.995, na.rm = TRUE)), by = ChIP]
+
+g_prof <- ggplot(peak_prof, aes(Cluster, signal_disp, fill = Genotype)) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.3, position = position_dodge(0.8)) +
   facet_wrap(~ChIP, scales = "free_y", nrow = 1) +
   scale_fill_manual(values = geno_colors) +
-  labs(title = "Mean ChIP signal per cluster (WT vs HP1gKO)",
-       subtitle = "which marks define each cluster, and which are lost in the knockout",
-       x = "Cluster", y = "mean signal") +
+  labs(title = "ChIP signal per cluster, per peak (WT vs HP1gKO)",
+       subtitle = "boxes = across-peak distribution; which marks define each cluster and which are lost",
+       x = "Cluster", y = "signal") +
   theme_m
 ggsave(file.path(fig_dir, "cluster_signal_profile.png"), g_prof, width = 14, height = 4, dpi = 300)
 message("Saved: cluster_signal_profile.png")
@@ -292,14 +304,15 @@ ggsave(file.path(fig_dir, "family_exon_change.png"), g_fam_chg, width = 14, heig
 lvl <- melt(as.data.table(long[, c("family", "mark", "gene", "wt_signal", "ko_signal")]),
             id.vars = c("family", "mark", "gene"), variable.name = "Genotype", value.name = "signal")
 lvl[, Genotype := factor(ifelse(Genotype == "wt_signal", "WT", "HP1gKO"), levels = c("WT", "HP1gKO"))]
-g_fam_lvl <- ggplot(lvl, aes(mark, signal, fill = Genotype)) +
+g_fam_lvl <- ggplot(lvl[signal > 0], aes(mark, signal, fill = Genotype)) +
   geom_boxplot(outlier.size = 0.2, outlier.alpha = 0.15, linewidth = 0.3,
                position = position_dodge(0.8)) +
-  facet_wrap(~family, nrow = 1, scales = "free_y") +
+  facet_wrap(~family, nrow = 1) +          # log y is comparable across families
+  scale_y_log10() +                        # signal spans orders of magnitude across marks
   scale_fill_manual(values = geno_colors) +
   labs(title = "ChIP signal over gene-family exons, per gene (WT vs HP1gKO)",
-       subtitle = "boxes = across-gene distribution of per-gene mean signal",
-       x = "Mark", y = "signal") +
+       subtitle = "boxes = across-gene distribution of per-gene mean signal (log10 y)",
+       x = "Mark", y = "signal (log10)") +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
 ggsave(file.path(fig_dir, "family_exon_signal_level.png"), g_fam_lvl, width = 14, height = 4, dpi = 300)
 
