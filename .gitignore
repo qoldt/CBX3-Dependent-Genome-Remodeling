@@ -13,9 +13,14 @@ ChIP/results/tables/
 ChIP/results/figures/
 ChIP/results/bed/
 
-# Large raw inputs — provided locally via $MINUTE_DATA, never committed
+# Large raw inputs — downloaded from Google Drive (see ChIP/README.md), never
+# committed. Peaks (ChIP/data/peaks) ARE committed. Default download targets:
+ChIP/data/bigwig/
+ChIP/data/annotation/
+# Belt-and-suspenders in case MINUTE_DATA points somewhere else in the tree:
 bigwig/
 *.bw
 LINE.mm39.bed
 SINE.mm39.bed
 LTR.mm39.bed
+TAD_boundaries_mm39.bed

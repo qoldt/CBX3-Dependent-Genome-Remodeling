@@ -4,8 +4,8 @@
 #   cd ChIP && Rscript run_MINUTE.R
 # or, in an interactive session with the ChIP/ working directory:
 #   source("run_MINUTE.R")
-# Point MINUTE_DATA at the bigWig/annotation store if it is not the
-# default (~/SynologyDrive/MINUTE):
+# bigWigs/annotation default to ChIP/data/bigwig and ChIP/data/annotation
+# (download per the README). To use a copy staged elsewhere, set MINUTE_DATA:
 #   MINUTE_DATA=/path/to/store Rscript run_MINUTE.R
 # ================================================================
 source("config.R")

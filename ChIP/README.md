@@ -60,18 +60,19 @@ independent — run either, or both, in any order after stage 1.
 ChIP/
   config.R  run_MINUTE.R  MINUTE_1..3.R      # code
   samples.tsv                                 # sample sheet (single source of truth)
-  data/peaks/                                 # consensus/master peak BEDs (committed)
+  data/
+    peaks/             # consensus/master peak BEDs             (committed)
+    bigwig/            # *_<genotype>_rep*.mm39.scaled.bw       (download, git-ignored)
+    annotation/        # LINE/SINE/LTR .mm39.bed + TAD BEDs     (download, git-ignored)
   results/                                    # ALL generated output (git-ignored except rds/)
     counts/  rds/  tables/  figures/  bed/
   Minute Run/  Peak Calling/                  # cluster (Slurm) steps — see above
-
-$MINUTE_DATA/          # large raw inputs, OUTSIDE the repo (default ~/SynologyDrive/MINUTE)
-  bigwig/              # *_<genotype>_rep*.mm39.scaled.bw
-  annotation/          # LINE.mm39.bed  SINE.mm39.bed  LTR.mm39.bed  TAD_boundaries_mm39.bed
 ```
 
 **Run the R pipeline from the `ChIP/` directory** — repo-relative paths assume it.
-There is no `setwd()`; the only machine-specific path is `$MINUTE_DATA`.
+There is no `setwd()`. The large inputs default to `ChIP/data/bigwig` and
+`ChIP/data/annotation`; set the `MINUTE_DATA` env var to use a copy staged
+elsewhere (e.g. an external mount).
 
 ---
 
@@ -118,19 +119,52 @@ Verify with `packageVersion("furrr")` etc. before running.
 
 ## Data setup
 
-Small inputs (peak BEDs, `samples.tsv`) are committed. Large raw inputs are
-**not** — place them under `$MINUTE_DATA` (default `~/SynologyDrive/MINUTE`,
-override with the env var):
+Small inputs (peak BEDs, `samples.tsv`) are committed and need no setup. The
+large raw inputs (bigWigs ~21 GB, RepeatMasker annotation ~185 MB) are hosted on
+Google Drive — **download them into the folders below before running.** They
+default to `ChIP/data/…`; to keep them elsewhere, download anywhere and point
+`MINUTE_DATA` at that folder instead.
 
-| Path | What | Source |
-|------|------|--------|
-| `$MINUTE_DATA/bigwig/` | scaled mm39 bigWigs (`*_WT_rep*.mm39.scaled.bw`, `*_HP1gKO_rep*…`) | `Minute Run/` pipeline output |
-| `$MINUTE_DATA/annotation/LINE.mm39.bed`, `SINE.mm39.bed`, `LTR.mm39.bed` | RepeatMasker annotation | UCSC Table Browser (mm39, rmsk) |
-| `$MINUTE_DATA/annotation/TAD_boundaries_mm39.bed` | TAD boundaries | Hi-C boundary calls (mm39) |
-| `data/peaks/…` | master/consensus peak BEDs | `Peak Calling/` output (committed) |
+| Download into | What | Google Drive folder |
+|---------------|------|---------------------|
+| `ChIP/data/bigwig/` | 55 scaled mm39 bigWigs (`*_WT_rep*.mm39.scaled.bw`, `*_HP1gKO_rep*…`, ~21 GB) | **[bigWigs ↗](https://drive.google.com/drive/folders/11embg_Ft3tLefSg3Stj6ZAan8u0YDs5k?usp=sharing)** |
+| `ChIP/data/annotation/` | `LINE.mm39.bed`, `SINE.mm39.bed`, `LTR.mm39.bed`, `TAD_boundaries_mm39.bed` | **[annotation ↗](https://drive.google.com/drive/folders/1e_HPy6tVKeAZsVEpnQxG-qSZ_VTCYjTh?usp=sharing)** |
+| `ChIP/data/peaks/` | master/consensus peak BEDs | already in the repo (committed) |
 
-The bigWig filename for every sample is listed in **`samples.tsv`** — if your
-filenames differ, edit that sheet (nothing else).
+### Annotation — `gdown` (4 files)
+
+```bash
+cd ChIP
+pip install gdown
+gdown --folder "https://drive.google.com/drive/folders/1e_HPy6tVKeAZsVEpnQxG-qSZ_VTCYjTh" -O data/annotation
+```
+
+### bigWigs — `rclone` (55 files)
+
+The bigWig folder holds **55 files, over `gdown --folder`'s 50-file cap** (it
+would silently skip 5), so use [`rclone`](https://rclone.org/drive/), which has no
+limit. One-time setup: `rclone config` → add a Google Drive remote named `gdrive`.
+Then pull the folder by its ID:
+
+```bash
+cd ChIP
+rclone copy gdrive: data/bigwig \
+  --drive-root-folder-id 11embg_Ft3tLefSg3Stj6ZAan8u0YDs5k -P
+```
+
+The files must end up **directly** in `data/bigwig/` and `data/annotation/` (no
+extra nested folder). Sanity-check:
+
+```bash
+ls ChIP/data/bigwig/*.bw | wc -l       # expect 55
+ls ChIP/data/annotation/               # LINE/SINE/LTR + TAD_boundaries .bed
+```
+
+The bigWig filename expected for every sample is listed in **`samples.tsv`** — if
+your downloaded filenames differ, edit that sheet (nothing else).
+
+> **Note:** the `data/bigwig/` and `data/annotation/` folders are git-ignored, so
+> the downloaded files are never committed. Only `data/peaks/` is tracked.
 
 ---
 
@@ -226,6 +260,55 @@ Length is **not a term in the test**, but it shapes the outcome three ways:
 > quantification were ever switched to summed/total coverage, length *would*
 > scale the counts directly and bias long peaks toward significance.
 
+### Global changes vs. per-peak significance (H4K20me3, H3K9me3)
+
+Per-peak differential testing assumes a **minority** of peaks change against a
+stable background — that assumption fails for the broad heterochromatin marks in
+this dataset. In the HP1γ knockout, H4K20me3 is lost almost genome-wide:
+
+| mark | median log2FC | % of domains reduced | median baseMean |
+|------|--------------:|---------------------:|----------------:|
+| H3K4me3 | +0.03 | 40% | 44.8 |
+| H3K36me3 | −0.03 | 54% | 2.9 |
+| H3K9me2 | −0.10 | 60% | 3.4 |
+| **H3K9me3** | **−0.22** | **80%** | **2.6** |
+| **H4K20me3** | **−0.47** | **85%** | **1.6** |
+
+For H4K20me3 the **entire distribution is shifted down** (~0.47 log2 units;
+median, 25th *and* 75th percentiles all negative). Two things follow:
+
+1. **Per-peak p-values are the wrong lens.** The finding is "everything is down,"
+   not "these peaks differ." Each domain is individually only modestly changed and
+   noisy, so each is underpowered — and the counts are tiny (baseMean ~1–3), which
+   further guts negative-binomial power. Requiring `p < thr` discards the real,
+   genome-wide effect. (This is why the earlier exploratory plots used a
+   fold-change cutoff.)
+2. **`sizeFactors = 1` is what makes the shift visible.** Default DESeq2
+   median-of-ratios normalization assumes most peaks are unchanged and would
+   re-center the distribution on 0, *erasing* the global loss. Relying on MINUTE's
+   external input-scaling (see [Conventions](#how-significant-peaks-are-called))
+   preserves it — so the absolute downshift is real, **provided the bigWigs are on
+   a common external scale** (they are: input-scaled).
+
+**Consequence for the change plots** (`*_changes_by_chr_*`): the highlight
+(coloured) criterion is **per-mark**, set in `plot_criterion` in `MINUTE_3`:
+
+- **`"effect"`** — colour by `|log2FC| > 0.5` (labelled "effect size", *not*
+  "significant") for the globally-shifted marks **H3K9me3, H4K20me3**.
+- **`"pvalue"`** — `is_significant()` for the centred marks **H3K4me3, H3K36me3,
+  H3K9me2**, where per-peak testing is valid.
+
+The diagnostic `figures/log2FC_distribution_by_mark.png` (section 7 of MINUTE_3)
+plots each mark's log2FC density with its median — the evidence behind these
+assignments. Two caveats: the global-loss claim is best stated as a
+**distributional** result (median shift, % of domains down), not a peak count;
+and individual **gene labels** on low-count marks (H4K20me3 baseMean ~1.6) are
+unreliable — the distribution is the finding, not any single locus.
+
+> This per-mark criterion governs **only the change plots**. The heatmap, BED
+> exports, and MINUTE_2 hypergeometric test still use `is_significant()`
+> (p-based) throughout.
+
 ---
 
 ## Outputs (all under `results/`)
@@ -237,6 +320,12 @@ Length is **not a term in the test**, but it shapes the outcome three ways:
 | `tables/enrichment_hypergeometric.tsv` | MINUTE_2 | odds ratios & hypergeometric p-values per annotation |
 | `figures/enrichment_dotplot.pdf` | MINUTE_2 | enrichment dot plot |
 | `figures/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_3 | clustered heatmap of significant peaks |
+| `figures/<mark>_changes_by_chr_coloured_by_genomic_region.png` | MINUTE_3 | per-chromosome domain-size vs log2FC, sized by baseMean, coloured by genomic region |
+| `figures/<mark>_changes_by_chr_coloured_by_repeat.png` | MINUTE_3 | same, coloured by repeat class |
+| `figures/log2FC_distribution_by_mark.png` | MINUTE_3 | per-mark log2FC density + median (global-shift diagnostic) |
+| `figures/relationship_size_baseMean_log2FC_binned.png` | MINUTE_3 | mean log2FC over the domain-size × baseMean plane (binned heatmap) |
+| `figures/relationship_log2FC_vs_size_by_baseMean.png` | MINUTE_3 | log2FC vs domain size, coloured by baseMean |
+| `figures/relationship_interaction_size_x_baseMean.png` | MINUTE_3 | mean log2FC vs size bin, by baseMean tertile (size × signal interaction) |
 | `bed/significant_peaks_<mark>.bed` | MINUTE_3 | significant regions per mark (NCBI seqnames, score = −log10 p) |
 | `bed/significant_peaks_with_metadata.bed` | MINUTE_3 | all significant regions + ChIP/cluster metadata |
 

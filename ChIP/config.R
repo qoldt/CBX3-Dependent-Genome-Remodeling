@@ -20,9 +20,12 @@
 # ================================================================
 
 # --- Roots -------------------------------------------------------
-# Large raw inputs live OUTSIDE the repo. Point MINUTE_DATA at wherever
-# the MINUTE pipeline output was staged; it defaults to the Synology mount.
-data_ext   <- path.expand(Sys.getenv("MINUTE_DATA", unset = "~/SynologyDrive/MINUTE"))
+# Large raw inputs (bigWigs + repeat/TAD annotation) are NOT committed. Download
+# them from the Google Drive links in the README into the repo-relative folders
+# ChIP/data/bigwig and ChIP/data/annotation (the defaults below; scripts run from
+# ChIP/). To use a copy staged elsewhere (e.g. a Synology/external mount), set the
+# MINUTE_DATA env var:  MINUTE_DATA=/path/to/store Rscript run_MINUTE.R
+data_ext   <- path.expand(Sys.getenv("MINUTE_DATA", unset = "data"))
 bigwig_dir <- file.path(data_ext, "bigwig")
 annot_dir  <- file.path(data_ext, "annotation")
 

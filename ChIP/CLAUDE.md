@@ -66,13 +66,15 @@ positional `rep()` calls — the DESeq2 design and heatmap annotation cannot dri
 from the actual bigWig set. To change a cutoff/peak file, edit `config.R`; to
 add/remove/rename a sample, edit `samples.tsv`.
 
-## Data dependencies (NOT in git — provide under `$MINUTE_DATA`)
+## Data dependencies (NOT in git — download per the README)
 
-Default `$MINUTE_DATA` is `~/SynologyDrive/MINUTE`; override via the env var.
+bigWigs + annotation are hosted on Google Drive and download into repo-relative
+`ChIP/data/bigwig` and `ChIP/data/annotation` (the `MINUTE_DATA` default is now
+`data`). Override with the env var to use a copy staged elsewhere.
 
-- `$MINUTE_DATA/bigwig/` — scaled mm39 bigWigs from the MINUTE pipeline (~21 GB)
-- `$MINUTE_DATA/annotation/{LINE,SINE,LTR}.mm39.bed` — UCSC RepeatMasker mm39 (~185 MB)
-- `$MINUTE_DATA/annotation/TAD_boundaries_mm39.bed` — TAD boundary calls (small)
+- `data/bigwig/` — scaled mm39 bigWigs from the MINUTE pipeline (~21 GB)
+- `data/annotation/{LINE,SINE,LTR}.mm39.bed` — UCSC RepeatMasker mm39 (~185 MB)
+- `data/annotation/TAD_boundaries_mm39.bed` — TAD boundary calls (small)
 - `data/peaks/…` — master/consensus peak BEDs referenced in `config.R$regions`
   (small, committed)
 
