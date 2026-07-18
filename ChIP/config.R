@@ -42,11 +42,15 @@ for (d in c(counts_dir, rds_dir, tables_dir, fig_dir, bed_dir)) {
 annotated_rds <- file.path(rds_dir, "annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds")
 
 # --- Libraries (union used across the pipeline) ---
-# For wigglescout you may need these pinned versions of furrr & future:
+# wigglescout is sensitive to its future/furrr stack. This is the ONLY combination
+# confirmed working here; restart R after installing so newer loaded versions unload:
 #   remotes::install_version("furrr",   version = "0.2.3")
 #   remotes::install_version("future",  version = "1.23.0")
 #   remotes::install_version("globals", version = "0.14.0")
 #   remotes::install_github("cnluzon/wigglescout")
+# If bw_loci() fails with "values must be length 1, but FUN(X[[i]]) result is
+# length N", the pins have drifted (or a stray future::plan() is set) — reinstall
+# the versions above / run future::plan("sequential"); do NOT edit the R scripts.
 suppressPackageStartupMessages({
   library(ChIPseeker)
   library(AnnotationDbi)

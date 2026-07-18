@@ -86,7 +86,15 @@ R (≥ 4.2) with the following packages:
 `ComplexHeatmap`
 
 **GitHub:** [`wigglescout`](https://github.com/cnluzon/wigglescout) — reads
-signal from bigWigs. It needs specific pinned dependencies:
+signal from bigWigs. It is **sensitive to the versions of its `future` stack**;
+this is the only combination confirmed working for this pipeline:
+
+| Package | Version | Source |
+|---------|---------|--------|
+| `furrr` | **0.2.3** | CRAN archive (`install_version`) |
+| `future` | **1.23.0** | CRAN archive |
+| `globals` | **0.14.0** | CRAN archive |
+| `wigglescout` | latest | `cnluzon/wigglescout` (GitHub) |
 
 ```r
 install.packages("remotes")
@@ -95,6 +103,16 @@ remotes::install_version("future",  version = "1.23.0")
 remotes::install_version("globals", version = "0.14.0")
 remotes::install_github("cnluzon/wigglescout")
 ```
+
+**Restart R after installing** so any newer, already-loaded versions unload.
+Verify with `packageVersion("furrr")` etc. before running.
+
+> **Symptom of a version drift:** `bw_loci()` fails inside `MINUTE_1`/`MINUTE_3`
+> with `Error: values must be length 1, but FUN(X[[i]]) result is length N`. That
+> is `wigglescout`'s internal `future`/`furrr` map returning the wrong shape —
+> reinstall the pins above (and restart R) rather than editing the R scripts.
+> A stray `future::plan("multisession"/"multicore")` set by another package can
+> trigger the same error; `future::plan("sequential")` clears it.
 
 ---
 
