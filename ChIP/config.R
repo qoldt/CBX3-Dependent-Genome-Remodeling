@@ -1,8 +1,8 @@
 # ================================================================
-# MINUTE pipeline — shared configuration & parameters
+# MINUTE pipeline - shared configuration & parameters
 # ----------------------------------------------------------------
 # Sourced by MINUTE_1, MINUTE_2, MINUTE_3 and by run_MINUTE.R.
-# SINGLE SOURCE OF TRUTH for parameters — edit values here only;
+# SINGLE SOURCE OF TRUTH for parameters - edit values here only;
 # the stage scripts must not redefine them.
 #
 # Run the pipeline FROM the ChIP/ directory (the folder holding
@@ -11,7 +11,7 @@
 #
 # I/O layout
 #   Inputs (read-only):
-#     samples.tsv                sample sheet — SINGLE SOURCE OF TRUTH for samples
+#     samples.tsv                sample sheet - SINGLE SOURCE OF TRUTH for samples
 #     data/peaks/                consensus / master peak BEDs      (committed, small)
 #     $MINUTE_DATA/bigwig/       scaled mm39 bigWigs               (external, large)
 #     $MINUTE_DATA/annotation/   LINE / SINE / LTR / TAD BEDs      (external)
@@ -52,7 +52,7 @@ annotated_rds <- file.path(rds_dir, "annotated_results_H3K9me3_H4K20me3_2000bp_m
 #   remotes::install_version("globals", version = "0.14.0")
 #   remotes::install_github("cnluzon/wigglescout")
 # If bw_loci() fails with "values must be length 1, but FUN(X[[i]]) result is
-# length N", the pins have drifted (or a stray future::plan() is set) — reinstall
+# length N", the pins have drifted (or a stray future::plan() is set) - reinstall
 # the versions above / run future::plan("sequential"); do NOT edit the R scripts.
 suppressPackageStartupMessages({
   library(ChIPseeker)
@@ -74,7 +74,7 @@ suppressPackageStartupMessages({
 
 # --- Sample sheet: SINGLE SOURCE OF TRUTH for samples ------------
 # Columns: sample_id, mark, genotype (WT/HP1gKO), replicate, bigwig (filename).
-# Genotype and replicate are read from here — NOT hard-coded in the stages.
+# Genotype and replicate are read from here - NOT hard-coded in the stages.
 samples <- as.data.frame(data.table::fread("samples.tsv"))
 samples$genotype    <- factor(samples$genotype, levels = c("WT", "HP1gKO"))
 samples$bigwig_path <- file.path(bigwig_dir, samples$bigwig)
@@ -135,6 +135,42 @@ chromHMM_coverage <- function(gr, chromhmm_gr) {
     m <- pmin(m / width(gr), 1)   # fraction; cap at 1 (rare cross-state overlaps)
   }
   m
+}
+
+# --- Helper: SIZE-WEIGHTED per-state coverage enrichment + permutation test ---
+# Complements the per-region (unweighted) Wilcoxon tests by weighting each region
+# by its length, so the result reflects the changed genomic TERRITORY rather than
+# treating a 2 Mb domain and a 2 kb peak equally.
+#   cov_mat : regions x states coverage fractions (the hmm_<state> columns)
+#   size    : region length (bp or kb - only relative weights matter)
+#   group   : logical, TRUE = foreground (e.g. significant / cluster / H3K9me3-loss)
+# Returns per state: weighted mean coverage in fg vs bg (= fraction of that
+# group's territory in the state), log2 ratio, and a permutation p-value that
+# shuffles region LABELS (domain-level; a bp-level test would pseudo-replicate).
+chromHMM_size_weighted <- function(cov_mat, size, group, nperm = 1000, seed = 42) {
+  cov_mat <- as.matrix(cov_mat)
+  keep    <- is.finite(size) & !is.na(group)
+  cov_mat <- cov_mat[keep, , drop = FALSE]; size <- size[keep]; group <- as.logical(group)[keep]
+  covW <- cov_mat * size                       # region x state, bp-in-state
+  totW <- sum(size)
+  colW <- colSums(covW, na.rm = TRUE)          # total state-bp over all regions
+  gv   <- as.numeric(group)
+  fgbp <- as.numeric(crossprod(gv, covW))      # state-bp in foreground
+  sf   <- sum(gv * size); sb <- totW - sf
+  fg   <- fgbp / sf; bg <- (colW - fgbp) / sb
+  obsd <- fg - bg
+  set.seed(seed)
+  n <- length(group); k <- sum(group); cnt <- numeric(ncol(cov_mat))
+  for (i in seq_len(nperm)) {
+    g <- numeric(n); g[sample.int(n, k)] <- 1
+    fb <- as.numeric(crossprod(g, covW)); sff <- sum(g * size)
+    cnt <- cnt + (abs(fb / sff - (colW - fb) / (totW - sff)) >= abs(obsd))
+  }
+  data.frame(state = sub("^hmm_", "", colnames(cov_mat)),
+             w_cov_fg = fg, w_cov_bg = bg,
+             w_log2_ratio = log2((fg + 1e-4) / (bg + 1e-4)),
+             perm_p = (cnt + 1) / (nperm + 1),
+             stringsAsFactors = FALSE)
 }
 
 # --- Helper: dominant state + its purity from a coverage matrix ---

@@ -1,10 +1,10 @@
 # ================================================================
-# MINUTE_4 — Characterise the k-means clusters from MINUTE_3
+# MINUTE_4 - Characterise the k-means clusters from MINUTE_3
 # ----------------------------------------------------------------
 # Runs after MINUTE_3 (which persists results/rds/cluster_analysis_inputs.rds).
 # Answers: what IS each chromatin-signature cluster, and what genomic features
 # distinguish them? Operates purely on the persisted cluster table + per-sample
-# signal matrix — no bigWigs re-read.
+# signal matrix - no bigWigs re-read.
 #
 # Inputs (from MINUTE_3):
 #   sig_df      one row per clustered significant peak: Cluster + annotation
@@ -31,7 +31,7 @@ geno_colors <- c(WT = "#1f78b4", HP1gKO = "#e31a1c")
 theme_m     <- theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
 
 # ================================================================
-# 1. Signal profile — mean raw signal per cluster x mark x genotype.
+# 1. Signal profile - mean raw signal per cluster x mark x genotype.
 #    Defines each cluster: which marks are present, and how WT->KO changes them.
 # ================================================================
 sm <- as.data.table(signal_mat, keep.rownames = "peak_id")
@@ -59,7 +59,7 @@ ggsave(file.path(fig_dir, "cluster_signal_profile.png"), g_prof, width = 14, hei
 message("Saved: cluster_signal_profile.png")
 
 # ================================================================
-# 2. Loss heatmap — log2(HP1gKO / WT) mean signal per cluster x mark.
+# 2. Loss heatmap - log2(HP1gKO / WT) mean signal per cluster x mark.
 # ================================================================
 w <- dcast(prof, Cluster + ChIP ~ Genotype, value.var = "mean_signal")
 eps <- 1e-3
@@ -77,7 +77,7 @@ ggsave(file.path(fig_dir, "cluster_loss_heatmap.png"), g_loss, width = 7, height
 message("Saved: cluster_loss_heatmap.png")
 
 # ================================================================
-# 3. ChromHMM profile — mean per-state coverage per cluster.
+# 3. ChromHMM profile - mean per-state coverage per cluster.
 #    Shown two ways: absolute mean coverage, and z-scored per state (relative
 #    enrichment across clusters, so genome-abundant Quies doesn't dominate).
 # ================================================================
@@ -179,3 +179,58 @@ summ <- sig_df %>% group_by(Cluster) %>%
 fwrite(summ, file.path(tables_dir, "cluster_summary.tsv"), sep = "\t")
 cat("\n=== Cluster summary ===\n"); print(as.data.frame(summ))
 message("Saved: cluster_summary.tsv")
+
+# ================================================================
+# 6. Per-cluster ChromHMM enrichment TEST
+#    Formalises the part-3 coverage heatmaps: for each cluster x state, compare
+#    the state's coverage in that cluster vs all OTHER clustered peaks (Wilcoxon
+#    + BH FDR, log2 mean-coverage ratio). Tells which states each cluster is
+#    distinctively enriched/depleted for, relative to the other clusters.
+# ================================================================
+clus_enrich <- do.call(rbind, lapply(clusters, function(cl) {
+  inc <- sig_df$Cluster == cl
+  # per-region (unweighted) Wilcoxon: this cluster vs all other clustered peaks
+  pr <- do.call(rbind, lapply(hmm_cols, function(col) {
+    a <- sig_df[[col]][inc]; b <- sig_df[[col]][!inc]
+    data.frame(Cluster = cl, state = sub("^hmm_", "", col), n = sum(inc),
+               mean_cov_in = mean(a, na.rm = TRUE), mean_cov_out = mean(b, na.rm = TRUE),
+               log2_ratio = log2((mean(a, na.rm = TRUE) + 1e-4) / (mean(b, na.rm = TRUE) + 1e-4)),
+               p_value = tryCatch(suppressWarnings(wilcox.test(a, b)$p.value),
+                                  error = function(e) NA_real_),
+               stringsAsFactors = FALSE)
+  }))
+  # size-weighted (by domain length) with permutation test
+  sw <- chromHMM_size_weighted(sig_df[, hmm_cols], sig_df$peak_size_kb, inc)
+  merge(pr, sw, by = "state")
+}))
+clus_enrich <- clus_enrich %>% group_by(Cluster) %>%
+  mutate(p_adj_BH   = p.adjust(p_value, method = "BH"),
+         perm_p_adj = p.adjust(perm_p,  method = "BH")) %>% ungroup()
+fwrite(clus_enrich, file.path(tables_dir, "cluster_chromHMM_enrichment.tsv"), sep = "\t")
+
+# Two dot plots: per-region (Wilcoxon) and size-weighted (permutation)
+clus_dotplot <- function(lr, fdr, ttl, sub) {
+  clus_enrich %>%
+    filter(is.finite(.data[[lr]]), !is.na(.data[[fdr]])) %>%
+    mutate(Cluster = factor(paste("Cluster", Cluster), levels = paste("Cluster", clusters)),
+           neglog10FDR = -log10(pmax(.data[[fdr]], .Machine$double.xmin)),
+           state = factor(state, levels = sort(unique(state)))) %>%
+    ggplot(aes(Cluster, state, size = neglog10FDR, colour = .data[[lr]])) +
+    geom_point() +
+    scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
+                           midpoint = 0, name = expression(log[2]~"ratio")) +
+    scale_size_continuous(name = expression(-log[10]("FDR"))) +
+    labs(title = ttl, subtitle = sub, x = NULL, y = "ChromHMM state") +
+    theme_m + theme(axis.text.x = element_text(angle = 30, hjust = 1))
+}
+ggsave(file.path(fig_dir, "cluster_chromHMM_enrichment.png"),
+       clus_dotplot("log2_ratio", "p_adj_BH",
+                    "Per-cluster ChromHMM enrichment (cluster vs other clusters) - PER-REGION",
+                    "colour = log2 coverage ratio; each region equal; size = FDR"),
+       width = 8, height = 6, dpi = 300)
+ggsave(file.path(fig_dir, "cluster_chromHMM_enrichment_sizeweighted.png"),
+       clus_dotplot("w_log2_ratio", "perm_p_adj",
+                    "Per-cluster ChromHMM enrichment (cluster vs other clusters) - SIZE-WEIGHTED",
+                    "colour = log2 territory ratio (weighted by domain length); size = perm FDR"),
+       width = 8, height = 6, dpi = 300)
+message("Saved: cluster_chromHMM_enrichment.{tsv, per-region png, size-weighted png}")

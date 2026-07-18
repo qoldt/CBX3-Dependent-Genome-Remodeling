@@ -324,8 +324,10 @@ unreliable — the distribution is the finding, not any single locus.
 | `rds/annotated_results_...rds` | MINUTE_1 | all peaks + DESeq2 stats + annotation (tracked handoff) |
 | `tables/enrichment_hypergeometric.tsv` | MINUTE_2 | odds ratios & hypergeometric p-values per repeat/TAD annotation |
 | `figures/enrichment_dotplot.pdf` | MINUTE_2 | repeat/TAD enrichment dot plot |
-| `tables/enrichment_chromHMM.tsv` | MINUTE_2 | ChromHMM-state enrichment (mean coverage sig vs background, log2 ratio + Wilcoxon) |
-| `figures/enrichment_chromHMM_dotplot.pdf` | MINUTE_2 | ChromHMM-state enrichment dot plot (states × marks) |
+| `tables/enrichment_chromHMM.tsv` | MINUTE_2 | ChromHMM-state enrichment per mark, both per-region (Wilcoxon) and size-weighted (permutation) |
+| `figures/enrichment_chromHMM_dotplot.pdf` | MINUTE_2 | ChromHMM enrichment, per-region (each region equal) |
+| `figures/enrichment_chromHMM_sizeweighted_dotplot.pdf` | MINUTE_2 | ChromHMM enrichment, size-weighted by domain length (genomic territory) |
+| `tables/enrichment_chromHMM_H3K9me3_loss_vs_unchanged.tsv` + 2 pdfs | MINUTE_2 | chromatin states distinguishing H3K9me3-loss vs -unchanged (within H4K20me3-lost); per-region + size-weighted |
 | `figures/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_3 | clustered heatmap of significant peaks (k-means, seeded) |
 | `figures/<mark>_changes_by_chr_coloured_by_{genomic_region,repeat}.png` | MINUTE_3 | per-chromosome domain-size vs log2FC, sized by domain size, coloured by region/repeat |
 | `figures/log2FC_distribution_by_mark.png` | MINUTE_3 | per-mark log2FC density + median (global-shift diagnostic) |
@@ -341,6 +343,7 @@ unreliable — the distribution is the finding, not any single locus.
 | `figures/cluster_signal_profile.png` | MINUTE_4 | mean signal per cluster × mark, WT vs KO (what each cluster is) |
 | `figures/cluster_loss_heatmap.png` | MINUTE_4 | log2(KO/WT) signal, cluster × mark |
 | `figures/cluster_chromHMM_coverage_{abs,zscore}.png` | MINUTE_4 | mean ChromHMM-state coverage per cluster (absolute + per-state z) |
+| `tables/cluster_chromHMM_enrichment.tsv` + `cluster_chromHMM_enrichment{,_sizeweighted}.png` | MINUTE_4 | per-cluster ChromHMM enrichment vs other clusters; per-region + size-weighted |
 | `figures/cluster_{repeat,region}_composition.png` | MINUTE_4 | repeat-class / genomic-region composition per cluster |
 | `figures/cluster_gene_families.png` | MINUTE_4 | Pcdh / KRAB-Zfp / Vmn / Olfr and pericentromeric fractions per cluster |
 | `tables/cluster_summary.tsv` | MINUTE_4 | per-cluster n, median size/log2FC, top state/repeat, family fractions |

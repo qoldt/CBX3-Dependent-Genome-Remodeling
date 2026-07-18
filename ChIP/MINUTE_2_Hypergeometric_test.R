@@ -1,5 +1,5 @@
 # ================================================================
-# MINUTE_2 — Hypergeometric enrichment of significant peaks vs annotations
+# MINUTE_2 - Hypergeometric enrichment of significant peaks vs annotations
 # Runs standalone after MINUTE_1, or in sequence via run_MINUTE.R
 # ================================================================
 source("config.R")
@@ -228,46 +228,122 @@ chromhmm_enrich <- do.call(rbind, lapply(names(annotated_results), function(mark
   d   <- annotated_results[[mark]]
   d$ChIP <- mark
   sig <- is_significant(d)
-  do.call(rbind, lapply(hmm_states, function(st) {
-    col     <- paste0("hmm_", st)
-    cov_sig <- d[[col]][sig]
-    cov_bg  <- d[[col]][!sig]                       # background = non-significant
-    m_sig   <- mean(cov_sig, na.rm = TRUE)
-    m_bg    <- mean(cov_bg,  na.rm = TRUE)
-    pval    <- tryCatch(suppressWarnings(wilcox.test(cov_sig, cov_bg)$p.value),
-                        error = function(e) NA_real_)
+  # per-region (unweighted) Wilcoxon
+  pr <- do.call(rbind, lapply(hmm_states, function(st) {
+    col <- paste0("hmm_", st)
+    a <- d[[col]][sig]; b <- d[[col]][!sig]           # background = non-significant
     data.frame(ChIP = mark, state = st, n_sig = sum(sig),
-               mean_cov_sig = m_sig, mean_cov_bg = m_bg,
-               log2_ratio = log2((m_sig + 1e-4) / (m_bg + 1e-4)),
-               p_value = pval, stringsAsFactors = FALSE)
+               mean_cov_sig = mean(a, na.rm = TRUE), mean_cov_bg = mean(b, na.rm = TRUE),
+               log2_ratio = log2((mean(a, na.rm = TRUE) + 1e-4) / (mean(b, na.rm = TRUE) + 1e-4)),
+               p_value = tryCatch(suppressWarnings(wilcox.test(a, b)$p.value),
+                                  error = function(e) NA_real_),
+               stringsAsFactors = FALSE)
   }))
+  # size-weighted (by domain length) with permutation test
+  sw <- chromHMM_size_weighted(d[, hmm_cols], d$end - d$start, sig)
+  merge(pr, sw, by = "state")
 }))
 
 chromhmm_enrich <- chromhmm_enrich %>%
   dplyr::group_by(ChIP) %>%
-  dplyr::mutate(p_adj_BH = p.adjust(p_value, method = "BH")) %>%
+  dplyr::mutate(p_adj_BH   = p.adjust(p_value, method = "BH"),
+                perm_p_adj = p.adjust(perm_p,  method = "BH")) %>%
   dplyr::ungroup()
 
 fwrite(chromhmm_enrich, file.path(tables_dir, "enrichment_chromHMM.tsv"), sep = "\t")
 
-# Dot plot: state x mark, size = -log10 FDR, colour = log2 ratio (sig vs background)
-hmm_plot <- chromhmm_enrich %>%
-  dplyr::filter(is.finite(log2_ratio), !is.na(p_adj_BH)) %>%
-  dplyr::mutate(neglog10FDR = -log10(pmax(p_adj_BH, .Machine$double.xmin)),
-                state = factor(state, levels = sort(unique(state))))
+# Two dot plots: PER-REGION (Wilcoxon) and SIZE-WEIGHTED (permutation) - report both
+hmm_dotplot <- function(df, lr, fdr, ttl, sub) {
+  df %>% dplyr::filter(is.finite(.data[[lr]]), !is.na(.data[[fdr]])) %>%
+    dplyr::mutate(neglog10FDR = -log10(pmax(.data[[fdr]], .Machine$double.xmin)),
+                  state = factor(state, levels = sort(unique(state)))) %>%
+    ggplot(aes(x = ChIP, y = state, size = neglog10FDR, colour = .data[[lr]])) +
+    geom_point() +
+    scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
+                           midpoint = 0, name = expression(log[2]~"ratio")) +
+    scale_size_continuous(name = expression(-log[10]("FDR"))) +
+    labs(title = ttl, subtitle = sub, x = NULL, y = "ChromHMM state") +
+    theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
+}
+ggsave(file.path(fig_dir, "enrichment_chromHMM_dotplot.pdf"),
+       hmm_dotplot(chromhmm_enrich, "log2_ratio", "p_adj_BH",
+                   "ChromHMM enrichment of significant peaks - PER-REGION",
+                   "each region equal; colour = log2 mean-coverage ratio (sig vs bg); size = FDR"),
+       width = 8, height = 7)
+ggsave(file.path(fig_dir, "enrichment_chromHMM_sizeweighted_dotplot.pdf"),
+       hmm_dotplot(chromhmm_enrich, "w_log2_ratio", "perm_p_adj",
+                   "ChromHMM enrichment of significant peaks - SIZE-WEIGHTED",
+                   "weighted by domain length; colour = log2 territory ratio (sig vs bg); size = perm FDR"),
+       width = 8, height = 7)
+message("Saved: enrichment_chromHMM.tsv + per-region & size-weighted dot plots")
 
-p_hmm <- ggplot(hmm_plot, aes(x = ChIP, y = state, size = neglog10FDR, colour = log2_ratio)) +
-  geom_point() +
-  scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
-                         midpoint = 0, name = expression(log[2]~"(sig/bg coverage)")) +
-  scale_size_continuous(name = expression(-log[10]("FDR"))) +
-  labs(title = "ChromHMM state enrichment of significant peaks (coverage-based)",
-       subtitle = "colour = log2 mean-coverage ratio (significant vs background); size = FDR",
-       x = NULL, y = "ChromHMM state") +
-  theme_minimal(base_size = 12) +
-  theme(panel.grid.minor = element_blank())
 
-ggsave(file.path(fig_dir, "enrichment_chromHMM_dotplot.pdf"), p_hmm, width = 8, height = 7)
-message("Saved: enrichment_chromHMM.tsv + enrichment_chromHMM_dotplot.pdf")
+# ================================================================
+# ChromHMM: H3K9me3-loss vs H3K9me3-unchanged among H4K20me3-lost regions
+# ----------------------------------------------------------------
+# What chromatin STATE distinguishes regions where H3K9me3 co-falls with
+# H4K20me3 from those losing H4K20me3 only? Restrict to H4K20me3-lost regions
+# (shared 2 kb-merged peak set), split on the H3K9me3 change, then compare the
+# per-state coverage fractions (mean + Wilcoxon). Thresholds are tunable.
+# ================================================================
+h4_lost_cut <- -0.5    # H4K20me3 log2FC below this = "H4K20me3-lost" population
+k9_loss_cut <- -0.3    # H3K9me3 log2FC below this = "H3K9me3-loss"
+k9_unch_cut <-  0.15   # |H3K9me3 log2FC| below this = "H3K9me3-unchanged"
+
+k20 <- annotated_results[["H4K20me3"]]
+k9  <- annotated_results[["H3K9me3"]]
+k20$k9_l2fc <- k9$log2FoldChange[match(k20$peak_id, k9$peak_id)]
+pop <- k20[is.finite(k20$k9_l2fc) & k20$log2FoldChange < h4_lost_cut, ]
+pop$k9group <- ifelse(pop$k9_l2fc < k9_loss_cut, "H3K9me3_loss",
+                ifelse(abs(pop$k9_l2fc) < k9_unch_cut, "H3K9me3_unchanged", NA))
+pop <- pop[!is.na(pop$k9group), ]
+message(sprintf("H4K20me3-lost: %d | H3K9me3-loss: %d | H3K9me3-unchanged: %d",
+                nrow(pop), sum(pop$k9group == "H3K9me3_loss"),
+                sum(pop$k9group == "H3K9me3_unchanged")))
+
+hmm_cols <- grep("^hmm_", names(pop), value = TRUE)
+k9split <- do.call(rbind, lapply(hmm_cols, function(col) {
+  a <- pop[[col]][pop$k9group == "H3K9me3_loss"]
+  b <- pop[[col]][pop$k9group == "H3K9me3_unchanged"]
+  data.frame(state = sub("^hmm_", "", col),
+             mean_cov_loss = mean(a, na.rm = TRUE),
+             mean_cov_unchanged = mean(b, na.rm = TRUE),
+             log2_ratio = log2((mean(a, na.rm = TRUE) + 1e-4) / (mean(b, na.rm = TRUE) + 1e-4)),
+             p_value = tryCatch(suppressWarnings(wilcox.test(a, b)$p.value),
+                                error = function(e) NA_real_),
+             stringsAsFactors = FALSE)
+}))
+# size-weighted (by domain length); foreground = H3K9me3-loss, background = unchanged
+sw9 <- chromHMM_size_weighted(pop[, hmm_cols], pop$end - pop$start,
+                              pop$k9group == "H3K9me3_loss")
+k9split <- merge(k9split, sw9, by = "state")
+k9split$p_adj_BH   <- p.adjust(k9split$p_value, method = "BH")
+k9split$perm_p_adj <- p.adjust(k9split$perm_p,  method = "BH")
+fwrite(k9split, file.path(tables_dir, "enrichment_chromHMM_H3K9me3_loss_vs_unchanged.tsv"), sep = "\t")
+
+k9_lollipop <- function(lr, fdr, ttl) {
+  k9split %>%
+    dplyr::filter(is.finite(.data[[lr]]), !is.na(.data[[fdr]])) %>%
+    dplyr::mutate(neglog10FDR = -log10(pmax(.data[[fdr]], .Machine$double.xmin)),
+                  state = reorder(state, .data[[lr]])) %>%
+    ggplot(aes(.data[[lr]], state, size = neglog10FDR, colour = .data[[lr]])) +
+    geom_vline(xintercept = 0, linetype = "dashed") + geom_point() +
+    scale_colour_gradient2(low = "steelblue3", mid = "grey85", high = "firebrick2",
+                           midpoint = 0, name = expression(log[2]~"ratio")) +
+    scale_size_continuous(name = expression(-log[10]("FDR"))) +
+    labs(title = ttl,
+         subtitle = "red/right = higher where H3K9me3 also falls; blue/left = higher where H3K9me3 stays",
+         x = "log2 coverage ratio (H3K9me3-loss / unchanged)", y = "ChromHMM state") +
+    theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
+}
+ggsave(file.path(fig_dir, "enrichment_chromHMM_H3K9me3_loss_vs_unchanged.pdf"),
+       k9_lollipop("log2_ratio", "p_adj_BH",
+                   "ChromHMM: H3K9me3-loss vs unchanged (H4K20me3-lost) - PER-REGION"),
+       width = 8, height = 7)
+ggsave(file.path(fig_dir, "enrichment_chromHMM_H3K9me3_loss_vs_unchanged_sizeweighted.pdf"),
+       k9_lollipop("w_log2_ratio", "perm_p_adj",
+                   "ChromHMM: H3K9me3-loss vs unchanged (H4K20me3-lost) - SIZE-WEIGHTED"),
+       width = 8, height = 7)
+message("Saved: enrichment_chromHMM_H3K9me3_loss_vs_unchanged.{tsv, per-region pdf, size-weighted pdf}")
 
 
