@@ -666,29 +666,35 @@ k9  <- l2fc_by_id("H3K9me3")
 k20 <- l2fc_by_id("H4K20me3")
 clus_lv <- paste("Cluster", sort(unique(sig_df$Cluster)))
 chg_df <- data.frame(
-  Cluster  = factor(paste("Cluster", sig_df$Cluster), levels = clus_lv),
-  H3K9me3  = unname(k9[sig_df$peak_id]),
-  H4K20me3 = unname(k20[sig_df$peak_id]))
+  Cluster      = factor(paste("Cluster", sig_df$Cluster), levels = clus_lv),
+  H3K9me3      = unname(k9[sig_df$peak_id]),
+  H4K20me3     = unname(k20[sig_df$peak_id]),
+  peak_size_kb = sig_df$peak_size_kb)
+d9 <- chg_df[is.finite(chg_df$H3K9me3) & is.finite(chg_df$H4K20me3) &
+             is.finite(chg_df$peak_size_kb) & chg_df$peak_size_kb > 0 &
+             !is.na(chg_df$Cluster), ]
 
-# 9d: scatter of the two marks' DESeq2 log2FC, faceted by cluster
-d9 <- chg_df[is.finite(chg_df$H3K9me3) & is.finite(chg_df$H4K20me3) & !is.na(chg_df$Cluster), ]
+# 9d: BINPLOT of the change plane, coloured by domain size.
+# x = H3K9me3 log2FC, y = H4K20me3 log2FC, fill = median domain size per bin.
+# Fixes the scatter overplotting and shows where the large domains sit in the
+# change plane (e.g. big domains losing H4K20me3 but retaining H3K9me3?).
 rlab <- d9 %>% group_by(Cluster) %>%
   summarise(r = cor(H3K9me3, H4K20me3, method = "spearman"), n = n(), .groups = "drop")
-g_mp <- ggplot(d9, aes(H3K9me3, H4K20me3)) +
+g_bin <- ggplot(d9, aes(H3K9me3, H4K20me3)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
   geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey55") +
-  geom_point(size = 0.3, alpha = 0.2) +
-  geom_smooth(method = "lm", se = FALSE, colour = "firebrick", linewidth = 0.5) +
+  stat_summary_2d(aes(z = peak_size_kb), fun = median, bins = 22) +
+  scale_fill_viridis_c(trans = "log10", name = "median\ndomain\nsize (kb)") +
   geom_text(data = rlab, aes(x = Inf, y = Inf, label = sprintf("rho=%.2f (n=%d)", r, n)),
-            hjust = 1.05, vjust = 1.5, size = 3, colour = "firebrick") +
+            inherit.aes = FALSE, hjust = 1.05, vjust = 1.5, size = 3, colour = "black") +
   facet_wrap(~Cluster, nrow = 1) +
-  labs(title = "H3K9me3 vs H4K20me3 change (DESeq2 log2FoldChange), by cluster",
-       subtitle = "shared 2 kb-merged peak set; are the two marks' modelled losses coordinated per peak?",
+  labs(title = "H3K9me3 vs H4K20me3 change (DESeq2 log2FC), binned by domain size",
+       subtitle = "fill = median domain size of peaks in each bin; where do the large domains sit in the change plane?",
        x = "H3K9me3 log2FoldChange", y = "H4K20me3 log2FoldChange") +
   theme_minimal(base_size = base_size) + theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_bycluster_change_H3K9me3_vs_H4K20me3.png"),
-       g_mp, width = 14, height = 3.6, dpi = plot_dpi)
-message("Saved: relationship_bycluster_change_H3K9me3_vs_H4K20me3.png")
+ggsave(file.path(fig_dir, "relationship_bycluster_change_H3K9me3_vs_H4K20me3_binned.png"),
+       g_bin, width = 14, height = 3.6, dpi = plot_dpi)
+message("Saved: relationship_bycluster_change_H3K9me3_vs_H4K20me3_binned.png")
 
 # 9e: DESeq2 log2FC distribution per cluster, one panel per mark (shared y — both
 # are log2FoldChange, so magnitudes are directly comparable)
@@ -709,3 +715,33 @@ g_chg <- ggplot(e9, aes(Cluster, l2fc, fill = Cluster)) +
 ggsave(file.path(fig_dir, "relationship_bycluster_mark_change_distribution.png"),
        g_chg, width = 9, height = 4, dpi = plot_dpi)
 message("Saved: relationship_bycluster_mark_change_distribution.png")
+
+# 9f: ALL merged-set regions (both marks measured), significant coloured by
+# cluster. Intersect the two marks' peak_ids for every region with both
+# log2FCs; join sig_df$Cluster (NA where not significant). Shows where each
+# cluster sits in the change plane relative to the whole population.
+common  <- intersect(names(k9), names(k20))
+all_pts <- data.frame(
+  H3K9me3  = unname(k9[common]),
+  H4K20me3 = unname(k20[common]),
+  Cluster  = sig_df$Cluster[match(common, sig_df$peak_id)])
+all_pts <- all_pts[is.finite(all_pts$H3K9me3) & is.finite(all_pts$H4K20me3), ]
+all_pts$clustered <- !is.na(all_pts$Cluster)
+
+g_all <- ggplot(all_pts, aes(H3K9me3, H4K20me3)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
+  geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey55") +
+  geom_point(data = subset(all_pts, !clustered), colour = "grey82",
+             size = 0.25, alpha = 0.3) +
+  geom_point(data = subset(all_pts, clustered), aes(colour = factor(Cluster)),
+             size = 0.5, alpha = 0.6) +
+  scale_colour_viridis_d(option = "D", end = 0.9, name = "Cluster") +
+  guides(colour = guide_legend(override.aes = list(size = 2.5, alpha = 1))) +
+  labs(title = "H3K9me3 vs H4K20me3 change: all regions, significant coloured by cluster",
+       subtitle = sprintf("grey = all %d merged-set regions with both marks; coloured = %d significant/clustered",
+                           nrow(all_pts), sum(all_pts$clustered)),
+       x = "H3K9me3 log2FoldChange", y = "H4K20me3 log2FoldChange") +
+  theme_minimal(base_size = base_size) + theme(panel.grid.minor = element_blank())
+ggsave(file.path(fig_dir, "relationship_all_regions_H3K9me3_vs_H4K20me3_by_cluster.png"),
+       g_all, width = 8, height = 7, dpi = plot_dpi)
+message("Saved: relationship_all_regions_H3K9me3_vs_H4K20me3_by_cluster.png")
