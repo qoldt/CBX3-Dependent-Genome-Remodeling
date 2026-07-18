@@ -67,8 +67,7 @@ g_prof <- ggplot(peak_prof, aes(Cluster, signal_disp, fill = Genotype)) +
        subtitle = "boxes = across-peak distribution; which marks define each cluster and which are lost",
        x = "Cluster", y = "signal") +
   theme_m
-ggsave(file.path(fig_dir, "cluster_signal_profile.png"), g_prof, width = 14, height = 4, dpi = 300)
-message("Saved: cluster_signal_profile.png")
+save_fig(g_prof, "cluster_signal_profile", "clusters", width = 14, height = 4)
 
 # ================================================================
 # 2. Loss heatmap - log2(HP1gKO / WT) mean signal per cluster x mark.
@@ -85,8 +84,7 @@ g_loss <- ggplot(w, aes(ChIP, Cluster, fill = log2_KO_WT)) +
   labs(title = "Signal change per cluster (log2 HP1gKO / WT)",
        x = "Mark", y = "Cluster") +
   theme_m
-ggsave(file.path(fig_dir, "cluster_loss_heatmap.png"), g_loss, width = 7, height = 4.5, dpi = 300)
-message("Saved: cluster_loss_heatmap.png")
+save_fig(g_loss, "cluster_loss_heatmap", "clusters", width = 7, height = 4.5)
 
 # ================================================================
 # 3. ChromHMM profile - mean per-state coverage per cluster.
@@ -122,9 +120,8 @@ g_hmm_z <- ggplot(hmm_z, aes(state, Cluster, fill = z)) +
        subtitle = "which cluster is relatively high/low in each state",
        x = "ChromHMM state", y = "Cluster") +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-ggsave(file.path(fig_dir, "cluster_chromHMM_coverage_abs.png"), g_hmm_abs, width = 9, height = 4, dpi = 300)
-ggsave(file.path(fig_dir, "cluster_chromHMM_coverage_zscore.png"), g_hmm_z, width = 9, height = 4, dpi = 300)
-message("Saved: cluster_chromHMM_coverage_{abs,zscore}.png")
+save_fig(g_hmm_abs, "cluster_chromHMM_coverage_abs", "clusters", width = 9, height = 4)
+save_fig(g_hmm_z, "cluster_chromHMM_coverage_zscore", "clusters", width = 9, height = 4)
 
 # ================================================================
 # 4. Genomic composition per cluster: (a) repeat_class %  (b) genomic_region %
@@ -139,13 +136,10 @@ comp_bar <- function(df, var, title) {
     labs(title = title, x = "Cluster", y = "fraction of peaks", fill = var) +
     theme_m
 }
-ggsave(file.path(fig_dir, "cluster_repeat_composition.png"),
-       comp_bar(sig_df, "repeat_class", "Repeat-class composition per cluster"),
-       width = 7, height = 4.5, dpi = 300)
-ggsave(file.path(fig_dir, "cluster_region_composition.png"),
-       comp_bar(sig_df, "genomic_region", "Genomic-region composition per cluster"),
-       width = 8, height = 4.5, dpi = 300)
-message("Saved: cluster_repeat_composition.png + cluster_region_composition.png")
+save_fig(comp_bar(sig_df, "repeat_class", "Repeat-class composition per cluster"),
+         "cluster_repeat_composition", "clusters", width = 7, height = 4.5)
+save_fig(comp_bar(sig_df, "genomic_region", "Genomic-region composition per cluster"),
+         "cluster_region_composition", "clusters", width = 8, height = 4.5)
 
 # ================================================================
 # 5. Cluster summary table
@@ -209,17 +203,14 @@ clus_dotplot <- function(lr, fdr, ttl, sub) {
     labs(title = ttl, subtitle = sub, x = NULL, y = "ChromHMM state") +
     theme_m + theme(axis.text.x = element_text(angle = 30, hjust = 1))
 }
-ggsave(file.path(fig_dir, "cluster_chromHMM_enrichment.png"),
-       clus_dotplot("log2_ratio", "p_adj_BH",
+save_fig(clus_dotplot("log2_ratio", "p_adj_BH",
                     "Per-cluster ChromHMM enrichment (cluster vs other clusters) - PER-REGION",
                     "colour = log2 coverage ratio; each region equal; size = FDR"),
-       width = 8, height = 6, dpi = 300)
-ggsave(file.path(fig_dir, "cluster_chromHMM_enrichment_sizeweighted.png"),
-       clus_dotplot("w_log2_ratio", "perm_p_adj",
+         "cluster_chromHMM_enrichment", "clusters", width = 8, height = 6)
+save_fig(clus_dotplot("w_log2_ratio", "perm_p_adj",
                     "Per-cluster ChromHMM enrichment (cluster vs other clusters) - SIZE-WEIGHTED",
                     "colour = log2 territory ratio (weighted by domain length); size = perm FDR"),
-       width = 8, height = 6, dpi = 300)
-message("Saved: cluster_chromHMM_enrichment.{tsv, per-region png, size-weighted png}")
+         "cluster_chromHMM_enrichment_sizeweighted", "clusters", width = 8, height = 6)
 
 # ================================================================
 # 7. Gene-family exon signal (HUSH / CBX3-silenced families)
@@ -252,6 +243,19 @@ colnames(fam_mat) <- samples$sample_id
 stopifnot(nrow(fam_mat) == length(fam_gr))
 saveRDS(list(fam_gr = fam_gr, fam_mat = fam_mat),
         file.path(rds_dir, "family_exon_signal.rds"))
+
+# Per-family BED of the target exons (deepTools inputs; NCBI seqnames matching
+# the scaled bigWigs; strand-aware, name = gene symbol)
+for (fam in unique(as.character(mcols(fam_gr)$family))) {
+  gi  <- fam_gr[as.character(mcols(fam_gr)$family) == fam]
+  bed <- data.frame(chrom = as.character(seqnames(gi)), start = start(gi) - 1L,
+                    end = end(gi), name = as.character(mcols(gi)$gene),
+                    score = 0L, strand = as.character(strand(gi)))
+  bed <- bed[order(bed$chrom, bed$start), ]
+  fwrite(bed, file.path(bed_dir, sprintf("family_%s_exons.bed",
+         gsub("[^A-Za-z0-9]+", "_", fam))), sep = "\t", col.names = FALSE)
+}
+message("Saved per-family target-exon BEDs to ", bed_dir)
 
 # per exon x mark: mean WT vs mean KO signal + log2 change
 eps_f  <- 0.25
@@ -297,7 +301,7 @@ g_fam_chg <- ggplot(long, aes(mark, log2FC, fill = mark)) +
        subtitle = "H3K9me3/H4K20me3 below 0 = loss of silencing marks over the family (CBX3/HUSH-dependent)",
        x = "Mark", y = "log2(KO / WT) per exon") +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
-ggsave(file.path(fig_dir, "family_exon_change.png"), g_fam_chg, width = 14, height = 4, dpi = 300)
+save_fig(g_fam_chg, "family_exon_change", "gene_families", width = 14, height = 4)
 
 # Plot B: WT vs KO signal DISTRIBUTION per gene, per family x mark (boxplot, so
 # the across-gene spread is visible rather than a single median bar)
@@ -314,7 +318,7 @@ g_fam_lvl <- ggplot(lvl[signal > 0], aes(mark, signal, fill = Genotype)) +
        subtitle = "boxes = across-gene distribution of per-gene mean signal (log10 y)",
        x = "Mark", y = "signal (log10)") +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
-ggsave(file.path(fig_dir, "family_exon_signal_level.png"), g_fam_lvl, width = 14, height = 4, dpi = 300)
+save_fig(g_fam_lvl, "family_exon_signal_level", "gene_families", width = 14, height = 4)
 
 # Plot C: summary dotplot (family x mark: colour = median log2FC, size = FDR)
 g_fam_dot <- fam_summary %>%
@@ -329,7 +333,7 @@ g_fam_dot <- fam_summary %>%
   labs(title = "Gene-family exon change summary (HP1gKO vs WT)",
        subtitle = "colour = median log2(KO/WT); size = paired-Wilcoxon FDR", x = "Mark", y = NULL) +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-ggsave(file.path(fig_dir, "family_exon_dotplot.png"), g_fam_dot, width = 7, height = 3.5, dpi = 300)
+save_fig(g_fam_dot, "family_exon_dotplot", "gene_families", width = 7, height = 3.5)
 
 # Plot D: MA plot (change vs abundance) per mark, coloured by family
 g_fam_ma <- ggplot(long, aes((wt_signal + ko_signal) / 2, log2FC, colour = family)) +
@@ -343,7 +347,7 @@ g_fam_ma <- ggplot(long, aes((wt_signal + ko_signal) / 2, log2FC, colour = famil
        subtitle = "loss holds across the abundance range = not a signal-level artifact",
        x = "mean signal (WT+KO)/2 (log10)", y = "log2(KO / WT)") +
   theme_m
-ggsave(file.path(fig_dir, "family_exon_MA.png"), g_fam_ma, width = 14, height = 3.6, dpi = 300)
+save_fig(g_fam_ma, "family_exon_MA", "gene_families", width = 14, height = 3.6)
 
 # Plot E: per-gene REPLICATE heatmaps (rows = genes, cols = all 55 samples).
 # Row z-scored raw signal; column-split by mark, top annotation = genotype;
@@ -357,7 +361,7 @@ col_meta <- data.frame(
                     levels = c("WT", "HP1gKO")))
 row_fam <- factor(family, levels = names(gene_families))
 
-draw_fam_hm <- function(mat, cols, ttl, outfile, w) {
+draw_fam_hm <- function(mat, cols, ttl, name, w) {
   m <- t(scale(t(mat[, cols, drop = FALSE]))); m[!is.finite(m)] <- 0
   ha <- HeatmapAnnotation(Genotype = col_meta$Genotype[cols],
                           col = list(Genotype = geno_colors), show_annotation_name = TRUE)
@@ -367,15 +371,15 @@ draw_fam_hm <- function(mat, cols, ttl, outfile, w) {
                 show_row_names = FALSE, show_column_names = FALSE,
                 row_title_gp = gpar(fontsize = 9), column_title_gp = gpar(fontsize = 10),
                 heatmap_legend_param = list(title = "row z-score"))
-  png(file.path(fig_dir, outfile), width = w, height = 11, units = "in", res = 200)
-  draw(ht, column_title = ttl); dev.off()
+  save_base_fig(function() draw(ht, column_title = ttl), name, "gene_families",
+                width = w, height = 11, dpi = 200)
 }
 draw_fam_hm(fam_mat, seq_len(ncol(fam_mat)),
             "Gene-family exon signal per replicate (all marks)",
-            "family_exon_heatmap_allmarks.png", 11)
+            "family_exon_heatmap_allmarks", 11)
 sil <- which(col_meta$Mark %in% c("H3K9me3", "H4K20me3"))
 draw_fam_hm(fam_mat, sil,
             "Gene-family exon signal per replicate (silencing marks)",
-            "family_exon_heatmap_silencing.png", 7)
+            "family_exon_heatmap_silencing", 7)
 
-message("Saved: family_exon_signal.{tsv,rds} + summary.tsv + 6 figures (box, level, dot, MA, 2 heatmaps)")
+message("Saved: family_exon_signal.{tsv,rds} + family_exon_summary.tsv")

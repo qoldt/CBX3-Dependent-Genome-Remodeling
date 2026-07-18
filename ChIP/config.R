@@ -41,6 +41,29 @@ for (d in c(counts_dir, rds_dir, tables_dir, fig_dir, bed_dir)) {
   if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
 }
 
+# --- Figure savers: write BOTH png (quick view) and pdf (vector for papers), ---
+# --- organised into per-analysis subfolders under results/figures/<subdir>.  ---
+# save_fig(): for ggplot objects.  save_base_fig(): for base-graphics / draw()
+# renderers (e.g. ComplexHeatmap) - pass a zero-arg function that draws.
+save_fig <- function(plot, name, subdir = "", width = 8, height = 6, dpi = 300) {
+  d <- if (nzchar(subdir)) file.path(fig_dir, subdir) else fig_dir
+  if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  ggplot2::ggsave(file.path(d, paste0(name, ".png")), plot, width = width, height = height, dpi = dpi)
+  ggplot2::ggsave(file.path(d, paste0(name, ".pdf")), plot, width = width, height = height)
+  message("Saved: ", file.path(subdir, paste0(name, ".{png,pdf}")))
+  invisible(file.path(d, name))
+}
+save_base_fig <- function(draw_fn, name, subdir = "", width = 10, height = 12, dpi = 300) {
+  d <- if (nzchar(subdir)) file.path(fig_dir, subdir) else fig_dir
+  if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  png(file.path(d, paste0(name, ".png")), width = width, height = height, units = "in", res = dpi)
+  draw_fn(); dev.off()
+  pdf(file.path(d, paste0(name, ".pdf")), width = width, height = height)
+  draw_fn(); dev.off()
+  message("Saved: ", file.path(subdir, paste0(name, ".{png,pdf}")))
+  invisible(file.path(d, name))
+}
+
 # File written by MINUTE_1, read by MINUTE_2 and MINUTE_3
 annotated_rds <- file.path(rds_dir, "annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds")
 

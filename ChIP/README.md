@@ -74,7 +74,8 @@ ChIP/
     bigwig/            # *_<genotype>_rep*.mm39.scaled.bw       (download, git-ignored)
     annotation/        # LINE/SINE/LTR .mm39.bed + TAD BEDs     (download, git-ignored)
   results/                                    # ALL generated output (git-ignored except rds/)
-    counts/  rds/  tables/  figures/  bed/
+    counts/  rds/  tables/  bed/
+    figures/<subanalysis>/                     # per-analysis subfolders; each fig as .png + .pdf
   Minute Run/  Peak Calling/                  # cluster (Slurm) steps — see above
 ```
 
@@ -357,6 +358,24 @@ H3K9me3 mark, while H3K9me3 co-loss is confined to gene-proximal `Het`.
 ---
 
 ## Outputs (all under `results/`)
+
+**Every figure is written as both `.png` (quick view) and `.pdf` (vector, for
+papers), organised into per-analysis subfolders under `results/figures/`:**
+
+```
+figures/
+  heatmap/           clustered significant-peak heatmap (MINUTE_3)
+  change_plots/      per-chromosome change plots + log2FC distribution (MINUTE_3)
+  relationships/     size × signal × log2FC, total + by-cluster + mark-vs-mark (MINUTE_3)
+  enrichment/        repeat/TAD + ChromHMM enrichment dot plots (MINUTE_2)
+  clusters/          cluster signal/loss/ChromHMM/composition/enrichment (MINUTE_4)
+  gene_families/     HUSH/CBX3 family exon plots + replicate heatmaps (MINUTE_4)
+  differential_loss/ co-loss / H4K20me3-only / stable characterisation (MINUTE_5)
+```
+
+The table below lists figures by base name; each exists as `<subfolder>/<name>.{png,pdf}`.
+The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
+`config.R` write both formats.
 
 | File | Produced by | Contents |
 |------|-------------|----------|

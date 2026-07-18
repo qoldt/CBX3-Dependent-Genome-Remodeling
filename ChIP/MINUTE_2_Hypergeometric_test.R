@@ -207,8 +207,7 @@ p_enrich <- ggplot(plot_df,
   )+
   theme_minimal()
 
-ggsave(file.path(fig_dir, "enrichment_dotplot.pdf"), p_enrich, width = 12, height = 5)
-p_enrich
+save_fig(p_enrich, "enrichment_dotplot", "enrichment", width = 12, height = 5)
 
 
 # ================================================================
@@ -265,17 +264,14 @@ hmm_dotplot <- function(df, lr, fdr, ttl, sub) {
     labs(title = ttl, subtitle = sub, x = NULL, y = "ChromHMM state") +
     theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
 }
-ggsave(file.path(fig_dir, "enrichment_chromHMM_dotplot.pdf"),
-       hmm_dotplot(chromhmm_enrich, "log2_ratio", "p_adj_BH",
-                   "ChromHMM enrichment of significant peaks - PER-REGION",
-                   "each region equal; colour = log2 mean-coverage ratio (sig vs bg); size = FDR"),
-       width = 8, height = 7)
-ggsave(file.path(fig_dir, "enrichment_chromHMM_sizeweighted_dotplot.pdf"),
-       hmm_dotplot(chromhmm_enrich, "w_log2_ratio", "perm_p_adj",
-                   "ChromHMM enrichment of significant peaks - SIZE-WEIGHTED",
-                   "weighted by domain length; colour = log2 territory ratio (sig vs bg); size = perm FDR"),
-       width = 8, height = 7)
-message("Saved: enrichment_chromHMM.tsv + per-region & size-weighted dot plots")
+save_fig(hmm_dotplot(chromhmm_enrich, "log2_ratio", "p_adj_BH",
+                     "ChromHMM enrichment of significant peaks - PER-REGION",
+                     "each region equal; colour = log2 mean-coverage ratio (sig vs bg); size = FDR"),
+         "enrichment_chromHMM_dotplot", "enrichment", width = 8, height = 7)
+save_fig(hmm_dotplot(chromhmm_enrich, "w_log2_ratio", "perm_p_adj",
+                     "ChromHMM enrichment of significant peaks - SIZE-WEIGHTED",
+                     "weighted by domain length; colour = log2 territory ratio (sig vs bg); size = perm FDR"),
+         "enrichment_chromHMM_sizeweighted_dotplot", "enrichment", width = 8, height = 7)
 
 
 # ================================================================
@@ -336,14 +332,11 @@ k9_lollipop <- function(lr, fdr, ttl) {
          x = "log2 coverage ratio (H3K9me3-loss / unchanged)", y = "ChromHMM state") +
     theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
 }
-ggsave(file.path(fig_dir, "enrichment_chromHMM_H3K9me3_loss_vs_unchanged.pdf"),
-       k9_lollipop("log2_ratio", "p_adj_BH",
-                   "ChromHMM: H3K9me3-loss vs unchanged (H4K20me3-lost) - PER-REGION"),
-       width = 8, height = 7)
-ggsave(file.path(fig_dir, "enrichment_chromHMM_H3K9me3_loss_vs_unchanged_sizeweighted.pdf"),
-       k9_lollipop("w_log2_ratio", "perm_p_adj",
-                   "ChromHMM: H3K9me3-loss vs unchanged (H4K20me3-lost) - SIZE-WEIGHTED"),
-       width = 8, height = 7)
-message("Saved: enrichment_chromHMM_H3K9me3_loss_vs_unchanged.{tsv, per-region pdf, size-weighted pdf}")
+save_fig(k9_lollipop("log2_ratio", "p_adj_BH",
+                     "ChromHMM: H3K9me3-loss vs unchanged (H4K20me3-lost) - PER-REGION"),
+         "enrichment_chromHMM_H3K9me3_loss_vs_unchanged", "enrichment", width = 8, height = 7)
+save_fig(k9_lollipop("w_log2_ratio", "perm_p_adj",
+                     "ChromHMM: H3K9me3-loss vs unchanged (H4K20me3-lost) - SIZE-WEIGHTED"),
+         "enrichment_chromHMM_H3K9me3_loss_vs_unchanged_sizeweighted", "enrichment", width = 8, height = 7)
 
 

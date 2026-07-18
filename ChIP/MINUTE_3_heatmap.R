@@ -192,9 +192,17 @@ ht <- Heatmap(
 
 #draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
 
-pdf(file.path(fig_dir, "2000maxgap_indsignificance_with_TAD.pdf"), width = 10, height = 16)  # adjust size as needed
+# Draw once to capture ht_drawn (used for cluster extraction below), then re-draw
+# the SAME laid-out object for the other format so png/pdf share one clustering.
+hm_dir <- file.path(fig_dir, "heatmap")
+if (!dir.exists(hm_dir)) dir.create(hm_dir, recursive = TRUE, showWarnings = FALSE)
+hm_base <- "2000maxgap_indsignificance_with_TAD"
+pdf(file.path(hm_dir, paste0(hm_base, ".pdf")), width = 10, height = 16)
 ht_drawn <- draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")
 dev.off()
+png(file.path(hm_dir, paste0(hm_base, ".png")), width = 10, height = 16, units = "in", res = 200)
+draw(ht_drawn); dev.off()
+message("Saved: heatmap/", hm_base, ".{png,pdf}")
 
 
 # ---------------------------
@@ -446,11 +454,10 @@ for (mark in names(annotated_results)) {
   cat(sprintf("\n=== Change plots for: %s (criterion: %s) ===\n", mark, crit))
   df <- annotated_results[[mark]]
   for (cb in c("genomic_region", "repeat_class")) {
-    suffix  <- if (cb == "genomic_region") "coloured_by_genomic_region" else "coloured_by_repeat"
-    outfile <- file.path(fig_dir, paste0(mark, "_changes_by_chr_", suffix, ".png"))
-    ggsave(outfile, changes_by_chr_plot(df, mark, color_by = cb, criterion = crit),
-           width = plot_w, height = plot_h, dpi = plot_dpi)
-    message("Saved: ", outfile)
+    suffix <- if (cb == "genomic_region") "coloured_by_genomic_region" else "coloured_by_repeat"
+    save_fig(changes_by_chr_plot(df, mark, color_by = cb, criterion = crit),
+             paste0(mark, "_changes_by_chr_", suffix), "change_plots",
+             width = plot_w, height = plot_h)
   }
 }
 
@@ -494,9 +501,7 @@ g_diag <- ggplot(diag_df, aes(log2FoldChange)) +
   theme_minimal(base_size = base_size) +
   theme(legend.position = "none", panel.grid.minor = element_blank())
 
-ggsave(file.path(fig_dir, "log2FC_distribution_by_mark.png"), g_diag,
-       width = 8, height = 11, dpi = plot_dpi)
-message("Saved: ", file.path(fig_dir, "log2FC_distribution_by_mark.png"))
+save_fig(g_diag, "log2FC_distribution_by_mark", "change_plots", width = 8, height = 11)
 
 
 # ================================================================
@@ -534,9 +539,8 @@ g_rel_heat <- ggplot(rel_df, aes(kb, baseMean, z = log2FoldChange)) +
        x = "Domain Size (kb)", y = "baseMean (ChIP signal)") +
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_total_size_baseMean_log2FC_binned.png"),
-       g_rel_heat, width = 13, height = 8, dpi = plot_dpi)
-message("Saved: relationship_total_size_baseMean_log2FC_binned.png")
+save_fig(g_rel_heat, "relationship_total_size_baseMean_log2FC_binned", "relationships",
+         width = 13, height = 8)
 
 # --- 8b. Scatter: log2FC vs domain size, coloured by baseMean ----------------
 g_rel_scatter <- ggplot(rel_df, aes(kb, log2FoldChange, colour = baseMean)) +
@@ -549,9 +553,7 @@ g_rel_scatter <- ggplot(rel_df, aes(kb, log2FoldChange, colour = baseMean)) +
        x = "Domain Size (kb)", y = "log2FoldChange") +
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_total_log2FC_vs_size_by_baseMean.png"),
-       g_rel_scatter, width = 13, height = 8, dpi = plot_dpi)
-message("Saved: relationship_total_log2FC_vs_size_by_baseMean.png")
+save_fig(g_rel_scatter, "relationship_total_log2FC_vs_size_by_baseMean", "relationships", width = 13, height = 8)
 
 # --- 8c. Interaction: mean log2FC vs size bin, stratified by baseMean tertile -
 # Direct visual of the size x baseMean interaction: a line per baseMean tertile.
@@ -578,9 +580,7 @@ g_inter <- ggplot(inter, aes(size_bin, mean_l2fc, colour = base_tertile, group =
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank(),
         axis.text.x = element_text(angle = 45, hjust = 1, size = base_size - 3))
-ggsave(file.path(fig_dir, "relationship_total_interaction_size_x_baseMean.png"),
-       g_inter, width = 13, height = 8, dpi = plot_dpi)
-message("Saved: relationship_total_interaction_size_x_baseMean.png")
+save_fig(g_inter, "relationship_total_interaction_size_x_baseMean", "relationships", width = 13, height = 8)
 
 
 # ================================================================
@@ -608,9 +608,7 @@ g_c_heat <- ggplot(clus_df, aes(peak_size_kb, baseMean, z = log2FoldChange)) +
        x = "Domain Size (kb)", y = "baseMean (ChIP signal)") +
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_bycluster_size_baseMean_log2FC_binned.png"),
-       g_c_heat, width = 12, height = 8, dpi = plot_dpi)
-message("Saved: relationship_bycluster_size_baseMean_log2FC_binned.png")
+save_fig(g_c_heat, "relationship_bycluster_size_baseMean_log2FC_binned", "relationships", width = 12, height = 8)
 
 # --- 9b. Scatter per cluster ---
 g_c_scatter <- ggplot(clus_df, aes(peak_size_kb, log2FoldChange, colour = baseMean)) +
@@ -623,9 +621,7 @@ g_c_scatter <- ggplot(clus_df, aes(peak_size_kb, log2FoldChange, colour = baseMe
        x = "Domain Size (kb)", y = "log2FoldChange") +
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_bycluster_log2FC_vs_size_by_baseMean.png"),
-       g_c_scatter, width = 12, height = 8, dpi = plot_dpi)
-message("Saved: relationship_bycluster_log2FC_vs_size_by_baseMean.png")
+save_fig(g_c_scatter, "relationship_bycluster_log2FC_vs_size_by_baseMean", "relationships", width = 12, height = 8)
 
 # --- 9c. Interaction per cluster (baseMean tertiles within each cluster) ---
 inter_c <- clus_df %>%
@@ -649,9 +645,7 @@ g_c_inter <- ggplot(inter_c, aes(size_bin, mean_l2fc, colour = base_tertile, gro
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank(),
         axis.text.x = element_text(angle = 45, hjust = 1, size = base_size - 3))
-ggsave(file.path(fig_dir, "relationship_bycluster_interaction_size_x_baseMean.png"),
-       g_c_inter, width = 12, height = 8, dpi = plot_dpi)
-message("Saved: relationship_bycluster_interaction_size_x_baseMean.png")
+save_fig(g_c_inter, "relationship_bycluster_interaction_size_x_baseMean", "relationships", width = 12, height = 8)
 
 # --- 9d/9e. H3K9me3 vs H4K20me3 CHANGE (DESeq2 log2FoldChange) per cluster ---
 # H3K9me3 and H4K20me3 share the 2 kb-merged peak set, so their DESeq2
@@ -692,9 +686,7 @@ g_bin <- ggplot(d9, aes(H3K9me3, H4K20me3)) +
        subtitle = "fill = median domain size of peaks in each bin; where do the large domains sit in the change plane?",
        x = "H3K9me3 log2FoldChange", y = "H4K20me3 log2FoldChange") +
   theme_minimal(base_size = base_size) + theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_bycluster_change_H3K9me3_vs_H4K20me3_binned.png"),
-       g_bin, width = 14, height = 3.6, dpi = plot_dpi)
-message("Saved: relationship_bycluster_change_H3K9me3_vs_H4K20me3_binned.png")
+save_fig(g_bin, "relationship_bycluster_change_H3K9me3_vs_H4K20me3_binned", "relationships", width = 14, height = 3.6)
 
 # 9e: DESeq2 log2FC distribution per cluster, one panel per mark (shared y — both
 # are log2FoldChange, so magnitudes are directly comparable)
@@ -714,9 +706,7 @@ g_chg <- ggplot(e9, aes(Cluster, l2fc, fill = Cluster)) +
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank(),
         axis.text.x = element_text(angle = 45, hjust = 1, size = base_size - 3))
-ggsave(file.path(fig_dir, "relationship_bycluster_mark_change_distribution.png"),
-       g_chg, width = 9, height = 4, dpi = plot_dpi)
-message("Saved: relationship_bycluster_mark_change_distribution.png")
+save_fig(g_chg, "relationship_bycluster_mark_change_distribution", "relationships", width = 9, height = 4)
 
 # 9f: ALL merged-set regions (both marks measured), significant coloured by
 # cluster. Intersect the two marks' peak_ids for every region with both
@@ -744,6 +734,4 @@ g_all <- ggplot(all_pts, aes(H3K9me3, H4K20me3)) +
                            nrow(all_pts), sum(all_pts$clustered)),
        x = "H3K9me3 log2FoldChange", y = "H4K20me3 log2FoldChange") +
   theme_minimal(base_size = base_size) + theme(panel.grid.minor = element_blank())
-ggsave(file.path(fig_dir, "relationship_all_regions_H3K9me3_vs_H4K20me3_by_cluster.png"),
-       g_all, width = 8, height = 7, dpi = plot_dpi)
-message("Saved: relationship_all_regions_H3K9me3_vs_H4K20me3_by_cluster.png")
+save_fig(g_all, "relationship_all_regions_H3K9me3_vs_H4K20me3_by_cluster", "relationships", width = 8, height = 7)

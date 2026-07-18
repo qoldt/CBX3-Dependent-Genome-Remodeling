@@ -60,7 +60,7 @@ g_size <- ggplot(g, aes(group, kb, fill = group)) +
   scale_y_log10() + scale_fill_manual(values = grp_cols, guide = "none") +
   labs(title = "Domain size per differential-loss group", x = NULL, y = "domain size (kb, log10)") +
   theme_m
-ggsave(file.path(fig_dir, "diffloss_domain_size.png"), g_size, width = 6, height = 4, dpi = 300)
+save_fig(g_size, "diffloss_domain_size", "differential_loss", width = 6, height = 4)
 
 # ---------------------------------------------------------------
 # 2. ChromHMM: mean coverage + enrichment (per-region Wilcoxon AND size-weighted)
@@ -75,7 +75,7 @@ g_cov <- ggplot(cov_long, aes(state, group, fill = cov)) +
   geom_tile(colour = "white") + scale_fill_viridis_c(name = "mean\ncoverage") +
   labs(title = "Mean ChromHMM state coverage per group", x = "ChromHMM state", y = NULL) +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1))
-ggsave(file.path(fig_dir, "diffloss_chromHMM_coverage.png"), g_cov, width = 9, height = 3.2, dpi = 300)
+save_fig(g_cov, "diffloss_chromHMM_coverage", "differential_loss", width = 9, height = 3.2)
 
 # enrichment: fg vs bg, per-region Wilcoxon + size-weighted permutation
 enrich_chromhmm <- function(df, fg, contrast) {
@@ -115,12 +115,10 @@ hmm_dot <- function(lr, fdr, ttl) {
     labs(title = ttl, x = NULL, y = "ChromHMM state") +
     theme_m + theme(axis.text.x = element_text(angle = 20, hjust = 1))
 }
-ggsave(file.path(fig_dir, "diffloss_chromHMM_dotplot.png"),
-       hmm_dot("log2_ratio", "p_adj_BH", "ChromHMM enrichment - PER-REGION"),
-       width = 7, height = 6, dpi = 300)
-ggsave(file.path(fig_dir, "diffloss_chromHMM_dotplot_sizeweighted.png"),
-       hmm_dot("w_log2_ratio", "perm_p_adj", "ChromHMM enrichment - SIZE-WEIGHTED (by domain length)"),
-       width = 7, height = 6, dpi = 300)
+save_fig(hmm_dot("log2_ratio", "p_adj_BH", "ChromHMM enrichment - PER-REGION"),
+         "diffloss_chromHMM_dotplot", "differential_loss", width = 7, height = 6)
+save_fig(hmm_dot("w_log2_ratio", "perm_p_adj", "ChromHMM enrichment - SIZE-WEIGHTED (by domain length)"),
+         "diffloss_chromHMM_dotplot_sizeweighted", "differential_loss", width = 7, height = 6)
 
 # ---------------------------------------------------------------
 # 3. Repeats: composition + specific-family enrichment (Fisher, group vs stable)
@@ -131,7 +129,7 @@ fwrite(rep_comp, file.path(tables_dir, "diffloss_repeat_composition.tsv"), sep =
 g_rep <- ggplot(rep_comp, aes(group, frac, fill = rc)) + geom_col() +
   labs(title = "Repeat-class composition per group", x = NULL, y = "fraction of regions", fill = "repeat_class") +
   theme_m
-ggsave(file.path(fig_dir, "diffloss_repeat_composition.png"), g_rep, width = 6, height = 4, dpi = 300)
+save_fig(g_rep, "diffloss_repeat_composition", "differential_loss", width = 6, height = 4)
 
 fam <- ifelse(is.na(g$repeat_family), "", g$repeat_family)
 nm  <- ifelse(is.na(g$repeat_name),   "", g$repeat_name)
@@ -164,7 +162,7 @@ g_repe <- rep_enrich %>% filter(is.finite(odds_ratio), odds_ratio > 0) %>%
   scale_size_continuous(name = expression(-log[10]("FDR"))) +
   labs(title = "Repeat-family enrichment vs stable regions",
        x = "log2 odds ratio (group vs stable)", y = NULL, colour = "group") + theme_m
-ggsave(file.path(fig_dir, "diffloss_repeat_enrichment.png"), g_repe, width = 7, height = 4.5, dpi = 300)
+save_fig(g_repe, "diffloss_repeat_enrichment", "differential_loss", width = 7, height = 4.5)
 
 # ---------------------------------------------------------------
 # 4. Nearby genes: region, distance-to-TSS, gene families, gene lists
@@ -175,13 +173,13 @@ fwrite(reg_comp, file.path(tables_dir, "diffloss_region_composition.tsv"), sep =
 g_reg <- ggplot(reg_comp, aes(group, frac, fill = gr)) + geom_col() +
   labs(title = "Genomic-region composition per group", x = NULL, y = "fraction of regions", fill = "region") +
   theme_m
-ggsave(file.path(fig_dir, "diffloss_region_composition.png"), g_reg, width = 6.5, height = 4, dpi = 300)
+save_fig(g_reg, "diffloss_region_composition", "differential_loss", width = 6.5, height = 4)
 
 g_tss <- ggplot(g, aes(group, abs(distance_to_tss) + 1, fill = group)) +
   geom_boxplot(outlier.shape = NA, linewidth = 0.3) + scale_y_log10() +
   scale_fill_manual(values = grp_cols, guide = "none") +
   labs(title = "Distance to nearest TSS per group", x = NULL, y = "|distance to TSS| (bp, log10)") + theme_m
-ggsave(file.path(fig_dir, "diffloss_distance_to_tss.png"), g_tss, width = 6, height = 4, dpi = 300)
+save_fig(g_tss, "diffloss_distance_to_tss", "differential_loss", width = 6, height = 4)
 
 # gene-family overlap per group
 sym <- ifelse(is.na(g$SYMBOL), "", as.character(g$SYMBOL))
