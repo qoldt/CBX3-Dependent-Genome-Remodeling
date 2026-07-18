@@ -115,8 +115,9 @@ ggsave(file.path(fig_dir, "cluster_chromHMM_coverage_zscore.png"), g_hmm_z, widt
 message("Saved: cluster_chromHMM_coverage_{abs,zscore}.png")
 
 # ================================================================
-# 4. Genomic composition per cluster
-#    (a) repeat_class %  (b) genomic_region %  (c) gene families + pericentromeric
+# 4. Genomic composition per cluster: (a) repeat_class %  (b) genomic_region %
+#    (per-cluster gene-family fractions removed - superseded by the dedicated
+#     family exon analysis in part 7)
 # ================================================================
 comp_bar <- function(df, var, title) {
   d <- df %>% mutate(v = ifelse(is.na(.data[[var]]), "NA", as.character(.data[[var]]))) %>%
@@ -133,33 +134,6 @@ ggsave(file.path(fig_dir, "cluster_region_composition.png"),
        comp_bar(sig_df, "genomic_region", "Genomic-region composition per cluster"),
        width = 8, height = 4.5, dpi = 300)
 message("Saved: cluster_repeat_composition.png + cluster_region_composition.png")
-
-# (c) gene families + pericentromeric. Families flagged by SYMBOL prefix;
-#     pericentromeric = within 3 Mb of the chromosome start (mouse telocentric).
-lab <- ifelse(is.na(sig_df$SYMBOL), "", as.character(sig_df$SYMBOL))
-fam_patterns <- c(Protocadherin = "^Pcdh", `KRAB-ZFP (Zfp)` = "^Zfp",
-                  Vomeronasal = "^Vmn", Olfactory = "^Olfr")
-fam_df <- do.call(rbind, lapply(names(fam_patterns), function(fn) {
-  flag <- grepl(fam_patterns[[fn]], lab)
-  data.frame(sig_df["Cluster"], family = fn, flag = flag)
-}))
-fam_frac <- fam_df %>% group_by(Cluster, family) %>%
-  summarise(frac = mean(flag), .groups = "drop")
-peri_frac <- sig_df %>% mutate(peri = start < 3e6) %>%
-  group_by(Cluster) %>% summarise(frac = mean(peri), .groups = "drop") %>%
-  mutate(family = "Pericentromeric (<3 Mb)")
-fam_all <- bind_rows(fam_frac, peri_frac)
-
-g_fam <- ggplot(fam_all, aes(Cluster, frac, fill = Cluster)) +
-  geom_col() +
-  facet_wrap(~family, scales = "free_y", nrow = 1) +
-  scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
-  labs(title = "Gene-family and pericentromeric enrichment per cluster",
-       subtitle = "fraction of cluster peaks whose gene symbol matches the family (Pericentromeric = <3 Mb from chr start)",
-       x = "Cluster", y = "fraction of peaks") +
-  theme_m
-ggsave(file.path(fig_dir, "cluster_gene_families.png"), g_fam, width = 13, height = 4, dpi = 300)
-message("Saved: cluster_gene_families.png")
 
 # ================================================================
 # 5. Cluster summary table
@@ -313,18 +287,82 @@ g_fam_chg <- ggplot(long, aes(mark, log2FC, fill = mark)) +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
 ggsave(file.path(fig_dir, "family_exon_change.png"), g_fam_chg, width = 14, height = 4, dpi = 300)
 
-# Plot B: median WT vs KO signal level per family x mark
-lvl <- long %>% group_by(family, mark) %>%
-  summarise(WT = median(wt_signal, na.rm = TRUE), HP1gKO = median(ko_signal, na.rm = TRUE),
-            .groups = "drop")
-lvl <- melt(as.data.table(lvl), id.vars = c("family", "mark"),
-            variable.name = "Genotype", value.name = "signal")
+# Plot B: WT vs KO signal DISTRIBUTION per gene, per family x mark (boxplot, so
+# the across-gene spread is visible rather than a single median bar)
+lvl <- melt(as.data.table(long[, c("family", "mark", "gene", "wt_signal", "ko_signal")]),
+            id.vars = c("family", "mark", "gene"), variable.name = "Genotype", value.name = "signal")
+lvl[, Genotype := factor(ifelse(Genotype == "wt_signal", "WT", "HP1gKO"), levels = c("WT", "HP1gKO"))]
 g_fam_lvl <- ggplot(lvl, aes(mark, signal, fill = Genotype)) +
-  geom_col(position = position_dodge(0.8), width = 0.75) +
+  geom_boxplot(outlier.size = 0.2, outlier.alpha = 0.15, linewidth = 0.3,
+               position = position_dodge(0.8)) +
   facet_wrap(~family, nrow = 1, scales = "free_y") +
   scale_fill_manual(values = geno_colors) +
-  labs(title = "Median ChIP signal over gene-family exons (WT vs HP1gKO)",
-       x = "Mark", y = "median signal") +
+  labs(title = "ChIP signal over gene-family exons, per gene (WT vs HP1gKO)",
+       subtitle = "boxes = across-gene distribution of per-gene mean signal",
+       x = "Mark", y = "signal") +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
 ggsave(file.path(fig_dir, "family_exon_signal_level.png"), g_fam_lvl, width = 14, height = 4, dpi = 300)
-message("Saved: family_exon_signal.{tsv,rds} + family_exon_summary.tsv + 2 figures")
+
+# Plot C: summary dotplot (family x mark: colour = median log2FC, size = FDR)
+g_fam_dot <- fam_summary %>%
+  mutate(mark = factor(mark, levels = mark_levels),
+         family = factor(family, levels = names(gene_families)),
+         neglog10FDR = -log10(pmax(p_adj_BH, .Machine$double.xmin))) %>%
+  ggplot(aes(mark, family, size = neglog10FDR, colour = median_log2FC)) +
+  geom_point() +
+  scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
+                         midpoint = 0, name = "median\nlog2FC") +
+  scale_size_continuous(name = expression(-log[10]("FDR"))) +
+  labs(title = "Gene-family exon change summary (HP1gKO vs WT)",
+       subtitle = "colour = median log2(KO/WT); size = paired-Wilcoxon FDR", x = "Mark", y = NULL) +
+  theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+ggsave(file.path(fig_dir, "family_exon_dotplot.png"), g_fam_dot, width = 7, height = 3.5, dpi = 300)
+
+# Plot D: MA plot (change vs abundance) per mark, coloured by family
+g_fam_ma <- ggplot(long, aes((wt_signal + ko_signal) / 2, log2FC, colour = family)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
+  geom_point(size = 0.4, alpha = 0.4) +
+  scale_x_log10() +
+  scale_colour_viridis_d(option = "D", end = 0.9, name = "Family") +
+  guides(colour = guide_legend(override.aes = list(size = 2.5, alpha = 1))) +
+  facet_wrap(~mark, nrow = 1) +
+  labs(title = "MA plot: gene-family exon change vs abundance",
+       subtitle = "loss holds across the abundance range = not a signal-level artifact",
+       x = "mean signal (WT+KO)/2 (log10)", y = "log2(KO / WT)") +
+  theme_m
+ggsave(file.path(fig_dir, "family_exon_MA.png"), g_fam_ma, width = 14, height = 3.6, dpi = 300)
+
+# Plot E: per-gene REPLICATE heatmaps (rows = genes, cols = all 55 samples).
+# Row z-scored raw signal; column-split by mark, top annotation = genotype;
+# row-split by family. Shows per-gene, per-replicate WT->KO structure (not a mean).
+suppressPackageStartupMessages({ library(ComplexHeatmap); library(circlize) })
+col_meta <- data.frame(
+  Sample   = colnames(fam_mat),
+  Mark     = factor(as.character(samples$mark[match(colnames(fam_mat), samples$sample_id)]),
+                    levels = mark_levels),
+  Genotype = factor(as.character(samples$genotype[match(colnames(fam_mat), samples$sample_id)]),
+                    levels = c("WT", "HP1gKO")))
+row_fam <- factor(family, levels = names(gene_families))
+
+draw_fam_hm <- function(mat, cols, ttl, outfile, w) {
+  m <- t(scale(t(mat[, cols, drop = FALSE]))); m[!is.finite(m)] <- 0
+  ha <- HeatmapAnnotation(Genotype = col_meta$Genotype[cols],
+                          col = list(Genotype = geno_colors), show_annotation_name = TRUE)
+  ht <- Heatmap(m, name = "row z", top_annotation = ha,
+                column_split = droplevels(col_meta$Mark[cols]),
+                row_split = row_fam, cluster_columns = FALSE, cluster_rows = TRUE,
+                show_row_names = FALSE, show_column_names = FALSE,
+                row_title_gp = gpar(fontsize = 9), column_title_gp = gpar(fontsize = 10),
+                heatmap_legend_param = list(title = "row z-score"))
+  png(file.path(fig_dir, outfile), width = w, height = 11, units = "in", res = 200)
+  draw(ht, column_title = ttl); dev.off()
+}
+draw_fam_hm(fam_mat, seq_len(ncol(fam_mat)),
+            "Gene-family exon signal per replicate (all marks)",
+            "family_exon_heatmap_allmarks.png", 11)
+sil <- which(col_meta$Mark %in% c("H3K9me3", "H4K20me3"))
+draw_fam_hm(fam_mat, sil,
+            "Gene-family exon signal per replicate (silencing marks)",
+            "family_exon_heatmap_silencing.png", 7)
+
+message("Saved: family_exon_signal.{tsv,rds} + summary.tsv + 6 figures (box, level, dot, MA, 2 heatmaps)")

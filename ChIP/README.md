@@ -368,12 +368,14 @@ passing per-peak significance.
 | `figures/cluster_chromHMM_coverage_{abs,zscore}.png` | MINUTE_4 | mean ChromHMM-state coverage per cluster (absolute + per-state z) |
 | `tables/cluster_chromHMM_enrichment.tsv` + `cluster_chromHMM_enrichment{,_sizeweighted}.png` | MINUTE_4 | per-cluster ChromHMM enrichment vs other clusters; per-region + size-weighted |
 | `figures/cluster_{repeat,region}_composition.png` | MINUTE_4 | repeat-class / genomic-region composition per cluster |
-| `figures/cluster_gene_families.png` | MINUTE_4 | Pcdh / KRAB-Zfp / Vmn / Olfr and pericentromeric fractions per cluster |
 | `tables/cluster_summary.tsv` | MINUTE_4 | per-cluster n, median size/log2FC, top state/repeat, family fractions |
 | `tables/family_exon_signal.tsv` + `rds/family_exon_signal.rds` | MINUTE_4 | per-gene ChIP signal (WT/KO/log2FC per mark) over the silencing-relevant exon of each HUSH/CBX3-target family gene |
 | `tables/family_exon_summary.tsv` | MINUTE_4 | per family × mark: median WT/KO signal, log2FC, paired-Wilcoxon FDR |
-| `figures/family_exon_change.png` | MINUTE_4 | per-exon log2(KO/WT) by mark, faceted by family |
-| `figures/family_exon_signal_level.png` | MINUTE_4 | median WT vs KO signal by mark and family |
+| `figures/family_exon_change.png` | MINUTE_4 | per-exon log2(KO/WT) by mark, faceted by family (boxplot) |
+| `figures/family_exon_signal_level.png` | MINUTE_4 | median WT vs KO signal by mark and family (bars) |
+| `figures/family_exon_dotplot.png` | MINUTE_4 | family × mark summary: median log2FC (colour) + paired-Wilcoxon FDR (size) |
+| `figures/family_exon_MA.png` | MINUTE_4 | MA plot: change vs abundance per mark, coloured by family |
+| `figures/family_exon_heatmap_{allmarks,silencing}.png` | MINUTE_4 | per-gene replicate heatmap (genes × 55 samples, row z, split by family); all marks / silencing-only |
 
 ---
 

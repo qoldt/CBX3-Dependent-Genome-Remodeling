@@ -703,11 +703,13 @@ e9 <- melt(as.data.table(chg_df), id.vars = "Cluster",
 e9 <- e9[is.finite(l2fc) & !is.na(Cluster)]
 g_chg <- ggplot(e9, aes(Cluster, l2fc, fill = Cluster)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
-  geom_boxplot(outlier.size = 0.2, outlier.alpha = 0.15, linewidth = 0.3) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.3) +      # hide outliers; zoom below
   facet_wrap(~mark, nrow = 1) +
   scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
+  # zoom to the box/whisker range so the medians are readable (outliers span +-4)
+  coord_cartesian(ylim = quantile(e9$l2fc, c(0.01, 0.99), na.rm = TRUE)) +
   labs(title = "H3K9me3 / H4K20me3 change (DESeq2 log2FoldChange) across clusters",
-       subtitle = "uniform across clusters = constant effect; spread = cluster-specific change",
+       subtitle = "uniform across clusters = constant effect; spread = cluster-specific change (y zoomed to 1-99%)",
        x = "Cluster", y = "log2FoldChange (HP1gKO vs WT)") +
   theme_minimal(base_size = base_size) +
   theme(panel.grid.minor = element_blank(),
