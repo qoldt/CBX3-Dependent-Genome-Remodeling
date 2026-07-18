@@ -234,3 +234,97 @@ ggsave(file.path(fig_dir, "cluster_chromHMM_enrichment_sizeweighted.png"),
                     "colour = log2 territory ratio (weighted by domain length); size = perm FDR"),
        width = 8, height = 6, dpi = 300)
 message("Saved: cluster_chromHMM_enrichment.{tsv, per-region png, size-weighted png}")
+
+# ================================================================
+# 7. Gene-family exon signal (HUSH / CBX3-silenced families)
+#    KRAB-ZFP, clustered protocadherin (chr18), vomeronasal and olfactory-
+#    receptor genes are normally silenced by H3K9me3 / HUSH. Rather than relying
+#    on individual genes passing per-peak significance, quantify ChIP signal
+#    DIRECTLY over the SILENCING-RELEVANT exon of each gene (config's
+#    family_exon_rule: KRAB-ZFP = last exon, protocadherin = first exon,
+#    Vmn/Olfr = single coding exon) and compare WT vs HP1gKO per family x mark.
+#    One interval per gene.  << reads bigWigs, unlike parts 1-6 >>
+# ================================================================
+mark_levels <- c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3")
+
+fam_gr <- family_exons()                               # one relevant exon per gene
+seqlevelsStyle(fam_gr) <- "NCBI"                       # match the bigWigs (as in MINUTE_1)
+fam_gr <- keepStandardChromosomes(fam_gr, pruning.mode = "coarse")
+cat(sprintf("\nGene-family target exons: %d genes across %d families\n",
+            length(fam_gr), length(unique(mcols(fam_gr)$family))))
+print(table(mcols(fam_gr)$family))
+
+# quantify every sample over the family exons (bw_loci; parallel over samples)
+fam_signal <- parallel::mclapply(seq_len(nrow(samples)), function(i) {
+  bw <- samples$bigwig_path[i]
+  if (!file.exists(bw)) return(rep(NA_real_, length(fam_gr)))
+  tryCatch(mcols(bw_loci(bw, fam_gr))[[1]],
+           error = function(e) rep(NA_real_, length(fam_gr)))
+}, mc.cores = parallel::detectCores())
+fam_mat <- do.call(cbind, fam_signal)
+colnames(fam_mat) <- samples$sample_id
+stopifnot(nrow(fam_mat) == length(fam_gr))
+saveRDS(list(fam_gr = fam_gr, fam_mat = fam_mat),
+        file.path(rds_dir, "family_exon_signal.rds"))
+
+# per exon x mark: mean WT vs mean KO signal + log2 change
+eps_f  <- 0.25
+family <- as.character(mcols(fam_gr)$family)
+gene   <- as.character(mcols(fam_gr)$gene)
+long <- do.call(rbind, lapply(intersect(mark_levels, as.character(samples$mark)), function(mk) {
+  wtc <- samples$sample_id[as.character(samples$mark) == mk & as.character(samples$genotype) == "WT"]
+  koc <- samples$sample_id[as.character(samples$mark) == mk & as.character(samples$genotype) == "HP1gKO"]
+  wt  <- rowMeans(fam_mat[, wtc, drop = FALSE], na.rm = TRUE)
+  ko  <- rowMeans(fam_mat[, koc, drop = FALSE], na.rm = TRUE)
+  data.frame(family = family, gene = gene,
+             chr = as.character(seqnames(fam_gr)), start = start(fam_gr), end = end(fam_gr),
+             mark = mk, wt_signal = wt, ko_signal = ko,
+             log2FC = log2((ko + eps_f) / (wt + eps_f)), stringsAsFactors = FALSE)
+}))
+fwrite(long, file.path(tables_dir, "family_exon_signal.tsv"), sep = "\t")
+
+# per family x mark summary: median change + paired Wilcoxon (KO vs WT over exons)
+fam_summary <- long %>% group_by(family, mark) %>%
+  summarise(n_exons = n(),
+            median_WT = round(median(wt_signal, na.rm = TRUE), 2),
+            median_KO = round(median(ko_signal, na.rm = TRUE), 2),
+            median_log2FC = round(median(log2FC, na.rm = TRUE), 3),
+            wilcox_p = tryCatch(suppressWarnings(
+              wilcox.test(ko_signal, wt_signal, paired = TRUE)$p.value),
+              error = function(e) NA_real_),
+            .groups = "drop") %>%
+  group_by(mark) %>% mutate(p_adj_BH = p.adjust(wilcox_p, "BH")) %>% ungroup()
+fwrite(fam_summary, file.path(tables_dir, "family_exon_summary.tsv"), sep = "\t")
+cat("\n=== Gene-family exon signal: median log2FC (KO/WT) per family x mark ===\n")
+print(as.data.frame(fam_summary))
+
+long$mark <- factor(long$mark, levels = mark_levels)
+long$family <- factor(long$family, levels = names(gene_families))
+
+# Plot A: per-exon change (log2 KO/WT) by mark, faceted by family
+g_fam_chg <- ggplot(long, aes(mark, log2FC, fill = mark)) +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
+  geom_boxplot(outlier.size = 0.25, outlier.alpha = 0.2, linewidth = 0.3) +
+  facet_wrap(~family, nrow = 1) +
+  scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
+  labs(title = "ChIP-signal change over gene-family exons (HP1gKO vs WT)",
+       subtitle = "H3K9me3/H4K20me3 below 0 = loss of silencing marks over the family (CBX3/HUSH-dependent)",
+       x = "Mark", y = "log2(KO / WT) per exon") +
+  theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
+ggsave(file.path(fig_dir, "family_exon_change.png"), g_fam_chg, width = 14, height = 4, dpi = 300)
+
+# Plot B: median WT vs KO signal level per family x mark
+lvl <- long %>% group_by(family, mark) %>%
+  summarise(WT = median(wt_signal, na.rm = TRUE), HP1gKO = median(ko_signal, na.rm = TRUE),
+            .groups = "drop")
+lvl <- melt(as.data.table(lvl), id.vars = c("family", "mark"),
+            variable.name = "Genotype", value.name = "signal")
+g_fam_lvl <- ggplot(lvl, aes(mark, signal, fill = Genotype)) +
+  geom_col(position = position_dodge(0.8), width = 0.75) +
+  facet_wrap(~family, nrow = 1, scales = "free_y") +
+  scale_fill_manual(values = geno_colors) +
+  labs(title = "Median ChIP signal over gene-family exons (WT vs HP1gKO)",
+       x = "Mark", y = "median signal") +
+  theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 9))
+ggsave(file.path(fig_dir, "family_exon_signal_level.png"), g_fam_lvl, width = 14, height = 4, dpi = 300)
+message("Saved: family_exon_signal.{tsv,rds} + family_exon_summary.tsv + 2 figures")

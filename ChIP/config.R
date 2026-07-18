@@ -228,6 +228,56 @@ load_annotation <- function() {
   ann
 }
 
+# --- Gene families silenced by H3K9me3 / HUSH (CBX3-dependent) ---
+# Quantified directly over their exons in MINUTE_4 (bw_loci), rather than relying
+# on individual genes passing per-peak significance. Symbol-prefix definitions:
+gene_families <- list(
+  Protocadherin = "^Pcdh(a|b|g)",     # clustered protocadherins (chr18 a/b/g clusters)
+  `KRAB-ZFP`    = "^Zfp",             # zinc-finger proxy for KRAB-ZFPs (large tandem clusters)
+  Vomeronasal   = "^Vmn",            # Vmn1r / Vmn2r vomeronasal receptors
+  Olfactory     = "^(Olfr|Or[0-9])"  # olfactory receptors: current (Or*) + legacy (Olfr*) names
+)
+
+# Which exon carries the H3K9me3/HUSH silencing, PER FAMILY — so we quantify the
+# biologically relevant exon per gene rather than diluting it across all exons:
+#   KRAB-ZFP      -> "last"    (3'-most exon: the ZNF array)
+#   Protocadherin -> "first"   (5'-most exon: the large variable exon)
+#   Vomeronasal / Olfactory -> "largest" (the single coding exon)
+family_exon_rule <- list(
+  Protocadherin = "first",
+  `KRAB-ZFP`    = "last",
+  Vomeronasal   = "largest",
+  Olfactory     = "largest"
+)
+
+# --- Helper: one silencing-relevant exon PER GENE for each family (mm39 TxDb) ---
+# Returns a GRanges with one interval per family member gene (the exon selected by
+# family_exon_rule, strand-aware), with `family` and `gene` metadata. Seqnames are
+# UCSC; set the style at query time.
+family_exons <- function() {
+  txdb <- TxDb.Mmusculus.UCSC.mm39.knownGene
+  exg  <- exonsBy(txdb, by = "gene")                       # by Entrez ID
+  sym  <- suppressMessages(AnnotationDbi::mapIds(org.Mm.eg.db, keys = names(exg),
+            column = "SYMBOL", keytype = "ENTREZID"))
+  sym  <- ifelse(is.na(sym), "", sym)
+  pick <- function(ex, rule) {                             # ex = one gene's exons
+    if (rule == "largest") return(ex[which.max(width(ex))])
+    ex <- ex[if (as.character(strand(ex))[1] == "-") order(-start(ex)) else order(start(ex))]
+    if (rule == "first") ex[1] else ex[length(ex)]         # "first" = 5', else "last" = 3'
+  }
+  parts <- lapply(names(gene_families), function(fn) {
+    idx  <- which(grepl(gene_families[[fn]], sym))
+    if (!length(idx)) return(NULL)
+    rule <- family_exon_rule[[fn]]
+    sel  <- lapply(idx, function(i) {
+      g <- pick(exg[[i]], rule); mcols(g) <- NULL
+      mcols(g)$family <- fn; mcols(g)$gene <- sym[i]; g
+    })
+    do.call(c, sel)
+  })
+  do.call(c, Filter(Negate(is.null), parts))
+}
+
 # --- Significance thresholds: SINGLE SOURCE OF TRUTH ---
 # A peak is significant if |log2FoldChange| > lfc AND pvalue < p, per mark.
 sig_thresholds <- list(

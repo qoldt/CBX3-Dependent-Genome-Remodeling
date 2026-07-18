@@ -329,6 +329,14 @@ strengthens the `Het`/`Quies3` signal (e.g. `Het` log2 ratio 0.38 → 1.33) —
 indicating the biggest constitutive-heterochromatin domains are where H3K9me3
 and H4K20me3 decline together.
 
+Quantifying the marks directly over the **silencing-relevant exon** of each
+HUSH/CBX3-target gene family (MINUTE_4 part 7; KRAB-ZFP last exon, protocadherin
+first exon, Vmn/Olfr coding exon) shows all four families lose H3K9me3 and
+H4K20me3 in the knockout (paired-Wilcoxon FDR ≤ 1e-11; e.g. olfactory H4K20me3
+FDR ~1e-173), and the clustered protocadherins additionally *gain* H3K4me3 —
+a coordinated derepression signature that does not depend on individual genes
+passing per-peak significance.
+
 ---
 
 ## Outputs (all under `results/`)
@@ -362,6 +370,10 @@ and H4K20me3 decline together.
 | `figures/cluster_{repeat,region}_composition.png` | MINUTE_4 | repeat-class / genomic-region composition per cluster |
 | `figures/cluster_gene_families.png` | MINUTE_4 | Pcdh / KRAB-Zfp / Vmn / Olfr and pericentromeric fractions per cluster |
 | `tables/cluster_summary.tsv` | MINUTE_4 | per-cluster n, median size/log2FC, top state/repeat, family fractions |
+| `tables/family_exon_signal.tsv` + `rds/family_exon_signal.rds` | MINUTE_4 | per-gene ChIP signal (WT/KO/log2FC per mark) over the silencing-relevant exon of each HUSH/CBX3-target family gene |
+| `tables/family_exon_summary.tsv` | MINUTE_4 | per family × mark: median WT/KO signal, log2FC, paired-Wilcoxon FDR |
+| `figures/family_exon_change.png` | MINUTE_4 | per-exon log2(KO/WT) by mark, faceted by family |
+| `figures/family_exon_signal_level.png` | MINUTE_4 | median WT vs KO signal by mark and family |
 
 ---
 
