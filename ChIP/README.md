@@ -331,8 +331,8 @@ unreliable — the distribution is the finding, not any single locus.
 | `figures/log2FC_distribution_by_mark.png` | MINUTE_3 | per-mark log2FC density + median (global-shift diagnostic) |
 | `figures/relationship_total_*.png` | MINUTE_3 | genome-wide size×baseMean×log2FC: binned heatmap, scatter, size×signal interaction |
 | `figures/relationship_bycluster_*.png` | MINUTE_3 | the same three relationship views, faceted by k-means cluster |
-| `figures/relationship_bycluster_change_<A>_vs_<B>.png` | MINUTE_3 | mark-vs-mark CHANGE (log2 KO/WT) coordination per cluster (H3K9me2/3, H4K20me3) + Spearman ρ |
-| `figures/relationship_bycluster_mark_change_distribution.png` | MINUTE_3 | each mark's change (log2 KO/WT) distribution across clusters (uniform vs cluster-specific) |
+| `figures/relationship_bycluster_change_H3K9me3_vs_H4K20me3.png` | MINUTE_3 | H3K9me3 vs H4K20me3 DESeq2 log2FC per peak, by cluster (shared merged peak set) + Spearman ρ |
+| `figures/relationship_bycluster_mark_change_distribution.png` | MINUTE_3 | H3K9me3 / H4K20me3 DESeq2 log2FC distribution across clusters (uniform vs cluster-specific) |
 | `rds/cluster_analysis_inputs.rds` | MINUTE_3 | cluster table + per-sample signal matrix (handoff to MINUTE_4) |
 | `tables/significant_peaks_clusters.tsv` | MINUTE_3 | significant peaks with cluster + annotation (the metadata BED can't hold it) |
 | `bed/significant_peaks_<mark>.bed` | MINUTE_3 | significant regions per mark (NCBI seqnames, score = −log10 p) |
