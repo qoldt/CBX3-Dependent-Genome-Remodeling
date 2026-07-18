@@ -52,9 +52,13 @@ MINUTE_1_Count_and_Annotate.R    Quantify + DESeq2 + annotate
         │                              ⇒ results/rds/cluster_analysis_inputs.rds
         └─▶ MINUTE_4_cluster_analysis.R   Characterise clusters: signal/loss profiles,
                                            ChromHMM, repeat/region/gene-family composition
+  │
+  └─▶ MINUTE_5_differential_loss.R   Split shared H3K9me3/H4K20me3 regions into
+                                     co-loss / H4K20me3-only / stable; characterise by
+                                     ChromHMM, repeats (IAP/ERV), and nearby genes
 ```
 
-Stage 1 produces one `.rds` that stages 2 and 3 each read (independently). Stage 4
+Stage 1 produces one `.rds` that stages 2, 3 and 5 read (independently). Stage 4
 reads the cluster inputs persisted by stage 3, so it runs after stage 3.
 
 ---
@@ -337,6 +341,19 @@ FDR ~1e-173), and the clustered protocadherins additionally *gain* H3K4me3 —
 a coordinated derepression signature that does not depend on individual genes
 passing per-peak significance.
 
+Splitting the shared H3K9me3/H4K20me3 regions by their two changes (MINUTE_5)
+resolves two mechanistically distinct compartments. **Co-loss** (n≈20k, median
+1.3 kb) is smaller, gene-proximal constitutive heterochromatin (`Het`/`Quies3`
+enriched). **H4K20me3-only loss** (n≈14k, median 2.3 kb) — H4K20me3 lost nearly
+as strongly (−0.67) while H3K9me3 is retained — is larger, more distal-intergenic
+(`Quies`/`Quies2`), and is **not** the HUSH gene families. Both compartments are
+strongly enriched for young ERVs (IAP): `IAPEz-int` reaches **OR ≈ 22 vs stable**
+in the H4K20me3-only group (co-loss OR ≈ 11), with LINE and ERVK also up and
+SINE/ERVL-MaLR depleted. So H4K20me3 loss is the **broad, primary** effect —
+sweeping across large quiescent/ERV-rich domains largely uncoupled from H3K9me3 —
+implying CBX3/HP1γ maintains H4K20me3 (via SUV420H1/2) partly independently of the
+H3K9me3 mark, while H3K9me3 co-loss is confined to gene-proximal `Het`.
+
 ---
 
 ## Outputs (all under `results/`)
@@ -376,6 +393,11 @@ passing per-peak significance.
 | `figures/family_exon_dotplot.png` | MINUTE_4 | family × mark summary: median log2FC (colour) + paired-Wilcoxon FDR (size) |
 | `figures/family_exon_MA.png` | MINUTE_4 | MA plot: change vs abundance per mark, coloured by family |
 | `figures/family_exon_heatmap_{allmarks,silencing}.png` | MINUTE_4 | per-gene replicate heatmap (genes × 55 samples, row z, split by family); all marks / silencing-only |
+| `tables/diffloss_group_overview.tsv` | MINUTE_5 | co-loss / H4K20me3-only / stable: n, median size, median log2FC per mark |
+| `tables/diffloss_chromHMM_{coverage,enrichment}.tsv` + `figures/diffloss_chromHMM_*.png` | MINUTE_5 | per-group ChromHMM coverage + enrichment (per-region & size-weighted) |
+| `tables/diffloss_repeat_{composition,enrichment}.tsv` + `figures/diffloss_repeat_*.png` | MINUTE_5 | repeat-class composition + IAP/ERV/LINE/SINE enrichment (Fisher OR vs stable) |
+| `tables/diffloss_{region_composition,gene_family_pct}.tsv` + `figures/diffloss_{region_composition,distance_to_tss,domain_size}.png` | MINUTE_5 | genomic region, TSS distance, gene-family %, domain size per group |
+| `tables/diffloss_genes_{co_loss,H4K20me3_only,stable}.txt` | MINUTE_5 | per-group gene symbol lists (for downstream GO) |
 
 ---
 

@@ -22,4 +22,7 @@ source("MINUTE_3_heatmap.R")
 message("=== MINUTE_4: k-means cluster characterisation ===")
 source("MINUTE_4_cluster_analysis.R")
 
+message("=== MINUTE_5: differential H3K9me3 vs H4K20me3 loss ===")
+source("MINUTE_5_differential_loss.R")
+
 message("=== MINUTE pipeline complete ===")
