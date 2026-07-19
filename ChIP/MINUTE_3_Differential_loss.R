@@ -1,5 +1,5 @@
 # ================================================================
-# MINUTE_5 - Differential H3K9me3 vs H4K20me3 loss in the HP1gKO
+# MINUTE_3 - Differential H3K9me3 vs H4K20me3 loss in the HP1gKO
 # ----------------------------------------------------------------
 # H3K9me3 and H4K20me3 share the 2 kb-merged peak set, so their DESeq2
 # log2FoldChange align by peak_id. Split the shared regions into three groups
@@ -17,8 +17,7 @@
 # ================================================================
 source("config.R")
 suppressPackageStartupMessages({ library(ggplot2); library(dplyr); library(data.table) })
-
-theme_m <- theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
+# geno_colors / theme_m / mark_levels come from config.R
 
 # --- Group thresholds (tunable) ---
 H4_LOST_CUT <- -0.5    # H4K20me3 log2FC below this = "H4K20me3-lost"
@@ -206,4 +205,4 @@ for (grp in levels(g$group)) {
 cat("\n=== unique genes per group (exported for GO) ===\n"); print(gene_summary)
 cat("\n=== gene-family % per group ===\n"); print(fam_frac)
 
-message("MINUTE_5 done: diffloss_* tables + figures + per-group gene lists")
+message("MINUTE_3 done: diffloss_* tables + figures + per-group gene lists")

@@ -1,5 +1,6 @@
 # ================================================================
-# MINUTE_6 — KAP1 / TRIM28 intersection with the differential-loss domains
+# MINUTE_6 — Intersection with silencing-machinery ChIP (KAP1 / TRIM28; extend
+#            here for other HUSH components as tracks become available)
 # ----------------------------------------------------------------
 # Does the H4K20me3/H3K9me3 loss occur where KAP1 (which recruits HUSH/SETDB1)
 # binds? Tests overlap of each differential-loss group (and the HUSH/CBX3 gene-
@@ -7,7 +8,9 @@
 # our domains span kb-Mb and KAP1 peaks are narrow, a naive overlap test would be
 # confounded by domain length. Runs against both KAP1 tracks (Neuro-2a neural +
 # ChIP-Atlas all-cell). Reads external mm39 KAP1 BEDs from data/annotation;
-# skips gracefully if they are not present. No bigWig re-read.
+# skips gracefully if they are not present. Also integrates with the genotype
+# effect (KAP1-bound vs unbound KO log2FC). No bigWig re-read for the overlap;
+# reuses the family-exon signal persisted by MINUTE_5.
 # ================================================================
 source("config.R")
 suppressPackageStartupMessages({
