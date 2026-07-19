@@ -110,6 +110,26 @@ inflates the KO mean, it makes the measured losses **conservative** (likely
 underestimated). Recommended: a rep2-excluded sensitivity check. Do **not**
 switch to median-of-ratios to "correct" it.
 
+## Pipeline (how these results are produced)
+
+Six thematic stages, run by `ChIP/run_MINUTE.R`; each reads the annotated `.rds`
+from stage 1 (details in `../README.md`, exact accessions in `METHODS.md`).
+
+1. **Count & annotate** — input-scaled mm39 bigWigs × consensus peaks → DESeq2
+   (`sizeFactors = 1`, HP1gKO vs WT) → per-peak stats + annotation (genomic
+   region, gene, repeats, TAD, per-state ChromHMM coverage fractions).
+2. **Global changes** — clustered heatmap (k-means), per-chromosome change plots,
+   per-mark log2FC distributions, mark-vs-mark relationships, cluster
+   characterisation, and TAD + ChromHMM enrichment of the significant set.
+3. **Differential loss** — split the shared H3K9me3/H4K20me3 peak set into
+   co-loss / H4K20me3-only / stable and characterise each.
+4. **Repeats** — hypergeometric repeat-class enrichment **and** direct `bw_loci`
+   signal change over the repeat copies themselves (peak-calling-independent).
+5. **Clustered gene families** — per-gene silencing-exon signal for the HUSH/CBX3
+   families + the co-loss-vs-background test.
+6. **Intersection** — KAP1/TRIM28 vs the loss: size-matched permutation overlap
+   + KAP1-bound-vs-unbound genotype effect (skips if the KAP1 BEDs are absent).
+
 ## Where to find things (`results/`)
 
 - **Tables:** `tables/family_exon_summary.tsv`, `tables/family_coloss_vs_background.tsv`,
