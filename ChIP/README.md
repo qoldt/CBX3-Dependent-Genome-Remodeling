@@ -386,7 +386,6 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 | `tables/enrichment_chromHMM.tsv` | MINUTE_2 | ChromHMM-state enrichment per mark, both per-region (Wilcoxon) and size-weighted (permutation) |
 | `figures/enrichment_chromHMM_dotplot.pdf` | MINUTE_2 | ChromHMM enrichment, per-region (each region equal) |
 | `figures/enrichment_chromHMM_sizeweighted_dotplot.pdf` | MINUTE_2 | ChromHMM enrichment, size-weighted by domain length (genomic territory) |
-| `tables/enrichment_chromHMM_H3K9me3_loss_vs_unchanged.tsv` + 2 pdfs | MINUTE_2 | chromatin states distinguishing H3K9me3-loss vs -unchanged (within H4K20me3-lost); per-region + size-weighted |
 | `figures/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_3 | clustered heatmap of significant peaks (k-means, seeded) |
 | `figures/<mark>_changes_by_chr_coloured_by_{genomic_region,repeat}.png` | MINUTE_3 | per-chromosome domain-size vs log2FC, sized by domain size, coloured by region/repeat |
 | `figures/log2FC_distribution_by_mark.png` | MINUTE_3 | per-mark log2FC density + median (global-shift diagnostic) |
