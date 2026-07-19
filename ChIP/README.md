@@ -411,9 +411,10 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 | `figures/family_exon_dotplot.png` | MINUTE_4 | family × mark summary: median log2FC (colour) + paired-Wilcoxon FDR (size) |
 | `figures/family_exon_MA.png` | MINUTE_4 | MA plot: change vs abundance per mark, coloured by family |
 | `figures/family_exon_heatmap_{allmarks,silencing}.png` | MINUTE_4 | per-gene replicate heatmap (genes × 55 samples, row z, split by family); all marks / silencing-only |
+| `figures/family_coloss_{propensity,scatter}.png` + `family_coloss_stats.txt` + `tables/family_coloss_*.tsv` | MINUTE_4 | does H3K9me3 co-loss (with H4K20me3) differ by family? chi-square + pairwise Fisher + per-gene classification (stats co-located with the figures) |
 | `tables/diffloss_group_overview.tsv` | MINUTE_5 | co-loss / H4K20me3-only / stable: n, median size, median log2FC per mark |
 | `tables/diffloss_chromHMM_{coverage,enrichment}.tsv` + `figures/diffloss_chromHMM_*.png` | MINUTE_5 | per-group ChromHMM coverage + enrichment (per-region & size-weighted) |
-| `tables/diffloss_repeat_{composition,enrichment}.tsv` + `figures/diffloss_repeat_*.png` | MINUTE_5 | repeat-class composition + IAP/ERV/LINE/SINE enrichment (Fisher OR vs stable) |
+| `tables/diffloss_repeat_{composition,enrichment}.tsv` + `figures/diffloss_repeat_*.png` | MINUTE_5 | repeat composition + enrichment (Fisher OR vs stable): IAP/ERV, and young mouse L1 (L1MdA/T/Gf/F = the mouse HUSH/TRIM28 substrates) |
 | `tables/diffloss_{region_composition,gene_family_pct}.tsv` + `figures/diffloss_{region_composition,distance_to_tss,domain_size}.png` | MINUTE_5 | genomic region, TSS distance, gene-family %, domain size per group |
 | `tables/diffloss_genes_{co_loss,H4K20me3_only,stable}.txt` | MINUTE_5 | per-group gene symbol lists (for downstream GO) |
 

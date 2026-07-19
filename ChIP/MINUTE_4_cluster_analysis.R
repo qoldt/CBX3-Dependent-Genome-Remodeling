@@ -422,15 +422,30 @@ fwrite(prop, file.path(tables_dir, "family_coloss_propensity.tsv"), sep = "\t")
 cat(sprintf("\n=== H3K9me3 co-loss among H4K20me3-lost genes (chi-square p = %.2g) ===\n", chi$p.value))
 print(as.data.frame(prop))
 
+# Co-locate a readable stats summary NEXT TO the figures (gene_families/)
+gf_dir <- file.path(fig_dir, "gene_families")
+if (!dir.exists(gf_dir)) dir.create(gf_dir, recursive = TRUE, showWarnings = FALSE)
+stats_txt <- c(
+  "Family co-loss test - H3K9me3 co-loss among H4K20me3-lost genes",
+  sprintf("(loss = signal-based log2(KO/WT) < %.2f)", loss_cut), "",
+  sprintf("Chi-square test of independence (family x also-lose-H3K9me3):"),
+  sprintf("  X-squared = %.1f, df = %d, p = %.3g", chi$statistic, chi$parameter, chi$p.value), "",
+  "Co-loss propensity (fraction of H4K20me3-lost genes that also lose H3K9me3, 95% binomial CI):",
+  capture.output(print(as.data.frame(prop), row.names = FALSE)), "",
+  "Pairwise Fisher (which families differ; BH-adjusted):",
+  if (!is.null(pw)) capture.output(print(as.data.frame(pw), row.names = FALSE)) else "  (n/a)")
+writeLines(stats_txt, file.path(gf_dir, "family_coloss_stats.txt"))
+
 # Plot A: co-loss propensity per family (fraction + binomial CI)
 g_prop <- ggplot(prop, aes(reorder(family, -co_loss_frac), co_loss_frac, fill = family)) +
   geom_col(width = 0.7) +
   geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.25) +
-  geom_text(aes(label = sprintf("n=%d", n_H4K20me3_lost)), vjust = -0.4, size = 3) +
+  geom_text(aes(label = sprintf("%.0f%%\n(n=%d)", 100 * co_loss_frac, n_H4K20me3_lost)),
+            vjust = -0.3, size = 3, lineheight = 0.9) +
   scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
-  ylim(0, 1) +
+  ylim(0, 1.1) +
   labs(title = "H3K9me3 co-loss propensity by family (among H4K20me3-lost genes)",
-       subtitle = sprintf("fraction of H4K20me3-lost genes that also lose H3K9me3; chi-square p = %.2g", chi$p.value),
+       subtitle = sprintf("fraction of H4K20me3-lost genes that also lose H3K9me3; chi-square p = %.2g (stats: family_coloss_stats.txt)", chi$p.value),
        x = NULL, y = "fraction also losing H3K9me3") +
   theme_m
 save_fig(g_prop, "family_coloss_propensity", "gene_families", width = 6, height = 4)

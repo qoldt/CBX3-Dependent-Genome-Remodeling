@@ -139,7 +139,12 @@ rep_feats <- list(
   complex = g$repeat_class == "complex",
   `LTR:ERVK` = grepl("\\bERVK\\b", fam), `LTR:ERVL-MaLR` = grepl("\\bERVL-MaLR\\b", fam),
   `LTR:ERV1` = grepl("\\bERV1\\b", fam),
-  `IAPEz-int` = grepl("IAPEz", nm), `IAPLTR` = grepl("IAPLTR", nm))
+  `IAPEz-int` = grepl("IAPEz", nm), `IAPLTR` = grepl("IAPLTR", nm),
+  # young/active mouse L1 (HUSH/TRIM28 substrates) - the mouse analogue of the
+  # human L1HS/L1PA HUSH targets that can't be lifted over from hg38
+  `LINE:L1MdA` = grepl("L1MdA", nm), `LINE:L1MdT` = grepl("L1MdT", nm),
+  `LINE:L1MdGf` = grepl("L1MdGf", nm), `LINE:L1MdF` = grepl("L1MdF", nm),
+  `LINE:young_L1(A/T/Gf)` = grepl("L1Md(A|T|Gf)", nm))
 rep_enrich <- do.call(rbind, lapply(c("H4K20me3_only", "co_loss"), function(grp) {
   do.call(rbind, lapply(names(rep_feats), function(fn) {
     f <- rep_feats[[fn]]
