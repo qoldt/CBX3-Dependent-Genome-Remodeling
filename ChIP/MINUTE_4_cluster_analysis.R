@@ -383,3 +383,71 @@ draw_fam_hm(fam_mat, sil,
             "family_exon_heatmap_silencing", 7)
 
 message("Saved: family_exon_signal.{tsv,rds} + family_exon_summary.tsv")
+
+# --- Family co-loss test: does H3K9me3 co-loss (with H4K20me3) differ by family? -
+# Classify each gene by its H3K9me3 & H4K20me3 change (signal-based log2 KO/WT -
+# noisier than DESeq2, but the family exons aren't all in the DESeq peak sets),
+# then test whether the co-loss propensity differs across families.
+loss_cut <- -0.3
+cw <- dcast(as.data.table(long), family + gene ~ mark, value.var = "log2FC")
+cw <- cw[is.finite(H3K9me3) & is.finite(H4K20me3)]
+cw[, k20_lost := H4K20me3 < loss_cut]
+cw[, k9_lost  := H3K9me3  < loss_cut]
+cw[, class := fifelse(k20_lost & k9_lost,  "co-loss (both)",
+              fifelse(k20_lost & !k9_lost, "H4K20me3-only",
+              fifelse(!k20_lost & k9_lost, "H3K9me3-only", "neither")))]
+cw[, family := factor(family, levels = names(gene_families))]
+fwrite(cw, file.path(tables_dir, "family_coloss_classification.tsv"), sep = "\t")
+
+# co-loss propensity = among H4K20me3-lost genes, fraction that ALSO lose H3K9me3
+prop <- cw[k20_lost == TRUE, {
+  k <- sum(k9_lost); bt <- binom.test(k, .N)
+  .(n_H4K20me3_lost = .N, co_loss_frac = k / .N,
+    lo = bt$conf.int[1], hi = bt$conf.int[2])
+}, by = family][order(-co_loss_frac)]
+# does co-loss-among-H4K20me3-lost depend on family?
+ctab <- cw[k20_lost == TRUE, table(family, k9_lost)]
+chi  <- suppressWarnings(chisq.test(ctab))
+# pairwise Fisher (which families differ) + BH
+fams <- as.character(prop$family)
+pw <- if (length(fams) >= 2) do.call(rbind, combn(fams, 2, simplify = FALSE, FUN = function(pr) {
+  sub <- cw[k20_lost == TRUE & family %in% pr]
+  ft  <- fisher.test(table(factor(as.character(sub$family), levels = pr), sub$k9_lost))
+  data.frame(family_a = pr[1], family_b = pr[2],
+             odds_ratio = unname(ft$estimate), p_value = ft$p.value)
+})) else NULL
+if (!is.null(pw)) { pw$p_adj_BH <- p.adjust(pw$p_value, "BH")
+  fwrite(pw, file.path(tables_dir, "family_coloss_pairwise_fisher.tsv"), sep = "\t") }
+fwrite(prop, file.path(tables_dir, "family_coloss_propensity.tsv"), sep = "\t")
+cat(sprintf("\n=== H3K9me3 co-loss among H4K20me3-lost genes (chi-square p = %.2g) ===\n", chi$p.value))
+print(as.data.frame(prop))
+
+# Plot A: co-loss propensity per family (fraction + binomial CI)
+g_prop <- ggplot(prop, aes(reorder(family, -co_loss_frac), co_loss_frac, fill = family)) +
+  geom_col(width = 0.7) +
+  geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.25) +
+  geom_text(aes(label = sprintf("n=%d", n_H4K20me3_lost)), vjust = -0.4, size = 3) +
+  scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
+  ylim(0, 1) +
+  labs(title = "H3K9me3 co-loss propensity by family (among H4K20me3-lost genes)",
+       subtitle = sprintf("fraction of H4K20me3-lost genes that also lose H3K9me3; chi-square p = %.2g", chi$p.value),
+       x = NULL, y = "fraction also losing H3K9me3") +
+  theme_m
+save_fig(g_prop, "family_coloss_propensity", "gene_families", width = 6, height = 4)
+
+# Plot B: dH3K9me3 vs dH4K20me3 per gene, faceted by family (the quantitative heatmap)
+cw[, class := factor(class, levels = c("co-loss (both)", "H4K20me3-only", "H3K9me3-only", "neither"))]
+class_cols <- c("co-loss (both)" = "#b2182b", "H4K20me3-only" = "#2166ac",
+                "H3K9me3-only" = "#f4a582", "neither" = "grey75")
+g_cw <- ggplot(cw, aes(H4K20me3, H3K9me3, colour = class)) +
+  geom_hline(yintercept = loss_cut, linetype = "dashed", colour = "grey55") +
+  geom_vline(xintercept = loss_cut, linetype = "dashed", colour = "grey55") +
+  geom_point(size = 0.6, alpha = 0.5) +
+  scale_colour_manual(values = class_cols, name = NULL) +
+  guides(colour = guide_legend(override.aes = list(size = 2.5, alpha = 1))) +
+  facet_wrap(~family, nrow = 1) +
+  labs(title = "Per-gene H3K9me3 vs H4K20me3 change by family",
+       subtitle = "dashed = loss cutoff (log2 KO/WT < -0.3); bottom-left = co-loss of both",
+       x = "delta H4K20me3 (log2 KO/WT)", y = "delta H3K9me3 (log2 KO/WT)") +
+  theme_m
+save_fig(g_cw, "family_coloss_scatter", "gene_families", width = 14, height = 3.6)
