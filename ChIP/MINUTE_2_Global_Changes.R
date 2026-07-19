@@ -1,9 +1,23 @@
 # ================================================================
-# MINUTE_3 — Heatmap of significant peaks + significant-region BED export
-# Runs standalone after MINUTE_1, or in sequence via run_MINUTE.R
+# MINUTE_2 - Global changes: the genome-wide picture of the HP1gKO response
+# ----------------------------------------------------------------
+# Everything about the OVERALL change, in one place:
+#   * main clustered heatmap of significant peaks (k-means, seeded)
+#   * per-chromosome change plots + per-mark log2FC distributions (global-shift
+#     diagnostic)
+#   * relationships between marks (H3K9me3 vs H4K20me3) and size x signal x log2FC
+#   * k-means cluster CHARACTERISATION (signal/loss profiles, ChromHMM coverage,
+#     repeat/region composition, per-cluster ChromHMM enrichment)
+#   * TAD-boundary + ChromHMM-state enrichment of the significant set
+# Repeat enrichment lives in MINUTE_4_Repeats; the differential H4K20me3-vs-
+# H3K9me3 split lives in MINUTE_3_Differential_loss.
+#
+# Persists results/rds/cluster_analysis_inputs.rds (used within this stage for the
+# cluster characterisation) and significant_peaks_clusters.tsv.
+# geno_colors / theme_m / mark_levels + hyper_row() come from config.R.
+# Runs after MINUTE_1 (needs the annotated .rds).
 # ================================================================
 source("config.R")
-
 # DESeq2 + annotation results produced by MINUTE_1
 annotated_results <- readRDS(annotated_rds)
 
@@ -221,10 +235,10 @@ for (k in seq_along(km_assignments)) {
 }
 sig_df$Cluster <- cluster_vector[rownames(sig_df)]
 
-# --- Persist cluster table + signal matrix for downstream analysis (MINUTE_4) --
+# --- Persist cluster table + signal matrix (self-consumed below for the cluster --
 # rtracklayer BED export keeps only standard columns (it DROPS Cluster/ChIP), so
 # the metadata BED below is browser-only. Save the real cluster table + the
-# per-sample signal matrix here so MINUTE_4 can run without re-reading bigWigs.
+# per-sample signal matrix here so the cluster characterisation runs without re-reading.
 cluster_cols <- intersect(
   c("peak_id", "chr", "start", "end", "ChIP", "Cluster", "log2FoldChange",
     "pvalue", "baseMean", "peak_size_kb", "genomic_region", "repeat_class",
@@ -288,7 +302,7 @@ for (chip in unique(sig_df$ChIP)) {
 #                 minority, and counts are tiny (baseMean ~1-3): H3K9me3,
 #                 H4K20me3. See the log2FC-distribution diagnostic (section 7).
 #    NOTE: this criterion governs ONLY these plots. The heatmap, BED exports and
-#    MINUTE_2 hypergeometric test still use is_significant() (p-based) throughout.
+#    repeat hypergeometric test (MINUTE_4) still use is_significant() (p-based) throughout.
 # ================================================================
 
 # --- Appearance / export knobs -----------------------------------
@@ -506,7 +520,7 @@ save_fig(g_diag, "log2FC_distribution_by_mark", "change_plots", width = 8, heigh
 
 # ================================================================
 # 8. Relationship: domain size x ChIP signal (baseMean) x log2FC  [TOTAL]
-#    Genome-wide ("total") across all peaks; MINUTE_4 produces the per-cluster
+#    Genome-wide ("total") across all peaks; the per-cluster counterparts
 #    counterparts. The change-plots use x=size and size=size (redundant). These
 #    three views put domain size, baseMean and log2FC on separate channels to
 #    reveal how the change depends jointly on domain length and signal intensity.
@@ -735,3 +749,303 @@ g_all <- ggplot(all_pts, aes(H3K9me3, H4K20me3)) +
        x = "H3K9me3 log2FoldChange", y = "H4K20me3 log2FoldChange") +
   theme_minimal(base_size = base_size) + theme(panel.grid.minor = element_blank())
 save_fig(g_all, "relationship_all_regions_H3K9me3_vs_H4K20me3_by_cluster", "relationships", width = 8, height = 7)
+
+# ================================================================
+# k-means CLUSTER CHARACTERISATION (reads the cluster inputs just written above)
+# ================================================================
+inp        <- readRDS(file.path(rds_dir, "cluster_analysis_inputs.rds"))
+sig_df     <- inp$sig_df
+signal_mat <- inp$signal_mat
+col_annot  <- inp$col_annot
+
+sig_df <- sig_df[!is.na(sig_df$Cluster), ]
+sig_df$Cluster <- factor(sig_df$Cluster, levels = sort(unique(sig_df$Cluster)))
+clusters <- levels(sig_df$Cluster)
+cat("Clusters:", paste(clusters, collapse = ", "),
+    "| sizes:", paste(as.integer(table(sig_df$Cluster)), collapse = ", "), "\n")
+
+geno_colors <- c(WT = "#1f78b4", HP1gKO = "#e31a1c")
+theme_m     <- theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
+
+# ================================================================
+# 1. Signal profile - mean raw signal per cluster x mark x genotype.
+#    Defines each cluster: which marks are present, and how WT->KO changes them.
+# ================================================================
+sm <- as.data.table(signal_mat, keep.rownames = "peak_id")
+sm <- melt(sm, id.vars = "peak_id", variable.name = "Sample", value.name = "signal")
+sm[, Sample   := as.character(Sample)]
+sm[, Cluster  := sig_df$Cluster[match(peak_id, sig_df$peak_id)]]
+sm[, ChIP     := as.character(col_annot$ChIP[match(Sample, col_annot$Sample)])]
+sm[, Genotype := as.character(col_annot$Genotype[match(Sample, col_annot$Sample)])]
+
+prof <- sm[!is.na(Cluster),
+           .(mean_signal = mean(signal, na.rm = TRUE)),
+           by = .(Cluster, ChIP, Genotype)]
+prof[, Genotype := factor(Genotype, levels = c("WT", "HP1gKO"))]
+prof[, ChIP := factor(ChIP, levels = c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3"))]
+
+# per-peak signal distribution (mean across each genotype's replicates), so the
+# profile shows spread across peaks rather than a single mean bar
+peak_prof <- sm[!is.na(Cluster),
+                .(signal = mean(signal, na.rm = TRUE)),
+                by = .(peak_id, Cluster, ChIP, Genotype)]
+peak_prof[, Genotype := factor(Genotype, levels = c("WT", "HP1gKO"))]
+peak_prof[, ChIP := factor(ChIP, levels = c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3"))]
+peak_prof[, Cluster := factor(Cluster)]
+# winsorize per mark at 99.5% for display so extreme peaks don't dwarf the boxes
+# (per-mark cap keeps free_y's per-mark scaling; only the top whisker is clipped)
+peak_prof[, signal_disp := pmin(signal, quantile(signal, 0.995, na.rm = TRUE)), by = ChIP]
+
+g_prof <- ggplot(peak_prof, aes(Cluster, signal_disp, fill = Genotype)) +
+  geom_boxplot(outlier.shape = NA, linewidth = 0.3, position = position_dodge(0.8)) +
+  facet_wrap(~ChIP, scales = "free_y", nrow = 1) +
+  scale_fill_manual(values = geno_colors) +
+  labs(title = "ChIP signal per cluster, per peak (WT vs HP1gKO)",
+       subtitle = "boxes = across-peak distribution; which marks define each cluster and which are lost",
+       x = "Cluster", y = "signal") +
+  theme_m
+save_fig(g_prof, "cluster_signal_profile", "clusters", width = 14, height = 4)
+
+# ================================================================
+# 2. Loss heatmap - log2(HP1gKO / WT) mean signal per cluster x mark.
+# ================================================================
+w <- dcast(prof, Cluster + ChIP ~ Genotype, value.var = "mean_signal")
+eps <- 1e-3
+w[, log2_KO_WT := log2((HP1gKO + eps) / (WT + eps))]
+
+g_loss <- ggplot(w, aes(ChIP, Cluster, fill = log2_KO_WT)) +
+  geom_tile(colour = "white") +
+  geom_text(aes(label = sprintf("%.2f", log2_KO_WT)), size = 3) +
+  scale_fill_gradient2(low = "#2166ac", mid = "grey95", high = "#b2182b",
+                       midpoint = 0, name = "log2 KO/WT") +
+  labs(title = "Signal change per cluster (log2 HP1gKO / WT)",
+       x = "Mark", y = "Cluster") +
+  theme_m
+save_fig(g_loss, "cluster_loss_heatmap", "clusters", width = 7, height = 4.5)
+
+# ================================================================
+# 3. ChromHMM profile - mean per-state coverage per cluster.
+#    Shown two ways: absolute mean coverage, and z-scored per state (relative
+#    enrichment across clusters, so genome-abundant Quies doesn't dominate).
+# ================================================================
+hmm_cols <- grep("^hmm_", names(sig_df), value = TRUE)
+hmm_prof <- sig_df %>% group_by(Cluster) %>%
+  summarise(across(all_of(hmm_cols), ~ mean(.x, na.rm = TRUE)), .groups = "drop")
+hmm_mat <- as.matrix(hmm_prof[, hmm_cols]); rownames(hmm_mat) <- hmm_prof$Cluster
+colnames(hmm_mat) <- sub("^hmm_", "", colnames(hmm_mat))
+
+mk_hmm_long <- function(mat, value_name) {
+  d <- as.data.table(mat, keep.rownames = "Cluster")
+  d <- melt(d, id.vars = "Cluster", variable.name = "state", value.name = value_name)
+  d$Cluster <- factor(d$Cluster, levels = clusters)
+  d
+}
+hmm_abs <- mk_hmm_long(hmm_mat, "cov")
+hmm_z   <- mk_hmm_long(scale(hmm_mat), "z")   # per-state z across clusters
+
+g_hmm_abs <- ggplot(hmm_abs, aes(state, Cluster, fill = cov)) +
+  geom_tile(colour = "white") +
+  scale_fill_viridis_c(name = "mean\ncoverage") +
+  labs(title = "Mean ChromHMM state coverage per cluster (absolute)",
+       x = "ChromHMM state", y = "Cluster") +
+  theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+g_hmm_z <- ggplot(hmm_z, aes(state, Cluster, fill = z)) +
+  geom_tile(colour = "white") +
+  scale_fill_gradient2(low = "#2166ac", mid = "grey95", high = "#b2182b",
+                       midpoint = 0, name = "z\n(per state)") +
+  labs(title = "ChromHMM state enrichment per cluster (z-scored per state)",
+       subtitle = "which cluster is relatively high/low in each state",
+       x = "ChromHMM state", y = "Cluster") +
+  theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1))
+save_fig(g_hmm_abs, "cluster_chromHMM_coverage_abs", "clusters", width = 9, height = 4)
+save_fig(g_hmm_z, "cluster_chromHMM_coverage_zscore", "clusters", width = 9, height = 4)
+
+# ================================================================
+# 4. Genomic composition per cluster: (a) repeat_class %  (b) genomic_region %
+#    (per-cluster gene-family fractions removed - superseded by the dedicated
+#     family exon analysis now in MINUTE_5_Clustered_Gene_Families)
+# ================================================================
+comp_bar <- function(df, var, title) {
+  d <- df %>% mutate(v = ifelse(is.na(.data[[var]]), "NA", as.character(.data[[var]]))) %>%
+    count(Cluster, v) %>% group_by(Cluster) %>% mutate(frac = n / sum(n)) %>% ungroup()
+  ggplot(d, aes(Cluster, frac, fill = v)) +
+    geom_col() +
+    labs(title = title, x = "Cluster", y = "fraction of peaks", fill = var) +
+    theme_m
+}
+save_fig(comp_bar(sig_df, "repeat_class", "Repeat-class composition per cluster"),
+         "cluster_repeat_composition", "clusters", width = 7, height = 4.5)
+save_fig(comp_bar(sig_df, "genomic_region", "Genomic-region composition per cluster"),
+         "cluster_region_composition", "clusters", width = 8, height = 4.5)
+
+# ================================================================
+# 5. Cluster summary table
+# ================================================================
+summ <- sig_df %>% group_by(Cluster) %>%
+  summarise(
+    n_peaks       = n(),
+    median_kb     = round(median(peak_size_kb, na.rm = TRUE), 1),
+    median_l2fc   = round(median(log2FoldChange, na.rm = TRUE), 2),
+    top_state     = names(sort(table(chromHMM_state), decreasing = TRUE))[1],
+    top_repeat    = names(sort(table(repeat_class),  decreasing = TRUE))[1],
+    pct_pericentro = round(100 * mean(start < 3e6), 1),
+    pct_Pcdh      = round(100 * mean(grepl("^Pcdh", ifelse(is.na(SYMBOL), "", SYMBOL))), 1),
+    pct_Zfp       = round(100 * mean(grepl("^Zfp",  ifelse(is.na(SYMBOL), "", SYMBOL))), 1),
+    pct_Vmn       = round(100 * mean(grepl("^Vmn",  ifelse(is.na(SYMBOL), "", SYMBOL))), 1),
+    .groups = "drop")
+fwrite(summ, file.path(tables_dir, "cluster_summary.tsv"), sep = "\t")
+cat("\n=== Cluster summary ===\n"); print(as.data.frame(summ))
+message("Saved: cluster_summary.tsv")
+
+# ================================================================
+# 6. Per-cluster ChromHMM enrichment TEST
+#    Formalises the part-3 coverage heatmaps: for each cluster x state, compare
+#    the state's coverage in that cluster vs all OTHER clustered peaks (Wilcoxon
+#    + BH FDR, log2 mean-coverage ratio). Tells which states each cluster is
+#    distinctively enriched/depleted for, relative to the other clusters.
+# ================================================================
+clus_enrich <- do.call(rbind, lapply(clusters, function(cl) {
+  inc <- sig_df$Cluster == cl
+  # per-region (unweighted) Wilcoxon: this cluster vs all other clustered peaks
+  pr <- do.call(rbind, lapply(hmm_cols, function(col) {
+    a <- sig_df[[col]][inc]; b <- sig_df[[col]][!inc]
+    data.frame(Cluster = cl, state = sub("^hmm_", "", col), n = sum(inc),
+               mean_cov_in = mean(a, na.rm = TRUE), mean_cov_out = mean(b, na.rm = TRUE),
+               log2_ratio = log2((mean(a, na.rm = TRUE) + 1e-4) / (mean(b, na.rm = TRUE) + 1e-4)),
+               p_value = tryCatch(suppressWarnings(wilcox.test(a, b)$p.value),
+                                  error = function(e) NA_real_),
+               stringsAsFactors = FALSE)
+  }))
+  # size-weighted (by domain length) with permutation test
+  sw <- chromHMM_size_weighted(sig_df[, hmm_cols], sig_df$peak_size_kb, inc)
+  merge(pr, sw, by = "state")
+}))
+clus_enrich <- clus_enrich %>% group_by(Cluster) %>%
+  mutate(p_adj_BH   = p.adjust(p_value, method = "BH"),
+         perm_p_adj = p.adjust(perm_p,  method = "BH")) %>% ungroup()
+fwrite(clus_enrich, file.path(tables_dir, "cluster_chromHMM_enrichment.tsv"), sep = "\t")
+
+# Two dot plots: per-region (Wilcoxon) and size-weighted (permutation)
+clus_dotplot <- function(lr, fdr, ttl, sub) {
+  clus_enrich %>%
+    filter(is.finite(.data[[lr]]), !is.na(.data[[fdr]])) %>%
+    mutate(Cluster = factor(paste("Cluster", Cluster), levels = paste("Cluster", clusters)),
+           neglog10FDR = -log10(pmax(.data[[fdr]], .Machine$double.xmin)),
+           state = factor(state, levels = sort(unique(state)))) %>%
+    ggplot(aes(Cluster, state, size = neglog10FDR, colour = .data[[lr]])) +
+    geom_point() +
+    scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
+                           midpoint = 0, name = expression(log[2]~"ratio")) +
+    scale_size_continuous(name = expression(-log[10]("FDR"))) +
+    labs(title = ttl, subtitle = sub, x = NULL, y = "ChromHMM state") +
+    theme_m + theme(axis.text.x = element_text(angle = 30, hjust = 1))
+}
+save_fig(clus_dotplot("log2_ratio", "p_adj_BH",
+                    "Per-cluster ChromHMM enrichment (cluster vs other clusters) - PER-REGION",
+                    "colour = log2 coverage ratio; each region equal; size = FDR"),
+         "cluster_chromHMM_enrichment", "clusters", width = 8, height = 6)
+save_fig(clus_dotplot("w_log2_ratio", "perm_p_adj",
+                    "Per-cluster ChromHMM enrichment (cluster vs other clusters) - SIZE-WEIGHTED",
+                    "colour = log2 territory ratio (weighted by domain length); size = perm FDR"),
+         "cluster_chromHMM_enrichment_sizeweighted", "clusters", width = 8, height = 6)
+
+
+# ================================================================
+# Structural + chromatin-state enrichment of the significant set
+#   TAD-boundary (hypergeometric) + ChromHMM-state (coverage) enrichment.
+#   Repeat-class enrichment lives in MINUTE_4_Repeats. hyper_row() from config.R.
+# ================================================================
+sig_all <- do.call(rbind, lapply(names(annotated_results), function(mark) {
+  df <- annotated_results[[mark]]; df$ChIP <- mark
+  df$peak_id <- paste0(df$chr, ":", df$start, "-", df$end); df
+}))
+sig_all <- sig_all[is_significant(sig_all), ]
+
+tad_enrich <- do.call(rbind, lapply(names(annotated_results), function(mark) {
+  all_df <- annotated_results[[mark]]; all_df$ChIP <- mark
+  all_df$peak_id <- paste0(all_df$chr, ":", all_df$start, "-", all_df$end)
+  flag_TAD <- all_df$overlaps_with_Tad_boundary %in% TRUE
+  hyper_row(mark, "TAD_boundary", all_df, sig_all[sig_all$ChIP == mark, ], flag_TAD)
+}))
+tad_enrich$p_adj_BH <- p.adjust(tad_enrich$p_value, "BH")
+fwrite(tad_enrich, file.path(tables_dir, "enrichment_TAD.tsv"), sep = "\t")
+
+g_tad <- tad_enrich %>%
+  filter(is.finite(odds_ratio), !is.na(p_adj_BH)) %>%
+  mutate(neglog10FDR = -log10(pmax(p_adj_BH, .Machine$double.xmin)),
+         ChIP = factor(ChIP, levels = mark_levels)) %>%
+  ggplot(aes(ChIP, odds_ratio, size = neglog10FDR, colour = odds_ratio > 1)) +
+  geom_hline(yintercept = 1, linetype = "dashed") + geom_point() +
+  scale_colour_manual(values = c(`TRUE` = "firebrick2", `FALSE` = "steelblue3"), guide = "none") +
+  scale_y_log10() +
+  labs(title = "TAD-boundary enrichment of significant peaks", x = NULL,
+       y = "odds ratio (log10)", size = expression(-log[10]("FDR"))) + theme_m
+save_fig(g_tad, "enrichment_TAD_dotplot", "enrichment", width = 6, height = 4)
+message("Saved: enrichment_TAD.tsv + enrichment/enrichment_TAD_dotplot.{png,pdf}")
+
+# ================================================================
+# ChromHMM chromatin-state enrichment (coverage-based)
+# ----------------------------------------------------------------
+# ChromHMM is annotated per peak in MINUTE_1 as per-state COVERAGE FRACTIONS
+# (hmm_<state> columns) rather than a single size-biased label, because the
+# H4K20me3/H3K9me3 domains span many states. For each mark x state we compare
+# the mean coverage fraction in the significant set vs the background
+# (non-significant peaks): log2 ratio of means = effect size, Wilcoxon = test.
+# ================================================================
+
+hmm_cols   <- grep("^hmm_", names(annotated_results[[1]]), value = TRUE)
+hmm_states <- sub("^hmm_", "", hmm_cols)
+
+chromhmm_enrich <- do.call(rbind, lapply(names(annotated_results), function(mark) {
+  d   <- annotated_results[[mark]]
+  d$ChIP <- mark
+  sig <- is_significant(d)
+  # per-region (unweighted) Wilcoxon
+  pr <- do.call(rbind, lapply(hmm_states, function(st) {
+    col <- paste0("hmm_", st)
+    a <- d[[col]][sig]; b <- d[[col]][!sig]           # background = non-significant
+    data.frame(ChIP = mark, state = st, n_sig = sum(sig),
+               mean_cov_sig = mean(a, na.rm = TRUE), mean_cov_bg = mean(b, na.rm = TRUE),
+               log2_ratio = log2((mean(a, na.rm = TRUE) + 1e-4) / (mean(b, na.rm = TRUE) + 1e-4)),
+               p_value = tryCatch(suppressWarnings(wilcox.test(a, b)$p.value),
+                                  error = function(e) NA_real_),
+               stringsAsFactors = FALSE)
+  }))
+  # size-weighted (by domain length) with permutation test
+  sw <- chromHMM_size_weighted(d[, hmm_cols], d$end - d$start, sig)
+  merge(pr, sw, by = "state")
+}))
+
+chromhmm_enrich <- chromhmm_enrich %>%
+  dplyr::group_by(ChIP) %>%
+  dplyr::mutate(p_adj_BH   = p.adjust(p_value, method = "BH"),
+                perm_p_adj = p.adjust(perm_p,  method = "BH")) %>%
+  dplyr::ungroup()
+
+fwrite(chromhmm_enrich, file.path(tables_dir, "enrichment_chromHMM.tsv"), sep = "\t")
+
+# Two dot plots: PER-REGION (Wilcoxon) and SIZE-WEIGHTED (permutation) - report both
+hmm_dotplot <- function(df, lr, fdr, ttl, sub) {
+  df %>% dplyr::filter(is.finite(.data[[lr]]), !is.na(.data[[fdr]])) %>%
+    dplyr::mutate(neglog10FDR = -log10(pmax(.data[[fdr]], .Machine$double.xmin)),
+                  state = factor(state, levels = sort(unique(state)))) %>%
+    ggplot(aes(x = ChIP, y = state, size = neglog10FDR, colour = .data[[lr]])) +
+    geom_point() +
+    scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
+                           midpoint = 0, name = expression(log[2]~"ratio")) +
+    scale_size_continuous(name = expression(-log[10]("FDR"))) +
+    labs(title = ttl, subtitle = sub, x = NULL, y = "ChromHMM state") +
+    theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
+}
+save_fig(hmm_dotplot(chromhmm_enrich, "log2_ratio", "p_adj_BH",
+                     "ChromHMM enrichment of significant peaks - PER-REGION",
+                     "each region equal; colour = log2 mean-coverage ratio (sig vs bg); size = FDR"),
+         "enrichment_chromHMM_dotplot", "enrichment", width = 8, height = 7)
+save_fig(hmm_dotplot(chromhmm_enrich, "w_log2_ratio", "perm_p_adj",
+                     "ChromHMM enrichment of significant peaks - SIZE-WEIGHTED",
+                     "weighted by domain length; colour = log2 territory ratio (sig vs bg); size = perm FDR"),
+         "enrichment_chromHMM_sizeweighted_dotplot", "enrichment", width = 8, height = 7)
+
+# NOTE: the H3K9me3-loss-vs-H3K9me3-retained comparison within H4K20me3-lost
+# regions lives in MINUTE_3_Differential_loss (co_loss vs H4K20me3_only), which
+# does it for ChromHMM + repeats + regions + genes, per-region and size-weighted.

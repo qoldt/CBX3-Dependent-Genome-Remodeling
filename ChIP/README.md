@@ -44,33 +44,41 @@ MINUTE_1_Count_and_Annotate.R    Quantify + DESeq2 + annotate
   │                                bigWigs × peaks → counts → DESeq2 → annotated table
   │                                annotation: genomic region, gene, repeats, TAD, ChromHMM state
   │                                ⇒ results/rds/annotated_results_...rds   (handoff file)
-  ├─▶ MINUTE_2_Hypergeometric_test.R   Enrichment of significant peaks vs TAD / LINE / SINE /
-  │                                     LTR (+ subfamilies); separate ChromHMM-state enrichment
+  │  (stages below are organised THEMATICALLY; each reads the annotated .rds)
   │
-  └─▶ MINUTE_3_heatmap.R               Heatmap + k-means clusters + BED export; per-chromosome
-        │                              change plots; size×signal×log2FC relationship plots
-        │                              ⇒ results/rds/cluster_analysis_inputs.rds
-        └─▶ MINUTE_4_cluster_analysis.R   Characterise clusters: signal/loss profiles,
-                                           ChromHMM, repeat/region/gene-family composition
+  ├─▶ MINUTE_2_Global_Changes.R      The genome-wide picture: main clustered heatmap
+  │                                  (k-means) + BED export; per-chromosome change plots +
+  │                                  log2FC distributions; mark-vs-mark & size×signal
+  │                                  relationships; k-means cluster CHARACTERISATION
+  │                                  (signal/loss, ChromHMM, repeat/region composition);
+  │                                  TAD + ChromHMM-state enrichment of the significant set
   │
-  ├─▶ MINUTE_5_differential_loss.R   Split shared H3K9me3/H4K20me3 regions into
+  ├─▶ MINUTE_3_Differential_loss.R   Split shared H3K9me3/H4K20me3 regions into
   │                                  co-loss / H4K20me3-only / stable; characterise by
   │                                  ChromHMM, repeats (IAP/ERV, young L1), and nearby genes
   │
-  ├─▶ MINUTE_6_kap1_intersection.R   KAP1/TRIM28 (HUSH recruiter) vs the loss:
-  │                                  (A) overlap vs a size-matched permutation null;
-  │                                  (B) does KAP1 binding predict the KO log2FC?
-  │                                  (skips gracefully if the KAP1 BEDs are absent)
+  ├─▶ MINUTE_4_Repeats.R             How the marks change over transposable elements:
+  │                                  (A) hypergeometric repeat-class enrichment;
+  │                                  (B) DIRECT signal over repeat COPIES (bw_loci) —
+  │                                  aggregate + per-copy log2(KO/WT) per class
   │
-  └─▶ MINUTE_7_repeat_signal.R       Direct signal change over repeat COPIES (bw_loci,
-                                     not peak-overlap): aggregate + per-copy log2(KO/WT)
-                                     per class (young L1, IAP/ERVK, SINE controls)
+  ├─▶ MINUTE_5_Clustered_Gene_Families.R  HUSH/CBX3-silenced gene clusters (protocadherin,
+  │                                  KRAB-ZFP, vomeronasal, olfactory): per-gene exon signal,
+  │                                  co-loss-vs-background test, deepTools BEDs
+  │                                  ⇒ results/rds/family_exon_signal.rds
+  │
+  └─▶ MINUTE_6_Intersection.R        Intersection with silencing machinery (KAP1/TRIM28;
+                                     extend for other HUSH components): overlap vs a
+                                     size-matched null + does binding predict the KO log2FC?
+                                     (skips gracefully if the KAP1 BEDs are absent)
 ```
 
-Stage 1 produces one `.rds` that stages 2, 3, 5 and 6 read (independently). Stage 4
-reads the cluster inputs persisted by stage 3, so it runs after stage 3. Stage 6
-additionally reads the family-exon signal persisted by stage 4 and external KAP1
-BEDs (see *Annotation* below); it self-skips if those BEDs are not present.
+Stage 1 produces one `.rds` that every later stage reads independently. Stage 2 also
+persists (and self-consumes) `cluster_analysis_inputs.rds` for the cluster
+characterisation. Stage 6 reads the family-exon signal persisted by **stage 5** and
+external KAP1 BEDs (see *Annotation* below); it self-skips if those BEDs are absent.
+Shared constants/helpers (`geno_colors`, `theme_m`, `mark_levels`, `hyper_row()`) live
+in `config.R`.
 
 ---
 
@@ -78,7 +86,7 @@ BEDs (see *Annotation* below); it self-skips if those BEDs are not present.
 
 ```
 ChIP/
-  config.R  run_MINUTE.R  MINUTE_1..3.R      # code
+  config.R  run_MINUTE.R  MINUTE_1..6.R      # code
   samples.tsv                                 # sample sheet (single source of truth)
   data/
     peaks/             # consensus/master peak BEDs             (committed)
@@ -211,7 +219,7 @@ Single stage (stage 1 must have produced the `.rds` first):
 ```bash
 cd ChIP
 Rscript MINUTE_1_Count_and_Annotate.R
-Rscript MINUTE_3_heatmap.R
+Rscript MINUTE_2_Global_Changes.R
 ```
 
 ---
@@ -238,7 +246,7 @@ set. Significance is `|log2FoldChange| > lfc & pvalue < p`, per mark:
 | H4K20me3 | > 0.5 | < 0.20 |
 | H3K36me3 | > 0.5 | < 0.20 |
 
-Both MINUTE_2 and MINUTE_3 call `is_significant()`, so their "significant" sets
+MINUTE_2 and MINUTE_4 both call `is_significant()`, so their "significant" sets
 are always identical.
 
 ---
@@ -260,7 +268,7 @@ Per mark, `MINUTE_1`:
    WT** → a `log2FoldChange` and raw `pvalue` per peak.
 5. **Call significance** — `is_significant()`: `|log2FoldChange| > 0.5` **and**
    raw `pvalue <` the per-mark threshold (see table above). The same rule is used
-   by MINUTE_2 and MINUTE_3.
+   by every downstream stage that needs a "significant" set.
 
 Two deliberate but "soft" choices to keep in mind: significance uses the **raw**
 `pvalue`, not BH-adjusted `padj`, and the broad heterochromatin marks
@@ -280,7 +288,7 @@ Length is **not a term in the test**, but it shapes the outcome three ways:
    2 kb-merged domain set, while H3K4me3 is narrow promoter peaks — so "length"
    and "which mark / which p-threshold" move together. Don't read a
    length↔significance trend as biology without accounting for that.
-3. **Length is carried downstream, not into the call.** MINUTE_3 annotates each
+3. **Length is carried downstream, not into the call.** MINUTE_2 annotates each
    significant peak with `peak_size_kb` (capped at 2 kb for heatmap color), and
    ChIPseeker tends to label very large domains as "Promoter" (a length artifact,
    flagged in a MINUTE_1 comment). Length affects interpretation, not the flag.
@@ -320,14 +328,14 @@ median, 25th *and* 75th percentiles all negative). Two things follow:
    a common external scale** (they are: input-scaled).
 
 **Consequence for the change plots** (`*_changes_by_chr_*`): the highlight
-(coloured) criterion is **per-mark**, set in `plot_criterion` in `MINUTE_3`:
+(coloured) criterion is **per-mark**, set in `plot_criterion` in `MINUTE_2`:
 
 - **`"effect"`** — colour by `|log2FC| > 0.5` (labelled "effect size", *not*
   "significant") for the globally-shifted marks **H3K9me3, H4K20me3**.
 - **`"pvalue"`** — `is_significant()` for the centred marks **H3K4me3, H3K36me3,
   H3K9me2**, where per-peak testing is valid.
 
-The diagnostic `figures/log2FC_distribution_by_mark.png` (section 7 of MINUTE_3)
+The diagnostic `figures/change_plots/log2FC_distribution_by_mark.png` (MINUTE_2)
 plots each mark's log2FC density with its median — the evidence behind these
 assignments. Two caveats: the global-loss claim is best stated as a
 **distributional** result (median shift, % of domains down), not a peak count;
@@ -335,8 +343,8 @@ and individual **gene labels** on low-count marks (H4K20me3 baseMean ~1.6) are
 unreliable — the distribution is the finding, not any single locus.
 
 > This per-mark criterion governs **only the change plots**. The heatmap, BED
-> exports, and MINUTE_2 hypergeometric test still use `is_significant()`
-> (p-based) throughout.
+> exports, and the repeat hypergeometric test (MINUTE_4) still use
+> `is_significant()` (p-based) throughout.
 
 ### Finding: H3K9me3 / H4K20me3 loss by chromatin type and domain size
 
@@ -354,14 +362,14 @@ indicating the biggest constitutive-heterochromatin domains are where H3K9me3
 and H4K20me3 decline together.
 
 Quantifying the marks directly over the **silencing-relevant exon** of each
-HUSH/CBX3-target gene family (MINUTE_4 part 7; KRAB-ZFP last exon, protocadherin
+HUSH/CBX3-target gene family (MINUTE_5; KRAB-ZFP last exon, protocadherin
 first exon, Vmn/Olfr coding exon) shows all four families lose H3K9me3 and
 H4K20me3 in the knockout (paired-Wilcoxon FDR ≤ 1e-11; e.g. olfactory H4K20me3
 FDR ~1e-173), and the clustered protocadherins additionally *gain* H3K4me3 —
 a coordinated derepression signature that does not depend on individual genes
 passing per-peak significance.
 
-Splitting the shared H3K9me3/H4K20me3 regions by their two changes (MINUTE_5)
+Splitting the shared H3K9me3/H4K20me3 regions by their two changes (MINUTE_3)
 resolves two mechanistically distinct compartments. **Co-loss** (n≈20k, median
 1.3 kb) is smaller, gene-proximal constitutive heterochromatin (`Het`/`Quies3`
 enriched). **H4K20me3-only loss** (n≈14k, median 2.3 kb) — H4K20me3 lost nearly
@@ -383,15 +391,15 @@ papers), organised into per-analysis subfolders under `results/figures/`:**
 
 ```
 figures/
-  heatmap/           clustered significant-peak heatmap (MINUTE_3)
-  change_plots/      per-chromosome change plots + log2FC distribution (MINUTE_3)
-  relationships/     size × signal × log2FC, total + by-cluster + mark-vs-mark (MINUTE_3)
-  enrichment/        repeat/TAD + ChromHMM enrichment dot plots (MINUTE_2)
-  clusters/          cluster signal/loss/ChromHMM/composition/enrichment (MINUTE_4)
-  gene_families/     HUSH/CBX3 family exon plots + replicate heatmaps (MINUTE_4)
-  differential_loss/ co-loss / H4K20me3-only / stable characterisation (MINUTE_5)
+  heatmap/           clustered significant-peak heatmap (MINUTE_2)
+  change_plots/      per-chromosome change plots + log2FC distribution (MINUTE_2)
+  relationships/     size × signal × log2FC, total + by-cluster + mark-vs-mark (MINUTE_2)
+  clusters/          cluster signal/loss/ChromHMM/composition/enrichment (MINUTE_2)
+  enrichment/        TAD + ChromHMM enrichment dot plots (MINUTE_2)
+  differential_loss/ co-loss / H4K20me3-only / stable characterisation (MINUTE_3)
                      + KAP1/TRIM28 intersection & genotype-effect plots (MINUTE_6)
-  repeats/           direct repeat-class signal change, aggregate + per-copy (MINUTE_7)
+  repeats/           repeat-class enrichment + direct signal change (MINUTE_4)
+  gene_families/     HUSH/CBX3 family exon plots + replicate heatmaps (MINUTE_5)
 ```
 
 The table below lists figures by base name; each exists as `<subfolder>/<name>.{png,pdf}`.
@@ -402,53 +410,39 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 |------|-------------|----------|
 | `counts/<mark>_bigwig_counts.tsv` | MINUTE_1 | per-peak signal matrix |
 | `rds/annotated_results_...rds` | MINUTE_1 | all peaks + DESeq2 stats + annotation (tracked handoff) |
-| `tables/enrichment_hypergeometric.tsv` | MINUTE_2 | odds ratios & hypergeometric p-values per repeat/TAD annotation, incl. young mouse L1 subfamilies (L1MdA/T/Gf/F + aggregate `young_L1`) |
-| `figures/enrichment_dotplot.pdf` | MINUTE_2 | repeat/TAD enrichment dot plot |
-| `tables/enrichment_chromHMM.tsv` | MINUTE_2 | ChromHMM-state enrichment per mark, both per-region (Wilcoxon) and size-weighted (permutation) |
-| `figures/enrichment_chromHMM_dotplot.pdf` | MINUTE_2 | ChromHMM enrichment, per-region (each region equal) |
-| `figures/enrichment_chromHMM_sizeweighted_dotplot.pdf` | MINUTE_2 | ChromHMM enrichment, size-weighted by domain length (genomic territory) |
-| `figures/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_3 | clustered heatmap of significant peaks (k-means, seeded) |
-| `figures/<mark>_changes_by_chr_coloured_by_{genomic_region,repeat}.png` | MINUTE_3 | per-chromosome domain-size vs log2FC, sized by domain size, coloured by region/repeat |
-| `figures/log2FC_distribution_by_mark.png` | MINUTE_3 | per-mark log2FC density + median (global-shift diagnostic) |
-| `figures/relationship_total_*.png` | MINUTE_3 | genome-wide size×baseMean×log2FC: binned heatmap, scatter, size×signal interaction |
-| `figures/relationship_bycluster_*.png` | MINUTE_3 | the same three relationship views, faceted by k-means cluster |
-| `figures/relationship_bycluster_change_H3K9me3_vs_H4K20me3_binned.png` | MINUTE_3 | H3K9me3 vs H4K20me3 DESeq2 log2FC plane, binned & coloured by median domain size, by cluster |
-| `figures/relationship_bycluster_mark_change_distribution.png` | MINUTE_3 | H3K9me3 / H4K20me3 DESeq2 log2FC distribution across clusters (uniform vs cluster-specific) |
-| `figures/relationship_all_regions_H3K9me3_vs_H4K20me3_by_cluster.png` | MINUTE_3 | all merged-set regions (grey) with significant peaks coloured by cluster, in the ΔH3K9me3 × ΔH4K20me3 plane |
-| `rds/cluster_analysis_inputs.rds` | MINUTE_3 | cluster table + per-sample signal matrix (handoff to MINUTE_4) |
-| `tables/significant_peaks_clusters.tsv` | MINUTE_3 | significant peaks with cluster + annotation (the metadata BED can't hold it) |
-| `bed/significant_peaks_<mark>.bed` | MINUTE_3 | significant regions per mark (NCBI seqnames, score = −log10 p) |
-| `bed/significant_peaks_with_metadata.bed` | MINUTE_3 | significant regions, score = log2FC (browser BED; cluster/ChIP are in the TSV) |
-| `figures/cluster_signal_profile.png` | MINUTE_4 | mean signal per cluster × mark, WT vs KO (what each cluster is) |
-| `figures/cluster_loss_heatmap.png` | MINUTE_4 | log2(KO/WT) signal, cluster × mark |
-| `figures/cluster_chromHMM_coverage_{abs,zscore}.png` | MINUTE_4 | mean ChromHMM-state coverage per cluster (absolute + per-state z) |
-| `tables/cluster_chromHMM_enrichment.tsv` + `cluster_chromHMM_enrichment{,_sizeweighted}.png` | MINUTE_4 | per-cluster ChromHMM enrichment vs other clusters; per-region + size-weighted |
-| `figures/cluster_{repeat,region}_composition.png` | MINUTE_4 | repeat-class / genomic-region composition per cluster |
-| `tables/cluster_summary.tsv` | MINUTE_4 | per-cluster n, median size/log2FC, top state/repeat, family fractions |
-| `tables/family_exon_signal.tsv` + `rds/family_exon_signal.rds` | MINUTE_4 | per-gene ChIP signal (WT/KO/log2FC per mark) over the silencing-relevant exon of each HUSH/CBX3-target family gene |
-| `tables/family_exon_summary.tsv` | MINUTE_4 | per family × mark: median WT/KO signal, log2FC, paired-Wilcoxon FDR |
-| `figures/family_exon_change.png` | MINUTE_4 | per-exon log2(KO/WT) by mark, faceted by family (boxplot) |
-| `figures/family_exon_signal_level.png` | MINUTE_4 | median WT vs KO signal by mark and family (bars) |
-| `figures/family_exon_dotplot.png` | MINUTE_4 | family × mark summary: median log2FC (colour) + paired-Wilcoxon FDR (size) |
-| `figures/family_exon_MA.png` | MINUTE_4 | MA plot: change vs abundance per mark, coloured by family |
-| `figures/family_exon_heatmap_{allmarks,silencing}.png` | MINUTE_4 | per-gene replicate heatmap (genes × 55 samples, row z, split by family); all marks / silencing-only |
-| `figures/family_coloss_{propensity,scatter}.png` + `family_coloss_stats.txt` + `tables/family_coloss_*.tsv` | MINUTE_4 | does H3K9me3 co-loss (with H4K20me3) exceed the genome-wide background? **primary:** each family vs a matched random-gene background (Fisher OR + BH); **secondary:** chi-square + pairwise Fisher between families; per-gene classification (stats co-located with the figures) |
-| `tables/diffloss_group_overview.tsv` | MINUTE_5 | co-loss / H4K20me3-only / stable: n, median size, median log2FC per mark |
-| `tables/diffloss_chromHMM_{coverage,enrichment}.tsv` + `figures/diffloss_chromHMM_*.png` | MINUTE_5 | per-group ChromHMM coverage + enrichment (per-region & size-weighted) |
-| `tables/diffloss_repeat_{composition,enrichment}.tsv` + `figures/diffloss_repeat_*.png` | MINUTE_5 | repeat composition + enrichment (Fisher OR vs stable): IAP/ERV, and young mouse L1 (L1MdA/T/Gf/F = the mouse HUSH/TRIM28 substrates) |
-| `tables/diffloss_{region_composition,gene_family_pct}.tsv` + `figures/diffloss_{region_composition,distance_to_tss,domain_size}.png` | MINUTE_5 | genomic region, TSS distance, gene-family %, domain size per group |
-| `tables/diffloss_genes_{co_loss,H4K20me3_only,stable}.txt` | MINUTE_5 | per-group gene symbol lists (for downstream GO) |
-| `tables/kap1_intersection.tsv` + `figures/differential_loss/kap1_intersection.png` | MINUTE_6 | KAP1/TRIM28 overlap of loss groups + family exons vs a **size-matched permutation null** (both Neuro-2a-neural & ChIP-Atlas all-cell tracks) |
+| `figures/heatmap/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_2 | clustered heatmap of significant peaks (k-means, seeded) |
+| `figures/change_plots/<mark>_changes_by_chr_coloured_by_{genomic_region,repeat}.png` | MINUTE_2 | per-chromosome domain-size vs log2FC, sized by domain size, coloured by region/repeat |
+| `figures/change_plots/log2FC_distribution_by_mark.png` | MINUTE_2 | per-mark log2FC density + median (global-shift diagnostic) |
+| `figures/relationships/relationship_total_*.png` | MINUTE_2 | genome-wide size×baseMean×log2FC: binned heatmap, scatter, size×signal interaction |
+| `figures/relationships/relationship_bycluster_*.png` | MINUTE_2 | relationship views faceted by k-means cluster; incl. H3K9me3-vs-H4K20me3 log2FC plane + all-regions-by-cluster |
+| `rds/cluster_analysis_inputs.rds` + `tables/significant_peaks_clusters.tsv` | MINUTE_2 | cluster table + per-sample signal matrix (self-consumed for cluster characterisation) |
+| `bed/significant_peaks_<mark>.bed` + `significant_peaks_with_metadata.bed` | MINUTE_2 | significant regions per mark (NCBI seqnames, score = −log10 p) + browser BED (score = log2FC) |
+| `figures/clusters/cluster_signal_profile.png` + `cluster_loss_heatmap.png` | MINUTE_2 | mean signal / log2(KO/WT) per cluster × mark (what each cluster is) |
+| `figures/clusters/cluster_chromHMM_coverage_{abs,zscore}.png` + `tables/cluster_chromHMM_enrichment.tsv` + `figures/clusters/cluster_chromHMM_enrichment{,_sizeweighted}.png` | MINUTE_2 | per-cluster ChromHMM coverage + enrichment vs other clusters (per-region + size-weighted) |
+| `figures/clusters/cluster_{repeat,region}_composition.png` + `tables/cluster_summary.tsv` | MINUTE_2 | repeat/region composition per cluster; per-cluster summary table |
+| `tables/enrichment_TAD.tsv` + `figures/enrichment/enrichment_TAD_dotplot.png` | MINUTE_2 | TAD-boundary hypergeometric enrichment of significant peaks per mark |
+| `tables/enrichment_chromHMM.tsv` + `figures/enrichment/enrichment_chromHMM{,_sizeweighted}_dotplot.png` | MINUTE_2 | ChromHMM-state enrichment per mark, per-region (Wilcoxon) + size-weighted (permutation) |
+| `tables/diffloss_group_overview.tsv` | MINUTE_3 | co-loss / H4K20me3-only / stable: n, median size, median log2FC per mark |
+| `tables/diffloss_chromHMM_{coverage,enrichment}.tsv` + `figures/differential_loss/diffloss_chromHMM_*.png` | MINUTE_3 | per-group ChromHMM coverage + enrichment (per-region & size-weighted) |
+| `tables/diffloss_repeat_{composition,enrichment}.tsv` + `figures/differential_loss/diffloss_repeat_*.png` | MINUTE_3 | repeat composition + enrichment (Fisher OR vs stable): IAP/ERV, young mouse L1 (L1MdA/T/Gf/F) |
+| `tables/diffloss_{region_composition,gene_family_pct}.tsv` + `figures/differential_loss/diffloss_*.png` | MINUTE_3 | genomic region, TSS distance, gene-family %, domain size per group |
+| `tables/diffloss_genes_{co_loss,H4K20me3_only,stable}.txt` | MINUTE_3 | per-group gene symbol lists (for downstream GO) |
+| `tables/enrichment_hypergeometric.tsv` + `figures/repeats/enrichment_repeat_dotplot.png` | MINUTE_4 | hypergeometric enrichment of significant peaks per repeat class, incl. young mouse L1 subfamilies (L1MdA/T/Gf/F + aggregate `young_L1`) |
+| `tables/repeat_signal_aggregate.tsv` + `figures/repeats/repeat_signal_aggregate.png` | MINUTE_4 | **direct** repeat-class signal change: aggregate log2(KO/WT) over copies, class × mark (peak-calling-independent) |
+| `tables/repeat_signal_percopy_summary.tsv` + `figures/repeats/repeat_signal_percopy.png` | MINUTE_4 | per-copy log2(KO/WT) distribution + paired-Wilcoxon FDR per class × mark |
+| `tables/family_exon_signal.tsv` + `rds/family_exon_signal.rds` | MINUTE_5 | per-gene ChIP signal (WT/KO/log2FC per mark) over the silencing-relevant exon of each HUSH/CBX3-target family gene |
+| `tables/family_exon_summary.tsv` + `figures/gene_families/family_exon_{change,signal_level,dotplot,MA,heatmap_*}.png` | MINUTE_5 | per family × mark change (median/FDR) + per-exon boxplot, level, dotplot, MA, per-gene replicate heatmaps |
+| `bed/family_*_exons.bed` | MINUTE_5 | per-family target-exon BEDs (deepTools inputs; NCBI seqnames matching the bigWigs) |
+| `figures/gene_families/family_coloss_{propensity,scatter}.png` + `family_coloss_stats.txt` + `tables/family_coloss_*.tsv` | MINUTE_5 | does H3K9me3 co-loss exceed genome-wide background? **primary:** each family vs a matched random-gene background (Fisher OR + BH); **secondary:** between-family chi-square/Fisher |
+| `tables/kap1_intersection.tsv` + `figures/differential_loss/kap1_intersection.png` | MINUTE_6 | KAP1/TRIM28 overlap of loss groups + family exons vs a **size-matched permutation null** (Neuro-2a-neural & ChIP-Atlas all-cell tracks) |
 | `tables/kap1_genotype_effect.tsv` + `figures/differential_loss/kap1_genotype_effect.png` | MINUTE_6 | **does KAP1 binding predict the loss?** KO log2FC split by KAP1-bound vs unbound (Wilcoxon), genome-wide + per family |
-| `tables/repeat_signal_aggregate.tsv` + `figures/repeats/repeat_signal_aggregate.png` | MINUTE_7 | **direct** repeat-class signal change: aggregate log2(KO/WT) over copies, class × mark (peak-calling-independent complement to MINUTE_2) |
-| `tables/repeat_signal_percopy_summary.tsv` + `figures/repeats/repeat_signal_percopy.png` | MINUTE_7 | per-copy log2(KO/WT) distribution + paired-Wilcoxon FDR per class × mark |
 
 ---
 
 ## Notes
 
 - **Seqnames:** counts/DESeq2 use NCBI style (`1`); exported BEDs are NCBI. Set
-  `bed_style <- "UCSC"` in MINUTE_3 for `chr`-prefixed output.
+  `bed_style <- "UCSC"` in MINUTE_2 for `chr`-prefixed output.
 - DESeq2 runs with `sizeFactors = 1` — the bigWigs are already input-scaled, so
   no further normalization is applied.
 - Significance uses the **raw** `pvalue` (not BH-adjusted `padj`), with lenient

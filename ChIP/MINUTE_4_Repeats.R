@@ -1,27 +1,102 @@
 # ================================================================
-# MINUTE_7 — direct repeat-class signal change (bw_loci over repeat copies)
+# MINUTE_4 - Repeats: how the marks change over transposable elements
 # ----------------------------------------------------------------
-# Complements MINUTE_2's hypergeometric test. That test asks "are *significant
-# peaks* over-represented on repeat class X" - it is peak-calling-dependent and
-# magnitude-blind. Here we instead quantify the input-scaled signal DIRECTLY over
-# the repeat copies themselves (bw_loci, exactly as for the gene-family exons in
-# MINUTE_4) and measure how each mark CHANGES over each class, independent of peak
-# calling. Because sizeFactors = 1, absolute signal is comparable across genotype.
-#
-# Two readouts per class x mark:
-#   (1) AGGREGATE (primary) - mean signal across all copies per sample, then
-#       log2(mean KO / mean WT). Averaging over copies cancels the per-copy
-#       mappability noise of near-identical young repeats (the WT->KO change is
-#       internally controlled, so this stays interpretable even where absolute
-#       signal is unique-mapping-limited).
-#   (2) PER-COPY (secondary) - per-copy log2FC distribution + paired Wilcoxon,
-#       over copies with measurable signal (drops the unmappable bottom quartile).
+# Two complementary views of the repeat response to HP1gKO:
+#   (A) SPATIAL enrichment (hypergeometric) - are significant peaks over-
+#       represented on each repeat class? Peak-calling-dependent, magnitude-blind.
+#   (B) DIRECT signal change (bw_loci over the repeat copies themselves) -
+#       peak-calling-independent, magnitude-aware; the primary read-out.
+# Runs after MINUTE_1 (needs the annotated .rds). See EXECUTIVE_SUMMARY for the
+# IAP > young-L1 > older-ERV/LINE > SINE ordering of H4K20me3 loss.
 # ================================================================
 source("config.R")
 suppressPackageStartupMessages({
   library(GenomicRanges); library(ggplot2); library(data.table); library(dplyr)
 })
 
+# ================================================================
+# (A) Hypergeometric enrichment of significant peaks vs repeat classes
+#     (TAD + ChromHMM enrichment live in MINUTE_2_Global_Changes; hyper_row()
+#      is shared from config.R)
+# ================================================================
+annotated_results <- readRDS(annotated_rds)
+ann     <- load_annotation()
+line_gr <- ann$line; sine_gr <- ann$sine; ltr_gr <- ann$ltr
+try({ seqlevelsStyle(line_gr) <- "UCSC"; seqlevelsStyle(sine_gr) <- "UCSC"
+      seqlevelsStyle(ltr_gr)  <- "UCSC" }, silent = TRUE)
+
+combined_sig <- do.call(rbind, lapply(names(annotated_results), function(mark) {
+  df <- annotated_results[[mark]]; df$ChIP <- mark
+  df$peak_id <- paste0(df$chr, ":", df$start, "-", df$end); df
+}))
+combined_sig <- combined_sig[is_significant(combined_sig), ]
+
+enrichment_list <- lapply(names(annotated_results), function(mark) {
+  all_df <- annotated_results[[mark]]; all_df$ChIP <- mark
+  all_df$peak_id <- paste0(all_df$chr, ":", all_df$start, "-", all_df$end)
+  peak_gr <- GRanges(all_df$chr, IRanges(all_df$start, all_df$end)); seqlevelsStyle(peak_gr) <- "UCSC"
+
+  flag_LINE <- flag_SINE <- flag_LTR <- rep(FALSE, length(peak_gr))
+  flag_LINE[queryHits(findOverlaps(peak_gr, line_gr, ignore.strand = TRUE))] <- TRUE
+  flag_SINE[queryHits(findOverlaps(peak_gr, sine_gr, ignore.strand = TRUE))] <- TRUE
+  flag_LTR[ queryHits(findOverlaps(peak_gr, ltr_gr,  ignore.strand = TRUE))] <- TRUE
+
+  fam <- if ("repeat_family" %in% names(all_df)) all_df$repeat_family else rep("", nrow(all_df))
+  fam <- ifelse(is.na(fam), "", fam)
+  flag_ERVK      <- grepl("\\bERVK\\b", fam)
+  flag_ERVL_MaLR <- grepl("\\bERVL-MaLR\\b", fam)
+  flag_ERV1      <- grepl("\\bERV1\\b", fam)
+
+  nm <- if ("repeat_name" %in% names(all_df)) all_df$repeat_name else rep("", nrow(all_df))
+  nm <- ifelse(is.na(nm), "", nm)
+  flag_IAPEz_int <- grepl("\\bIAPEz-int\\b", nm)
+  flag_IAPLTR1a  <- grepl("\\bIAPLTR1a_Mm\\b", nm)
+  # young/active mouse L1 (HUSH/TRIM28 substrates; mouse analogue of human L1HS/L1PA)
+  flag_L1MdA  <- grepl("L1MdA",  nm); flag_L1MdT  <- grepl("L1MdT",  nm)
+  flag_L1MdGf <- grepl("L1MdGf", nm); flag_L1MdF  <- grepl("L1MdF",  nm)
+  flag_youngL1 <- grepl("L1Md(A|T|Gf)", nm)
+
+  sig_df <- combined_sig %>% dplyr::filter(ChIP == mark) %>%
+    dplyr::mutate(peak_id = paste0(chr, ":", start, "-", end))
+
+  do.call(rbind, list(
+    hyper_row(mark, "LINE",                  all_df, sig_df, flag_LINE),
+    hyper_row(mark, "SINE",                  all_df, sig_df, flag_SINE),
+    hyper_row(mark, "LTR",                   all_df, sig_df, flag_LTR),
+    hyper_row(mark, "LTR:ERVK",              all_df, sig_df, flag_ERVK),
+    hyper_row(mark, "LTR:ERVL-MaLR",         all_df, sig_df, flag_ERVL_MaLR),
+    hyper_row(mark, "LTR:ERV1",              all_df, sig_df, flag_ERV1),
+    hyper_row(mark, "LTR:ERVK:IAPEz-int",    all_df, sig_df, flag_IAPEz_int),
+    hyper_row(mark, "LTR:ERVK:IAPLTR1a_Mm",  all_df, sig_df, flag_IAPLTR1a),
+    hyper_row(mark, "LINE:L1MdA",            all_df, sig_df, flag_L1MdA),
+    hyper_row(mark, "LINE:L1MdT",            all_df, sig_df, flag_L1MdT),
+    hyper_row(mark, "LINE:L1MdGf",           all_df, sig_df, flag_L1MdGf),
+    hyper_row(mark, "LINE:L1MdF",            all_df, sig_df, flag_L1MdF),
+    hyper_row(mark, "LINE:young_L1",         all_df, sig_df, flag_youngL1)))
+})
+enrichment_df <- do.call(rbind, enrichment_list) %>%
+  dplyr::arrange(ChIP, annotation) %>%
+  dplyr::group_by(ChIP) %>% dplyr::mutate(p_adj_BH = p.adjust(p_value, "BH")) %>% dplyr::ungroup()
+fwrite(enrichment_df, file.path(tables_dir, "enrichment_hypergeometric.tsv"), sep = "\t")
+
+p_enrich <- enrichment_df %>%
+  filter(!is.na(odds_ratio), is.finite(odds_ratio), !is.na(p_adj_BH), !is.na(direction)) %>%
+  mutate(neglog10FDR = -log10(pmax(p_adj_BH, .Machine$double.xmin)),
+         direction = factor(direction, levels = c("depleted", "enriched"))) %>%
+  ggplot(aes(annotation, odds_ratio, size = neglog10FDR, color = direction)) +
+  geom_hline(yintercept = 1, linetype = "dashed") +
+  geom_point(alpha = 0.9) + facet_wrap(~ ChIP, nrow = 1) + scale_y_log10() +
+  scale_color_manual(values = c(depleted = "steelblue3", enriched = "firebrick2")) +
+  labs(x = "Repeat class", y = "Odds ratio (log10)",
+       size = expression(-log[10]("FDR")), color = NULL) +
+  coord_flip() + theme_minimal(base_size = 12) +
+  theme(panel.grid.minor = element_blank())
+save_fig(p_enrich, "enrichment_repeat_dotplot", "repeats", width = 12, height = 5)
+message("Saved: enrichment_hypergeometric.tsv + repeats/enrichment_repeat_dotplot.{png,pdf}")
+
+# ================================================================
+# (B) Direct repeat-class signal change (bw_loci over repeat copies)
+# ================================================================
 N_MAX <- 4000    # cap copies per class (subsample large classes for tractability)
 eps   <- 0.25
 set.seed(42)

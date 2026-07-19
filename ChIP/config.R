@@ -95,6 +95,11 @@ suppressPackageStartupMessages({
   library(circlize)
 })
 
+# --- Shared plotting constants (used across stages) ---
+geno_colors <- c(WT = "#1f78b4", HP1gKO = "#e31a1c")
+theme_m     <- theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
+mark_levels <- c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3")
+
 # --- Sample sheet: SINGLE SOURCE OF TRUTH for samples ------------
 # Columns: sample_id, mark, genotype (WT/HP1gKO), replicate, bigwig (filename).
 # Genotype and replicate are read from here - NOT hard-coded in the stages.
@@ -254,6 +259,34 @@ load_annotation <- function() {
   )
   seqlevelsStyle(ann$tad) <- "UCSC"
   ann
+}
+
+# --- Helper: one hypergeometric enrichment row (OR + direction + p) for a
+#     boolean annotation flag over ALL measured peaks vs the significant subset.
+#     Shared by MINUTE_2 (TAD/ChromHMM) and MINUTE_4 (repeats). ---
+hyper_row <- function(chip, annotation, all_df, sig_df, flag_all) {
+  N <- nrow(all_df); K <- sum(flag_all, na.rm = TRUE); n <- nrow(sig_df)
+  flag_sig <- flag_all[match(sig_df$peak_id, all_df$peak_id)]
+  k <- sum(flag_sig, na.rm = TRUE)
+  if (is.na(N) || N == 0 || is.na(n) || is.na(K) || K < 0) {
+    pval <- expected <- enrich <- NA_real_
+  } else {
+    expected <- if (N > 0) n * (K / N) else NA_real_
+    pval <- if (n > 0 && K > 0 && N > K) phyper(k - 1, K, N - K, n, lower.tail = FALSE) else NA_real_
+    enrich <- if (!is.na(expected) && expected > 0) k / expected else NA_real_
+  }
+  a <- k; b <- n - k; c <- K - k; d <- N - K - b
+  if (any(c(a, b, c, d) <= 0)) { a <- a + 0.5; b <- b + 0.5; c <- c + 0.5; d <- d + 0.5 }
+  or_val <- (a * d) / (b * c); if (!is.finite(or_val)) or_val <- NA_real_
+  if (!is.null(sig_df$log2FoldChange) && k > 0) {
+    l2fc_med <- stats::median(sig_df$log2FoldChange[which(flag_sig)], na.rm = TRUE)
+    direction <- if (is.finite(l2fc_med) && l2fc_med > 0) "enriched" else "depleted"
+  } else { l2fc_med <- NA_real_; direction <- NA_character_ }
+  data.frame(ChIP = chip, annotation = annotation, N_total = N, K_in_annotation = K,
+             n_signif = n, k_signif_in_annotation = k, expected_overlap = expected,
+             enrichment = enrich, odds_ratio = or_val,
+             l2fc_median_sig_in_annotation = l2fc_med, direction = direction,
+             p_value = pval, stringsAsFactors = FALSE)
 }
 
 # --- Gene families silenced by H3K9me3 / HUSH (CBX3-dependent) ---

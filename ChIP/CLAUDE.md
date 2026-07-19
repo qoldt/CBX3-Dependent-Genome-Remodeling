@@ -18,21 +18,26 @@ Run from the **`ChIP/` directory** (no `setwd()`; paths are repo-relative).
 Each stage reads its inputs from disk, so they can run individually (after
 stage 1) or all at once via the runner.
 
+Stages are organised **thematically**. MINUTE_1 writes the annotated `.rds`
+handoff; every later stage reads it independently. Stage 6 also reads the
+family-exon signal persisted by **stage 5**.
+
 ```
-config.R + samples.tsv           # parameters + sample sheet (single sources of truth)
+config.R + samples.tsv                  # parameters + sample sheet (single sources of truth)
   │
-MINUTE_1_Count_and_Annotate.R    # bigWig signal -> counts -> DESeq2 -> annotate
-  │  writes: results/counts/<mark>_bigwig_counts.tsv
-  │  writes: results/rds/annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds  (handoff)
-  ├── MINUTE_2_Hypergeometric_test.R   # enrichment of significant peaks vs annotations
-  │      reads:  results/rds/annotated_results ...rds
-  │      writes: results/tables/enrichment_hypergeometric.tsv
-  │      writes: results/figures/enrichment_dotplot.pdf
-  └── MINUTE_3_heatmap.R               # heatmap of significant peaks + BED export
-         reads:  results/rds/annotated_results ...rds  (+ re-reads bigWigs for the signal matrix)
-         writes: results/figures/2000maxgap_indsignificance_with_TAD.pdf
-         writes: results/bed/significant_peaks_with_metadata.bed
-         writes: results/bed/significant_peaks_<mark>.bed   (NCBI seqnames, score = -log10 p)
+MINUTE_1_Count_and_Annotate.R           # bigWig signal -> counts -> DESeq2 -> annotate
+  │  writes: results/rds/annotated_results_..._2000bp_merged.rds  (handoff)
+  ├── MINUTE_2_Global_Changes.R         # heatmap + k-means clusters + cluster characterisation;
+  │      per-chr change plots + log2FC distributions; mark-vs-mark relationships;
+  │      TAD + ChromHMM enrichment. Re-reads bigWigs for the signal matrix.
+  │      writes: rds/cluster_analysis_inputs.rds (self-consumed), bed/significant_peaks_*
+  ├── MINUTE_3_Differential_loss.R      # co-loss / H4K20me3-only / stable compartments
+  ├── MINUTE_4_Repeats.R                # (A) repeat hypergeometric enrichment
+  │      (B) direct bw_loci signal change over repeat copies (aggregate + per-copy)
+  ├── MINUTE_5_Clustered_Gene_Families.R# HUSH/CBX3 gene clusters; co-loss-vs-background
+  │      writes: rds/family_exon_signal.rds (consumed by MINUTE_6), bed/family_*_exons.bed
+  └── MINUTE_6_Intersection.R           # KAP1/TRIM28 vs the loss (size-matched null +
+         KAP1-bound-vs-unbound genotype effect); skips if the KAP1 BEDs are absent
 ```
 
 Run everything sequentially:
@@ -43,8 +48,7 @@ Rscript run_MINUTE.R        # or interactively: source("run_MINUTE.R")
 # store elsewhere?  MINUTE_DATA=/path Rscript run_MINUTE.R
 ```
 
-MINUTE_2 and MINUTE_3 are independent of each other — both only need the
-`.rds` produced by MINUTE_1.
+Stages 2–5 only need the `.rds` from MINUTE_1; stage 6 needs stage 5's output.
 
 ## Where parameters live — edit `config.R` / `samples.tsv` only
 
@@ -58,8 +62,10 @@ source of truth** for parameters; stage scripts must not redefine them. It holds
 - `regions` — mark → input peak BED
 - `loadRepeatBED()` / `load_annotation()` — repeat + TAD annotation
 - **`sig_thresholds` + `is_significant()`** — the significance definition
-  (`|log2FC| > lfc & pvalue < p`, per mark). MINUTE_2 and MINUTE_3 both call
-  `is_significant()`, so their "significant" sets are guaranteed identical.
+  (`|log2FC| > lfc & pvalue < p`, per mark), shared by every stage that needs a
+  "significant" set, so those sets are guaranteed identical.
+- Shared plotting constants + helpers: `geno_colors`, `theme_m`, `mark_levels`,
+  and `hyper_row()` (one hypergeometric enrichment row) — used across stages.
 
 Genotype/replicate come from `samples.tsv` (matched by sample_id), NOT from
 positional `rep()` calls — the DESeq2 design and heatmap annotation cannot drift
@@ -83,7 +89,7 @@ bigWigs + annotation are hosted on Google Drive and download into repo-relative
 - **Seqnames:** counts/DESeq2 use **NCBI** style (`1`, `2`, …); annotation
   overlaps switch to **UCSC** (`chr1`) as needed. Exported
   `significant_peaks_<mark>.bed` are **NCBI**. Flip `bed_style <- "UCSC"` in
-  MINUTE_3 for `chr`-prefixed output.
+  MINUTE_2 for `chr`-prefixed output.
 - DESeq2 uses `sizeFactors = 1` on purpose — the bigWigs are already scaled.
   Contrast is `HP1gKO` vs `WT` (WT is the reference level).
 - Significance uses the **raw** `pvalue`, not BH-adjusted `padj`.
