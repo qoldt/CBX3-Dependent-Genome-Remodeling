@@ -12,6 +12,8 @@ ChIP/results/counts/
 ChIP/results/tables/
 ChIP/results/figures/
 ChIP/results/bed/
+# large terminal cache (regenerable; not a downstream handoff)
+ChIP/results/rds/repeat_class_signal.rds
 
 # Large raw inputs — downloaded from Google Drive (see ChIP/README.md), never
 # committed. Peaks (ChIP/data/peaks) ARE committed. Default download targets:

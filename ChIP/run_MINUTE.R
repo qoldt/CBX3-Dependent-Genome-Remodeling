@@ -25,4 +25,10 @@ source("MINUTE_4_cluster_analysis.R")
 message("=== MINUTE_5: differential H3K9me3 vs H4K20me3 loss ===")
 source("MINUTE_5_differential_loss.R")
 
+message("=== MINUTE_6: KAP1/TRIM28 intersection (skips if BEDs absent) ===")
+source("MINUTE_6_kap1_intersection.R")
+
+message("=== MINUTE_7: direct repeat-class signal change ===")
+source("MINUTE_7_repeat_signal.R")
+
 message("=== MINUTE pipeline complete ===")

@@ -131,12 +131,18 @@ enrichment_list <- lapply(names(annotated_results), function(mark) {
   nm <- ifelse(is.na(nm), "", nm)
   flag_IAPEz_int <- grepl("\\bIAPEz-int\\b", nm)
   flag_IAPLTR1a  <- grepl("\\bIAPLTR1a_Mm\\b", nm)
-  
+  # young/active mouse L1 (HUSH/TRIM28 substrates; mouse analogue of human L1HS/L1PA)
+  flag_L1MdA  <- grepl("L1MdA",  nm)
+  flag_L1MdT  <- grepl("L1MdT",  nm)
+  flag_L1MdGf <- grepl("L1MdGf", nm)
+  flag_L1MdF  <- grepl("L1MdF",  nm)
+  flag_youngL1 <- grepl("L1Md(A|T|Gf)", nm)
+
   # Significant set for this ChIP
   sig_df <- combined_sig %>%
     dplyr::filter(ChIP == mark) %>%
     dplyr::mutate(peak_id = paste0(chr, ":", start, "-", end))
-  
+
   rows <- list(
     hyper_row(mark, "TAD_boundary",        all_df, sig_df, flag_TAD),
     hyper_row(mark, "LINE",                all_df, sig_df, flag_LINE),
@@ -146,7 +152,12 @@ enrichment_list <- lapply(names(annotated_results), function(mark) {
     hyper_row(mark, "LTR:ERVL-MaLR",       all_df, sig_df, flag_ERVL_MaLR),
     hyper_row(mark, "LTR:ERV1",            all_df, sig_df, flag_ERV1),
     hyper_row(mark, "LTR:ERVK:IAPEz-int",  all_df, sig_df, flag_IAPEz_int),
-    hyper_row(mark, "LTR:ERVK:IAPLTR1a_Mm",   all_df, sig_df, flag_IAPLTR1a)
+    hyper_row(mark, "LTR:ERVK:IAPLTR1a_Mm",   all_df, sig_df, flag_IAPLTR1a),
+    hyper_row(mark, "LINE:L1MdA",          all_df, sig_df, flag_L1MdA),
+    hyper_row(mark, "LINE:L1MdT",          all_df, sig_df, flag_L1MdT),
+    hyper_row(mark, "LINE:L1MdGf",         all_df, sig_df, flag_L1MdGf),
+    hyper_row(mark, "LINE:L1MdF",          all_df, sig_df, flag_L1MdF),
+    hyper_row(mark, "LINE:young_L1",       all_df, sig_df, flag_youngL1)
   )
   do.call(rbind, rows)
 })

@@ -399,16 +399,63 @@ cw[, class := fifelse(k20_lost & k9_lost,  "co-loss (both)",
 cw[, family := factor(family, levels = names(gene_families))]
 fwrite(cw, file.path(tables_dir, "family_coloss_classification.tsv"), sep = "\t")
 
+# --- Matched genome-wide background: one exon from each of ~2000 random genes
+#     (NOT overlapping any family locus), quantified the SAME way (bw_loci, same
+#     eps, same loss_cut). This gives the GENOME-WIDE co-loss rate so each family
+#     can be tested against BACKGROUND ("does this family co-lose more than the
+#     genome at large?"), not only against the other families. -----------------
+suppressPackageStartupMessages(library(TxDb.Mmusculus.UCSC.mm39.knownGene))
+ex_by_gene <- exonsBy(TxDb.Mmusculus.UCSC.mm39.knownGene, by = "gene")
+set.seed(1)
+bg_gr <- unlist(endoapply(ex_by_gene[sample(names(ex_by_gene), min(2500, length(ex_by_gene)))],
+                          function(e) e[which.max(width(e))]))            # largest exon, one/gene
+seqlevelsStyle(bg_gr) <- "NCBI"
+bg_gr <- keepStandardChromosomes(bg_gr, pruning.mode = "coarse")
+bg_gr <- bg_gr[!overlapsAny(bg_gr, fam_gr, ignore.strand = TRUE)]         # exclude family loci
+bg_gr <- head(bg_gr, 2000)
+bg_signal <- parallel::mclapply(seq_len(nrow(samples)), function(i) {
+  bw <- samples$bigwig_path[i]
+  if (!file.exists(bw)) return(rep(NA_real_, length(bg_gr)))
+  tryCatch(mcols(bw_loci(bw, bg_gr))[[1]], error = function(e) rep(NA_real_, length(bg_gr)))
+}, mc.cores = parallel::detectCores())
+bg_mat <- do.call(cbind, bg_signal); colnames(bg_mat) <- samples$sample_id
+bg_l2 <- function(mk) {
+  wtc <- samples$sample_id[as.character(samples$mark) == mk & as.character(samples$genotype) == "WT"]
+  koc <- samples$sample_id[as.character(samples$mark) == mk & as.character(samples$genotype) == "HP1gKO"]
+  log2((rowMeans(bg_mat[, koc, drop = FALSE], na.rm = TRUE) + eps_f) /
+       (rowMeans(bg_mat[, wtc, drop = FALSE], na.rm = TRUE) + eps_f))
+}
+bg <- data.table(H3K9me3 = bg_l2("H3K9me3"), H4K20me3 = bg_l2("H4K20me3"))
+bg <- bg[is.finite(H3K9me3) & is.finite(H4K20me3)]
+bg[, k20_lost := H4K20me3 < loss_cut][, k9_lost := H3K9me3 < loss_cut]
+bg_c <- bg[k20_lost == TRUE, sum(k9_lost)]; bg_n <- bg[k20_lost == TRUE, .N]
+bg_rate <- bg_c / bg_n                                                    # background co-loss rate
+
 # co-loss propensity = among H4K20me3-lost genes, fraction that ALSO lose H3K9me3
 prop <- cw[k20_lost == TRUE, {
   k <- sum(k9_lost); bt <- binom.test(k, .N)
   .(n_H4K20me3_lost = .N, co_loss_frac = k / .N,
     lo = bt$conf.int[1], hi = bt$conf.int[2])
 }, by = family][order(-co_loss_frac)]
-# does co-loss-among-H4K20me3-lost depend on family?
+# PRIMARY: each family vs genome-wide BACKGROUND — is co-loss (among H4K20me3-lost
+# genes) more frequent in the family than in the matched random-gene background?
+# OR = (family co-loss odds) / (background co-loss odds), oriented so OR>1 = family
+# co-loses MORE than background. Fisher p from the 2x2; BH across families.
+vsbg <- do.call(rbind, lapply(names(gene_families), function(fm) {
+  a <- cw[k20_lost == TRUE & family == fm & k9_lost == TRUE,  .N]   # family: co-loss
+  b <- cw[k20_lost == TRUE & family == fm & k9_lost == FALSE, .N]   # family: H4K20me3-only
+  if (a + b == 0) return(NULL)
+  or <- (a / max(b, 0.5)) / (max(bg_c, 0.5) / max(bg_n - bg_c, 0.5))
+  p  <- fisher.test(matrix(c(a, b, bg_c, bg_n - bg_c), 2, byrow = TRUE))$p.value
+  data.frame(family = fm, n_H4K20me3_lost = a + b, co_loss_frac = a / (a + b),
+             background_frac = bg_rate, odds_ratio = or, p_value = p)
+}))
+vsbg$p_adj_BH <- p.adjust(vsbg$p_value, "BH")
+fwrite(vsbg, file.path(tables_dir, "family_coloss_vs_background.tsv"), sep = "\t")
+
+# SECONDARY: do the families differ from EACH OTHER? (chi-square + pairwise Fisher)
 ctab <- cw[k20_lost == TRUE, table(family, k9_lost)]
 chi  <- suppressWarnings(chisq.test(ctab))
-# pairwise Fisher (which families differ) + BH
 fams <- as.character(prop$family)
 pw <- if (length(fams) >= 2) do.call(rbind, combn(fams, 2, simplify = FALSE, FUN = function(pr) {
   sub <- cw[k20_lost == TRUE & family %in% pr]
@@ -419,8 +466,9 @@ pw <- if (length(fams) >= 2) do.call(rbind, combn(fams, 2, simplify = FALSE, FUN
 if (!is.null(pw)) { pw$p_adj_BH <- p.adjust(pw$p_value, "BH")
   fwrite(pw, file.path(tables_dir, "family_coloss_pairwise_fisher.tsv"), sep = "\t") }
 fwrite(prop, file.path(tables_dir, "family_coloss_propensity.tsv"), sep = "\t")
-cat(sprintf("\n=== H3K9me3 co-loss among H4K20me3-lost genes (chi-square p = %.2g) ===\n", chi$p.value))
-print(as.data.frame(prop))
+cat(sprintf("\n=== H3K9me3 co-loss among H4K20me3-lost genes ===\n(background rate = %.0f%% of %d random-gene loci; chi-square across families p = %.2g)\n",
+            100 * bg_rate, bg_n, chi$p.value))
+print(as.data.frame(vsbg))
 
 # Co-locate a readable stats summary NEXT TO the figures (gene_families/)
 gf_dir <- file.path(fig_dir, "gene_families")
@@ -428,27 +476,41 @@ if (!dir.exists(gf_dir)) dir.create(gf_dir, recursive = TRUE, showWarnings = FAL
 stats_txt <- c(
   "Family co-loss test - H3K9me3 co-loss among H4K20me3-lost genes",
   sprintf("(loss = signal-based log2(KO/WT) < %.2f)", loss_cut), "",
-  sprintf("Chi-square test of independence (family x also-lose-H3K9me3):"),
-  sprintf("  X-squared = %.1f, df = %d, p = %.3g", chi$statistic, chi$parameter, chi$p.value), "",
-  "Co-loss propensity (fraction of H4K20me3-lost genes that also lose H3K9me3, 95% binomial CI):",
-  capture.output(print(as.data.frame(prop), row.names = FALSE)), "",
-  "Pairwise Fisher (which families differ; BH-adjusted):",
+  sprintf("PRIMARY - each family vs genome-wide background (%d random non-family gene loci):",
+          bg_n),
+  sprintf("  Background co-loss rate = %.1f%% (%d/%d H4K20me3-lost background genes also lose H3K9me3)",
+          100 * bg_rate, bg_c, bg_n),
+  "  OR>1 = family co-loses MORE than background; Fisher p, BH-adjusted:",
+  capture.output(print(as.data.frame(vsbg), row.names = FALSE)), "",
+  "SECONDARY - do families differ from each other?",
+  sprintf("  Chi-square (family x also-lose-H3K9me3): X-squared = %.1f, df = %d, p = %.3g",
+          chi$statistic, chi$parameter, chi$p.value),
+  "  Co-loss propensity per family (fraction of H4K20me3-lost that also lose H3K9me3, 95% binom CI):",
+  capture.output(print(as.data.frame(prop), row.names = FALSE)),
+  "  Pairwise Fisher between families (BH-adjusted):",
   if (!is.null(pw)) capture.output(print(as.data.frame(pw), row.names = FALSE)) else "  (n/a)")
 writeLines(stats_txt, file.path(gf_dir, "family_coloss_stats.txt"))
 
-# Plot A: co-loss propensity per family (fraction + binomial CI)
-g_prop <- ggplot(prop, aes(reorder(family, -co_loss_frac), co_loss_frac, fill = family)) +
+# Plot A: co-loss propensity per family vs the genome-wide background rate.
+# Bars = fraction of a family's H4K20me3-lost genes that also lose H3K9me3;
+# dashed line = background rate; * marks families significantly above background.
+prop_sig <- merge(prop, as.data.table(vsbg)[, .(family, or = odds_ratio, padj = p_adj_BH)],
+                  by = "family", all.x = TRUE)
+g_prop <- ggplot(prop_sig, aes(reorder(family, -co_loss_frac), co_loss_frac, fill = family)) +
+  geom_hline(yintercept = bg_rate, linetype = "dashed", colour = "grey30", linewidth = 0.4) +
   geom_col(width = 0.7) +
   geom_errorbar(aes(ymin = lo, ymax = hi), width = 0.25) +
-  geom_text(aes(label = sprintf("%.0f%%\n(n=%d)", 100 * co_loss_frac, n_H4K20me3_lost)),
+  geom_text(aes(label = sprintf("%.0f%%%s\n(n=%d)", 100 * co_loss_frac,
+                                ifelse(!is.na(padj) & padj < 0.05, "*", ""), n_H4K20me3_lost)),
             vjust = -0.3, size = 3, lineheight = 0.9) +
   scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
-  ylim(0, 1.1) +
-  labs(title = "H3K9me3 co-loss propensity by family (among H4K20me3-lost genes)",
-       subtitle = sprintf("fraction of H4K20me3-lost genes that also lose H3K9me3; chi-square p = %.2g (stats: family_coloss_stats.txt)", chi$p.value),
+  ylim(0, 1.15) +
+  labs(title = "H3K9me3 co-loss propensity by family vs genome-wide background",
+       subtitle = sprintf("bars = H4K20me3-lost genes also losing H3K9me3; dashed = background (%.0f%%); * = Fisher vs background BH<0.05 (family_coloss_stats.txt)",
+                          100 * bg_rate),
        x = NULL, y = "fraction also losing H3K9me3") +
   theme_m
-save_fig(g_prop, "family_coloss_propensity", "gene_families", width = 6, height = 4)
+save_fig(g_prop, "family_coloss_propensity", "gene_families", width = 6.5, height = 4)
 
 # Plot B: dH3K9me3 vs dH4K20me3 per gene, faceted by family (the quantitative heatmap)
 cw[, class := factor(class, levels = c("co-loss (both)", "H4K20me3-only", "H3K9me3-only", "neither"))]

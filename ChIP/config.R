@@ -124,6 +124,11 @@ tad_bed_file <- file.path(annot_dir, "TAD_boundaries_mm39.bed")
 # MINUTE_1 (column chromHMM_state), enriched in MINUTE_2, used in MINUTE_4.
 chromhmm_bed <- file.path(annot_dir, "ChromHMM_18state_CortexP0_mm39.bed")
 
+# KAP1/TRIM28 ChIP-seq peaks (mm39, Ensembl seqnames), prepared by liftOver from
+# ChIP-Atlas mm10 (see README methods). Used by MINUTE_6; skipped if absent.
+kap1_neural_bed  <- file.path(annot_dir, "KAP1_Neural_mm39.bed")   # Neuro-2a (GSE110032)
+kap1_allcell_bed <- file.path(annot_dir, "KAP1_allCell_mm39.bed")  # ChIP-Atlas all-cell aggregate
+
 # --- Helper: load the ChromHMM segmentation as a GRanges (state in $state) ---
 # The file has a few overlapping same-state segments, which would double-count
 # coverage; merge overlapping segments within each state so per-state coverage

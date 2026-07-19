@@ -53,13 +53,24 @@ MINUTE_1_Count_and_Annotate.R    Quantify + DESeq2 + annotate
         └─▶ MINUTE_4_cluster_analysis.R   Characterise clusters: signal/loss profiles,
                                            ChromHMM, repeat/region/gene-family composition
   │
-  └─▶ MINUTE_5_differential_loss.R   Split shared H3K9me3/H4K20me3 regions into
-                                     co-loss / H4K20me3-only / stable; characterise by
-                                     ChromHMM, repeats (IAP/ERV), and nearby genes
+  ├─▶ MINUTE_5_differential_loss.R   Split shared H3K9me3/H4K20me3 regions into
+  │                                  co-loss / H4K20me3-only / stable; characterise by
+  │                                  ChromHMM, repeats (IAP/ERV, young L1), and nearby genes
+  │
+  ├─▶ MINUTE_6_kap1_intersection.R   KAP1/TRIM28 (HUSH recruiter) vs the loss:
+  │                                  (A) overlap vs a size-matched permutation null;
+  │                                  (B) does KAP1 binding predict the KO log2FC?
+  │                                  (skips gracefully if the KAP1 BEDs are absent)
+  │
+  └─▶ MINUTE_7_repeat_signal.R       Direct signal change over repeat COPIES (bw_loci,
+                                     not peak-overlap): aggregate + per-copy log2(KO/WT)
+                                     per class (young L1, IAP/ERVK, SINE controls)
 ```
 
-Stage 1 produces one `.rds` that stages 2, 3 and 5 read (independently). Stage 4
-reads the cluster inputs persisted by stage 3, so it runs after stage 3.
+Stage 1 produces one `.rds` that stages 2, 3, 5 and 6 read (independently). Stage 4
+reads the cluster inputs persisted by stage 3, so it runs after stage 3. Stage 6
+additionally reads the family-exon signal persisted by stage 4 and external KAP1
+BEDs (see *Annotation* below); it self-skips if those BEDs are not present.
 
 ---
 
@@ -149,6 +160,14 @@ pip install gdown
 gdown --folder "https://drive.google.com/drive/folders/1e_HPy6tVKeAZsVEpnQxG-qSZ_VTCYjTh" -O data/annotation
 ```
 
+This folder also carries the two mm39 **KAP1/TRIM28** BEDs used by MINUTE_6
+(`KAP1_Neural_mm39.bed`, `KAP1_allCell_mm39.bed`). To regenerate them from source:
+download the ChIP-Atlas mm10 Trim28 peaks (neural = GEO GSE110032 Neuro-2a; all-cell
+= `Oth.ALL.05.Trim28`), lift to mm39 with **CrossMap** + the UCSC
+`mm10ToMm39.over.chain`, and set the seqnames to Ensembl style (`1`..`X`) to match
+the bigWigs — see `results/METHODS.md` for exact accessions/URLs. MINUTE_6
+self-skips if these BEDs are absent, so the rest of the pipeline is unaffected.
+
 ### bigWigs — `rclone` (55 files)
 
 The bigWig folder holds **55 files, over `gdown --folder`'s 50-file cap** (it
@@ -182,7 +201,7 @@ your downloaded filenames differ, edit that sheet (nothing else).
 
 ```bash
 cd ChIP
-Rscript run_MINUTE.R                      # all three stages
+Rscript run_MINUTE.R                      # all stages (MINUTE_1–6)
 # or, if the store is elsewhere:
 MINUTE_DATA=/path/to/store Rscript run_MINUTE.R
 ```
@@ -371,6 +390,8 @@ figures/
   clusters/          cluster signal/loss/ChromHMM/composition/enrichment (MINUTE_4)
   gene_families/     HUSH/CBX3 family exon plots + replicate heatmaps (MINUTE_4)
   differential_loss/ co-loss / H4K20me3-only / stable characterisation (MINUTE_5)
+                     + KAP1/TRIM28 intersection & genotype-effect plots (MINUTE_6)
+  repeats/           direct repeat-class signal change, aggregate + per-copy (MINUTE_7)
 ```
 
 The table below lists figures by base name; each exists as `<subfolder>/<name>.{png,pdf}`.
@@ -381,7 +402,7 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 |------|-------------|----------|
 | `counts/<mark>_bigwig_counts.tsv` | MINUTE_1 | per-peak signal matrix |
 | `rds/annotated_results_...rds` | MINUTE_1 | all peaks + DESeq2 stats + annotation (tracked handoff) |
-| `tables/enrichment_hypergeometric.tsv` | MINUTE_2 | odds ratios & hypergeometric p-values per repeat/TAD annotation |
+| `tables/enrichment_hypergeometric.tsv` | MINUTE_2 | odds ratios & hypergeometric p-values per repeat/TAD annotation, incl. young mouse L1 subfamilies (L1MdA/T/Gf/F + aggregate `young_L1`) |
 | `figures/enrichment_dotplot.pdf` | MINUTE_2 | repeat/TAD enrichment dot plot |
 | `tables/enrichment_chromHMM.tsv` | MINUTE_2 | ChromHMM-state enrichment per mark, both per-region (Wilcoxon) and size-weighted (permutation) |
 | `figures/enrichment_chromHMM_dotplot.pdf` | MINUTE_2 | ChromHMM enrichment, per-region (each region equal) |
@@ -411,12 +432,16 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 | `figures/family_exon_dotplot.png` | MINUTE_4 | family × mark summary: median log2FC (colour) + paired-Wilcoxon FDR (size) |
 | `figures/family_exon_MA.png` | MINUTE_4 | MA plot: change vs abundance per mark, coloured by family |
 | `figures/family_exon_heatmap_{allmarks,silencing}.png` | MINUTE_4 | per-gene replicate heatmap (genes × 55 samples, row z, split by family); all marks / silencing-only |
-| `figures/family_coloss_{propensity,scatter}.png` + `family_coloss_stats.txt` + `tables/family_coloss_*.tsv` | MINUTE_4 | does H3K9me3 co-loss (with H4K20me3) differ by family? chi-square + pairwise Fisher + per-gene classification (stats co-located with the figures) |
+| `figures/family_coloss_{propensity,scatter}.png` + `family_coloss_stats.txt` + `tables/family_coloss_*.tsv` | MINUTE_4 | does H3K9me3 co-loss (with H4K20me3) exceed the genome-wide background? **primary:** each family vs a matched random-gene background (Fisher OR + BH); **secondary:** chi-square + pairwise Fisher between families; per-gene classification (stats co-located with the figures) |
 | `tables/diffloss_group_overview.tsv` | MINUTE_5 | co-loss / H4K20me3-only / stable: n, median size, median log2FC per mark |
 | `tables/diffloss_chromHMM_{coverage,enrichment}.tsv` + `figures/diffloss_chromHMM_*.png` | MINUTE_5 | per-group ChromHMM coverage + enrichment (per-region & size-weighted) |
 | `tables/diffloss_repeat_{composition,enrichment}.tsv` + `figures/diffloss_repeat_*.png` | MINUTE_5 | repeat composition + enrichment (Fisher OR vs stable): IAP/ERV, and young mouse L1 (L1MdA/T/Gf/F = the mouse HUSH/TRIM28 substrates) |
 | `tables/diffloss_{region_composition,gene_family_pct}.tsv` + `figures/diffloss_{region_composition,distance_to_tss,domain_size}.png` | MINUTE_5 | genomic region, TSS distance, gene-family %, domain size per group |
 | `tables/diffloss_genes_{co_loss,H4K20me3_only,stable}.txt` | MINUTE_5 | per-group gene symbol lists (for downstream GO) |
+| `tables/kap1_intersection.tsv` + `figures/differential_loss/kap1_intersection.png` | MINUTE_6 | KAP1/TRIM28 overlap of loss groups + family exons vs a **size-matched permutation null** (both Neuro-2a-neural & ChIP-Atlas all-cell tracks) |
+| `tables/kap1_genotype_effect.tsv` + `figures/differential_loss/kap1_genotype_effect.png` | MINUTE_6 | **does KAP1 binding predict the loss?** KO log2FC split by KAP1-bound vs unbound (Wilcoxon), genome-wide + per family |
+| `tables/repeat_signal_aggregate.tsv` + `figures/repeats/repeat_signal_aggregate.png` | MINUTE_7 | **direct** repeat-class signal change: aggregate log2(KO/WT) over copies, class × mark (peak-calling-independent complement to MINUTE_2) |
+| `tables/repeat_signal_percopy_summary.tsv` + `figures/repeats/repeat_signal_percopy.png` | MINUTE_7 | per-copy log2(KO/WT) distribution + paired-Wilcoxon FDR per class × mark |
 
 ---
 

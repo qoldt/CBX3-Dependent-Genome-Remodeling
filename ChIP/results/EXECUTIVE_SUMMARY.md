@@ -4,7 +4,7 @@ Differential histone-mark ChIP-seq in **HP1γ (Cbx3) conditional-knockout cortex
 (*Emx1-Cre*) vs wild type. MINUTE multiplexed ChIP-seq, genome **mm39**, five
 marks (H3K4me3, H3K36me3, H3K9me2, H3K9me3, H4K20me3), 6 WT vs 5 HP1gKO
 replicates. DESeq2 with `sizeFactors = 1` (bigWigs are input-scaled), contrast
-HP1gKO vs WT. Pipeline stages MINUTE_1–5 (see `../README.md`).
+HP1gKO vs WT. Pipeline stages MINUTE_1–7 (see `../README.md`).
 
 ## Headline findings
 
@@ -40,16 +40,45 @@ HP1gKO vs WT. Pipeline stages MINUTE_1–5 (see `../README.md`).
    | Protocadherin (chr18 Pcdha/b/g) | 59 | −0.42 (4e-11) | −0.65 (2e-11) | **+0.36 (up)** |
 
    Clustered protocadherins additionally **gain H3K4me3** — a full derepression
-   signature.
+   signature. Tested against a **matched random-gene background** (MINUTE_4;
+   background co-loss rate 33%), protocadherin (76%), vomeronasal (65%) and
+   olfactory (53%) co-lose H3K9me3 **significantly above background** (Fisher
+   BH ≤ 1e-8), whereas **KRAB-ZFP co-loses at exactly background (32%, ns)** —
+   i.e. KRAB-ZFP is the H4K20me3-**only** family (loses H4K20me3, retains H3K9me3).
 
 5. **Repeats:** IAP/ERVK elements are strongly enriched in the lost compartments
    (IAPEz-int odds ratio ~21 in the H4K20me3-only group vs stable), consistent
-   with HUSH/TRIM28 targets; SINE and ERVL-MaLR are depleted.
+   with HUSH/TRIM28 targets; SINE and ERVL-MaLR are depleted. **Direct signal
+   quantification over the repeat copies themselves** (MINUTE_7, `bw_loci`,
+   peak-calling-independent) confirms this with magnitude: H4K20me3 is lost over
+   every class but **deepest over IAP** (IAPEz-int −0.52, IAPLTR1a_Mm −0.55) and
+   **young L1** (L1MdT −0.45, L1MdGf −0.41, L1MdA −0.38 log2FC), shallowest over
+   **SINE controls (~−0.18)**; H3K9me3 loss is milder (−0.10 to −0.23, ERV-focused);
+   and the active/euchromatic marks (H3K4me3, H3K36me3, H3K9me2) stay flat over all
+   classes (|log2FC| < 0.1) — a clean specificity control. This ordering
+   (IAP > young L1 > older ERV/LINE > SINE) is the mouse read-out of HUSH/TRIM28
+   substrate preference and does **not** depend on peak calling or the significance
+   definition (unlike the MINUTE_2 hypergeometric test).
 
 6. **Chromatin-state clusters** (MINUTE_3 k-means, 5 groups): an active
    H3K4me3/promoter cluster (which *gains* signal), an H3K36me3/transcription
    cluster, and three heterochromatin flavours that differ in H3K9me2 vs H3K9me3
    content — all of which lose H4K20me3.
+
+7. **KAP1/HUSH occupancy is coupled to the loss selectively** (MINUTE_6; two mm39
+   KAP1/TRIM28 tracks — Neuro-2a neural + ChIP-Atlas all-cell — vs a **size-matched
+   permutation null**):
+   - The loss *compartments* (co-loss / H4K20me3-only) are **not** KAP1-enriched
+     beyond what their large domain size predicts (fold ≈ 1); the naive ~1.9×
+     overlap is entirely a domain-length artifact.
+   - **KRAB-ZFP and protocadherin exons are strongly KAP1-bound** (fold ~2.5× and
+     ~4× vs size-matched exons); vomeronasal/olfactory exons are KAP1-**depleted**
+     (fold ≈ 0), so their silencing is KAP1-independent.
+   - Integrating occupancy with the genotype effect: **KAP1 binding predicts the
+     H4K20me3 loss specifically at KRAB-ZFP** (KAP1-bound KRAB-ZFP exons lose
+     Δ ≈ −0.3 log2 *more* H4K20me3 than unbound; Wilcoxon p < 1e-4, both tracks),
+     and modestly genome-wide (Δ ≈ −0.13). The protocadherin H4K20me3 loss is
+     broad and **not** KAP1-graded.
 
 ## Interpretation
 
@@ -83,12 +112,15 @@ switch to median-of-ratios to "correct" it.
 
 ## Where to find things (`results/`)
 
-- **Tables:** `tables/family_exon_summary.tsv`, `tables/diffloss_*` (ChromHMM /
-  repeat / region enrichment + per-group gene lists), `tables/enrichment_*`,
-  `tables/cluster_*`, `tables/significant_peaks_clusters.tsv`.
+- **Tables:** `tables/family_exon_summary.tsv`, `tables/family_coloss_vs_background.tsv`,
+  `tables/diffloss_*` (ChromHMM / repeat / region enrichment + per-group gene lists),
+  `tables/enrichment_*` (incl. young-L1 subfamilies), `tables/kap1_{intersection,genotype_effect}.tsv`,
+  `tables/repeat_signal_*` (direct repeat-class change), `tables/cluster_*`,
+  `tables/significant_peaks_clusters.tsv`.
 - **Figures** (each as `.png` + `.pdf` under `figures/<subanalysis>/`):
-  `differential_loss/`, `gene_families/`, `clusters/`, `relationships/`,
-  `change_plots/`, `enrichment/`, `heatmap/`.
+  `differential_loss/` (incl. KAP1), `gene_families/`, `repeats/`, `clusters/`,
+  `relationships/`, `change_plots/`, `enrichment/`, `heatmap/`.
+- **Methods:** `results/METHODS.md` (KAP1 data source + mm10→mm39 liftover; HUSH-target note).
 - **deepTools inputs:** `bed/family_*_exons.bed` (target exons, NCBI seqnames
   matching the bigWigs), `bed/significant_peaks_*.bed`.
 - **Handoffs:** `rds/annotated_results_*.rds` (all peaks + stats + annotation +
