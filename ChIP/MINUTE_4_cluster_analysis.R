@@ -440,14 +440,14 @@ cw[, class := factor(class, levels = c("co-loss (both)", "H4K20me3-only", "H3K9m
 class_cols <- c("co-loss (both)" = "#b2182b", "H4K20me3-only" = "#2166ac",
                 "H3K9me3-only" = "#f4a582", "neither" = "grey75")
 g_cw <- ggplot(cw, aes(H4K20me3, H3K9me3, colour = class)) +
-  geom_hline(yintercept = loss_cut, linetype = "dashed", colour = "grey55") +
-  geom_vline(xintercept = loss_cut, linetype = "dashed", colour = "grey55") +
+  geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
+  geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey55") +
   geom_point(size = 0.6, alpha = 0.5) +
   scale_colour_manual(values = class_cols, name = NULL) +
   guides(colour = guide_legend(override.aes = list(size = 2.5, alpha = 1))) +
   facet_wrap(~family, nrow = 1) +
   labs(title = "Per-gene H3K9me3 vs H4K20me3 change by family",
-       subtitle = "dashed = loss cutoff (log2 KO/WT < -0.3); bottom-left = co-loss of both",
+       subtitle = "lines at 0 (no change); colour = class at loss cutoff log2 KO/WT < -0.3 (bottom-left = co-loss)",
        x = "delta H4K20me3 (log2 KO/WT)", y = "delta H3K9me3 (log2 KO/WT)") +
   theme_m
 save_fig(g_cw, "family_coloss_scatter", "gene_families", width = 14, height = 3.6)
