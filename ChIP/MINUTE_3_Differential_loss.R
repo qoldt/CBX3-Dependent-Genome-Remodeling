@@ -88,6 +88,49 @@ cat(sprintf("(marks centred on median H4K20me3 %+0.3f, H3K9me3 %+0.3f)\n", med_h
 print(group_defs[, c("group", "n_absolute", "n_median_centred")], row.names = FALSE)
 cat("Saved: tables/diffloss_group_definitions.tsv\n")
 
+# --- Figure: the two schemes side by side -----------------------------------
+# The cutoff LINES are identical in both panels; what moves is the data. Left:
+# raw log2FC, where the point cloud sits well below/left of the lines because
+# both marks lost genome-wide - so the "H3K9me3 lost" line falls in the middle
+# of the bulk and 63% of all peaks clear it. Right: each mark centred on its own
+# median, so the same lines now cut the tails rather than the body.
+scheme_df <- rbind(
+  data.frame(scheme = "absolute (raw log2FC)",
+             k9 = d$k9_l2fc, h4 = d$log2FoldChange,
+             group = factor(g$group[match(d$peak_id, g$peak_id)], levels = lv)),
+  data.frame(scheme = "median-centred (per mark)",
+             k9 = d$k9_l2fc - med_k9, h4 = d$log2FoldChange - med_h4,
+             group = factor(grp_centred, levels = lv)))
+scheme_df$group <- addNA(scheme_df$group)
+levels(scheme_df$group)[is.na(levels(scheme_df$group))] <- "unclassified"
+set.seed(42)                       # subsample purely for render size
+sub <- scheme_df[sample(nrow(scheme_df), min(60000, nrow(scheme_df))), ]
+
+g_scheme <- ggplot(sub, aes(k9, h4, colour = group)) +
+  geom_point(size = 0.25, alpha = 0.25) +
+  geom_vline(xintercept = K9_LOSS_CUT, linewidth = 0.3, colour = "grey25") +
+  geom_hline(yintercept = H4_LOST_CUT, linewidth = 0.3, colour = "grey25") +
+  geom_vline(xintercept = c(-UNCH_CUT, UNCH_CUT), linetype = "dashed",
+             linewidth = 0.3, colour = "grey25") +
+  geom_hline(yintercept = c(-UNCH_CUT, UNCH_CUT), linetype = "dashed",
+             linewidth = 0.3, colour = "grey25") +
+  scale_colour_manual(values = c(grp_cols, unclassified = "grey85"), name = NULL,
+                      guide = guide_legend(override.aes = list(size = 2.5, alpha = 1))) +
+  coord_cartesian(xlim = c(-2, 1.5), ylim = c(-2.5, 1.5)) +
+  facet_wrap(~scheme) +
+  labs(title = "Compartment cutoffs: absolute vs median-centred",
+       subtitle = sprintf(paste("same cutoff lines in both panels - only the data moves.",
+                                "medians: H4K20me3 %+0.2f, H3K9me3 %+0.2f"), med_h4, med_k9),
+       x = "H3K9me3 log2FC", y = "H4K20me3 log2FC",
+       caption = sprintf(paste0(
+         "solid = 'lost' cutoffs (H4K20me3 < %s, H3K9me3 < %s); dashed = 'unchanged' band (+/-%s)\n",
+         "LEFT: the bulk sits past the H3K9me3 line, so a typical peak is auto-labelled lost - ",
+         "63%% of all peaks clear it, and 65%% of co_loss have H3K9me3 within +/-0.15 of the median.\n",
+         "RIGHT: centring makes the cutoffs ask 'more than typical?' - only 12%% of peaks clear the same line."),
+         H4_LOST_CUT, K9_LOSS_CUT, UNCH_CUT)) +
+  theme_m + theme(plot.caption = element_text(hjust = 0, size = 8))
+save_fig(g_scheme, "diffloss_cutoff_schemes", "differential_loss", width = 11, height = 5.5)
+
 hmm_cols <- grep("^hmm_", names(g), value = TRUE)
 
 # ---------------------------------------------------------------

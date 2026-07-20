@@ -473,6 +473,11 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 | `tables/enrichment_chromHMM.tsv` + `figures/enrichment/enrichment_chromHMM{,_sizeweighted}_dotplot.png` | MINUTE_2 | ChromHMM-state enrichment per mark, per-region (Wilcoxon) + size-weighted (permutation) |
 | `tables/diffloss_group_overview.tsv` | MINUTE_3 | co-loss / H4K20me3-only / stable: n, median size, median log2FC per mark |
 | `tables/diffloss_group_definitions.tsv` | MINUTE_3 | group sizes under **absolute vs median-centred** cutoffs + the medians used — robustness check for the uncoupling claim |
+| `figures/differential_loss/diffloss_cutoff_schemes.png` | MINUTE_3 | the two cutoff schemes side by side (same lines; data centred vs not) |
+| `tables/h3k36me3_gene_body_results.tsv` | MINUTE_7 | per-gene H3K36me3 change over gene bodies (DESeq2) |
+| `tables/h3k36me3_peak_vs_gene_power.tsv` + `figures/h3k36me3_genes/h3k36me3_pvalue_peak_vs_gene.png` | MINUTE_7 | did gene-body aggregation buy power? frac(p<0.05), pi0, padj<0.1 vs per peak |
+| `tables/h3k36me3_gene_by_{wt_signal,length}.tsv` + `figures/h3k36me3_genes/h3k36me3_gene_change_by_wt_signal.png` | MINUTE_7 | change vs WT signal (transcription proxy) and vs gene length |
+| `figures/h3k36me3_genes/h3k36me3_gene_MA.png` | MINUTE_7 | gene-body MA with the most-changed genes labelled |
 | `tables/diffloss_chromHMM_{coverage,enrichment}.tsv` + `figures/differential_loss/diffloss_chromHMM_*.png` | MINUTE_3 | per-group ChromHMM coverage + enrichment (per-region & size-weighted) |
 | `tables/diffloss_repeat_{composition,enrichment}.tsv` + `figures/differential_loss/diffloss_repeat_*.png` | MINUTE_3 | repeat composition + enrichment (Fisher OR vs stable): IAP/ERV, young mouse L1 (L1MdA/T/Gf/F) |
 | `tables/diffloss_{region_composition,gene_family_pct}.tsv` + `figures/differential_loss/diffloss_*.png` | MINUTE_3 | genomic region, TSS distance, gene-family %, domain size per group |

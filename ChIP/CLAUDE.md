@@ -36,8 +36,13 @@ MINUTE_1_Count_and_Annotate.R           # bigWig signal -> counts -> DESeq2 -> a
   │      (B) direct bw_loci signal change over repeat copies (aggregate + per-copy)
   ├── MINUTE_5_Clustered_Gene_Families.R# HUSH/CBX3 gene clusters; co-loss-vs-background
   │      writes: rds/family_exon_signal.rds (consumed by MINUTE_6), bed/family_*_exons.bed
-  └── MINUTE_6_Intersection.R           # KAP1/TRIM28 vs the loss (size-matched null +
-         KAP1-bound-vs-unbound genotype effect); skips if the KAP1 BEDs are absent
+  ├── MINUTE_6_Intersection.R           # KAP1/TRIM28 vs the loss (size-matched null +
+  │      KAP1-bound-vs-unbound genotype effect); skips if the KAP1 BEDs are absent
+  └── MINUTE_7_H3K36me3_Genes.R         # H3K36me3 over GENE BODIES (re-reads bigWigs).
+         Per-peak testing is degenerate for this broad genic mark (15/77,770
+         peaks at p<0.05, vs 5% expected under a null); this tests the unit the
+         mark actually occupies. Emits the peak-vs-gene power comparison so
+         "did aggregating help?" is answered in the outputs.
 ```
 
 Run everything sequentially:

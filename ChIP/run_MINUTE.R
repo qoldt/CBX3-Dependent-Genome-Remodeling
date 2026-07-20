@@ -31,4 +31,7 @@ source("MINUTE_5_Clustered_Gene_Families.R")
 message("=== MINUTE_6: intersection with silencing machinery (KAP1/TRIM28) ===")
 source("MINUTE_6_Intersection.R")
 
+message("=== MINUTE_7: H3K36me3 over gene bodies ===")
+source("MINUTE_7_H3K36me3_Genes.R")
+
 message("=== MINUTE pipeline complete ===")
