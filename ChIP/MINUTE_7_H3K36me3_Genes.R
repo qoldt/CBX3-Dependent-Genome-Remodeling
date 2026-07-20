@@ -189,8 +189,17 @@ g_wt <- ggplot(gene_res[!is.na(gene_res$wt_bin), ], aes(wt_bin, log2FoldChange, 
 save_fig(g_wt, "h3k36me3_gene_change_by_wt_signal", fig_sub, width = 7, height = 5)
 
 # --- 6. MA plot + labelled extremes ----------------------------------------
-top <- gene_res %>% filter(is.finite(log2FoldChange), wt_cov > 0) %>%
+# Label the most-changed genes AMONG THOSE ACTUALLY MARKED. Ranking by
+# |log2FC| alone selects the noisiest units, not the most affected: without a
+# precision floor the top 25 came out as olfactory/vomeronasal receptors,
+# keratin-associated and late-cornified-envelope genes - all ~1 kb, all at the
+# 11th percentile of WT coverage, none transcribed in cortex, so their
+# H3K36me3 is background and their log2FC is noise. Requiring at least median
+# WT coverage restricts labels to genes that carry the mark in the first place.
+cov_floor <- median(gene_res$wt_cov, na.rm = TRUE)
+top <- gene_res %>% filter(is.finite(log2FoldChange), wt_cov >= cov_floor) %>%
   slice_max(abs(log2FoldChange), n = 25, with_ties = FALSE)
+cat(sprintf("\nLabelling top 25 by |log2FC| among genes with WT coverage >= %.2f (median)\n", cov_floor))
 fwrite(gene_res %>% arrange(log2FoldChange) %>% head(100),
        file.path(tables_dir, "h3k36me3_gene_top100_down.tsv"), sep = "\t")
 g_ma <- ggplot(gene_res[gene_res$wt_cov > 0, ], aes(wt_cov, log2FoldChange)) +
@@ -202,7 +211,8 @@ g_ma <- ggplot(gene_res[gene_res$wt_cov > 0, ], aes(wt_cov, log2FoldChange)) +
                            max.overlaps = Inf, segment.size = 0.2, colour = "black") +
   scale_x_log10() +
   labs(title = paste(MARK, "gene-body MA"),
-       subtitle = sprintf("dashed = median log2FC (%+0.3f); n = %s genes",
+       subtitle = sprintf(paste("dashed = median log2FC (%+0.3f); n = %s genes.",
+                                "labels: top |log2FC| among genes with >= median WT coverage"),
                           median(l, na.rm = TRUE), format(nrow(gene_res), big.mark = ",")),
        x = "WT mean coverage over gene body (log10)", y = "log2FoldChange") +
   theme_m
