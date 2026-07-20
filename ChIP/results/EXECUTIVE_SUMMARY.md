@@ -54,17 +54,31 @@ HP1gKO vs WT. Pipeline stages MINUTE_1–6 (see `../README.md`).
 
    | Family | genes | H3K9me3 log2FC (FDR) | H4K20me3 log2FC (FDR) | H3K4me3 |
    |--------|------:|---------------------:|----------------------:|---------|
-   | Olfactory (Or/Olfr) | 1107 | −0.28 (5e-117) | −0.38 (6e-173) | ns |
-   | Vomeronasal (Vmn) | 353 | −0.35 (2e-55) | −0.49 (3e-58) | ns |
-   | KRAB-ZFP (Zfp) | 428 | −0.18 (1e-34) | −0.32 (1e-49) | ns |
-   | Protocadherin (chr18 Pcdha/b/g) | 59 | −0.42 (4e-11) | −0.65 (2e-11) | **+0.36 (up)** |
+   | Olfactory (Or/Olfr) | 1107 | −0.39 (2e-150) | −0.54 (1e-180) | −0.03 (0.03) |
+   | Vomeronasal (Vmn) | 353 | −0.47 (5e-58) | −0.59 (2e-59) | −0.04 (0.02) |
+   | KRAB-ZFP (Zfp) | 428 | −0.32 (6e-50) | −0.45 (1e-63) | ns |
+   | Protocadherin (chr18 Pcdha/b/g) | 59 | −0.59 (3e-11) | −0.81 (2e-11) | **+0.31 (up)** |
+
+   *(HP1gKO rep2 excluded — the previous version reported H3K9me3 losses ~0.1–0.15
+   shallower, e.g. KRAB-ZFP −0.18; every family deepened.)*
 
    Clustered protocadherins additionally **gain H3K4me3** — a full derepression
    signature. Tested against a **matched random-gene background** (MINUTE_5;
-   background co-loss rate 33%), protocadherin (76%), vomeronasal (65%) and
-   olfactory (53%) co-lose H3K9me3 **significantly above background** (Fisher
-   BH ≤ 1e-8), whereas **KRAB-ZFP co-loses at exactly background (32%, ns)** —
-   i.e. KRAB-ZFP is the H4K20me3-**only** family (loses H4K20me3, retains H3K9me3).
+   background co-loss rate now 41%), all four families co-lose H3K9me3
+   **significantly above that gene background** (Fisher BH ≤ 5e-15): protocadherin
+   92% (OR 15), vomeronasal 79% (OR 5.2), KRAB-ZFP 68% (OR 3.0), olfactory 62%
+   (OR 2.3).
+
+   **The earlier "KRAB-ZFP is H4K20me3-only" conclusion does not survive rep2
+   exclusion** — that rested on KRAB-ZFP H3K9me3 being ~−0.18 and co-losing at
+   background (32%, ns), both of which were rep2 artefacts. KRAB-ZFP now loses
+   H3K9me3 (−0.32) and co-loses above the gene background. It remains
+   H4K20me3-**preferential** but by a graded, reference-dependent margin, not a
+   binary: relative to the genome-wide *peak* median (−0.415, repeat/intergenic-
+   dominated) KRAB-ZFP loses *less* H3K9me3 than typical (+0.09, p 3e-21), whereas
+   relative to other *genes* it loses *more*. So: loses both marks, H4K20me3 more
+   than H3K9me3, with H3K9me3 loss below the heterochromatin average but above the
+   genic average.
 
 5. **Repeats:** IAP/ERVK elements are strongly enriched in the lost compartments
    (IAPEz-int odds ratio ~21 in the H4K20me3-only group vs stable), consistent
