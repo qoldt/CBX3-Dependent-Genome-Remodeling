@@ -11,6 +11,21 @@ HP1gKO vs WT. Pipeline stages MINUTE_1–6 (see `../README.md`).
 
 ## Headline findings
 
+> **Read compartment sizes as median-relative, not absolute.** MINUTE_3's group
+> cutoffs are absolute, so against a genome-wide loss they largely ask "did it
+> lose?" — to which nearly everything answers yes — and the answer moves whenever
+> the global shift moves. Across sample sets (all libraries vs HP1gKO rep2
+> excluded) group sizes change by a mean of **84%** under absolute cutoffs but
+> only **11%** when each mark is centred on its own median. Crucially the
+> ordering also flips: absolute cutoffs make `co_loss` dominate once rep2 is
+> dropped (46,921 vs 8,481), whereas median-centred cutoffs keep
+> **`H4K20me3_only` > `co_loss` in both sample sets** (1,798 vs 1,452 with all
+> libraries; 1,748 vs 1,171 without rep2). **The uncoupling result below
+> therefore holds — but only stated as "loses more than its own genome-wide
+> average", not "loses in absolute terms."** Both schemes are reported per run in
+> `tables/diffloss_group_definitions.tsv`.
+
+
 1. **H4K20me3 is lost almost genome-wide — the primary effect.** The entire
    distribution shifts down (median log2FC ≈ **−0.68**, ~95% of domains reduced;
    −0.47 / ~85% with HP1gKO rep2 retained),

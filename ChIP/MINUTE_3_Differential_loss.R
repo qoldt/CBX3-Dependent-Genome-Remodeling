@@ -51,6 +51,43 @@ grp_cols <- c(stable = "grey65", H4K20me3_only = gaby_cols[3], co_loss = gaby_co
 
 cat("=== group sizes ===\n"); print(table(g$group))
 
+# --- Absolute vs median-centred group definitions ---------------------------
+# The cutoffs above are ABSOLUTE, so against a genome-wide loss they mostly ask
+# "did it lose?" - to which nearly everything answers yes, and the answer moves
+# whenever the global shift moves. Centring each mark on its own median instead
+# asks "did it lose MORE than typical?", which is what a compartment claim
+# needs and which is invariant to the shift.
+#
+# Measured across sample sets (all libraries vs HP1gKO rep2 excluded), group
+# sizes move by a mean of 84% under absolute cutoffs but only 11% under
+# median-centred ones - and the ordering flips: absolute cutoffs make co_loss
+# dominate once rep2 is dropped, whereas median-centred keeps H4K20me3_only >
+# co_loss in BOTH sample sets. The uncoupling result therefore survives, but
+# only when stated relative to each mark's own median.
+#
+# This table reports BOTH schemes for the current run so the dependence is
+# visible in the outputs, not just in the docs. The absolute scheme remains the
+# one used downstream.
+med_h4 <- median(d$log2FoldChange, na.rm = TRUE)
+med_k9 <- median(d$k9_l2fc,        na.rm = TRUE)
+grp_centred <- with(d, ifelse(log2FoldChange - med_h4 < H4_LOST_CUT & k9_l2fc - med_k9 < K9_LOSS_CUT, "co_loss",
+                       ifelse(log2FoldChange - med_h4 < H4_LOST_CUT & abs(k9_l2fc - med_k9) < UNCH_CUT, "H4K20me3_only",
+                       ifelse(abs(log2FoldChange - med_h4) < UNCH_CUT & abs(k9_l2fc - med_k9) < UNCH_CUT, "stable", NA))))
+lv <- c("stable", "H4K20me3_only", "co_loss")
+group_defs <- data.frame(
+  group          = lv,
+  n_absolute     = as.integer(table(factor(g$group,      levels = lv))),
+  n_median_centred = as.integer(table(factor(grp_centred, levels = lv))),
+  stringsAsFactors = FALSE)
+group_defs$median_H4K20me3_used <- med_h4
+group_defs$median_H3K9me3_used  <- med_k9
+group_defs$n_peaks_considered   <- nrow(d)
+fwrite(group_defs, file.path(tables_dir, "diffloss_group_definitions.tsv"), sep = "\t")
+cat("\n=== group sizes: absolute vs median-centred cutoffs ===\n")
+cat(sprintf("(marks centred on median H4K20me3 %+0.3f, H3K9me3 %+0.3f)\n", med_h4, med_k9))
+print(group_defs[, c("group", "n_absolute", "n_median_centred")], row.names = FALSE)
+cat("Saved: tables/diffloss_group_definitions.tsv\n")
+
 hmm_cols <- grep("^hmm_", names(g), value = TRUE)
 
 # ---------------------------------------------------------------

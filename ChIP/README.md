@@ -406,6 +406,30 @@ H3K9me3 mark, while H3K9me3 co-loss is confined to gene-proximal `Het`.
 
 ---
 
+### Compartment cutoffs are absolute — read them median-relative
+
+MINUTE_3 splits the shared H3K9me3/H4K20me3 peak set into `stable`,
+`H4K20me3_only` and `co_loss` using **absolute** log2FC cutoffs. Against a
+genome-wide loss those largely ask *"did it lose?"* — to which nearly everything
+answers yes — so the groups are **not shift-invariant**: peaks migrate between
+them whenever the global shift moves, with no change in biology.
+
+Measured across sample sets (all libraries vs HP1gKO rep2 excluded):
+
+| scheme | stable | H4K20me3_only | co_loss | mean change across sample sets |
+|---|---|---|---|---|
+| absolute | 4,105 → 931 | 13,682 → 8,481 | 19,938 → 46,921 | **84%** |
+| median-centred | 19,418 → 17,305 | 1,798 → 1,748 | 1,452 → 1,171 | **11%** |
+
+Centring each mark on its own median is ~8× more robust, and the ordering
+differs: absolute cutoffs make `co_loss` dominate once rep2 is dropped, whereas
+median-centred cutoffs keep **`H4K20me3_only` > `co_loss` in both sample sets**.
+
+**So the "H4K20me3 loss is uncoupled from H3K9me3" result holds — but state it as
+"loses more than its own genome-wide average", not "loses in absolute terms."**
+Both schemes are written per run to `tables/diffloss_group_definitions.tsv`; the
+absolute scheme is still what the downstream MINUTE_3 outputs use.
+
 ## Outputs (all under `results/`)
 
 **Every figure is written as both `.png` (quick view) and `.pdf` (vector, for
@@ -448,6 +472,7 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 | `tables/enrichment_TAD.tsv` + `figures/enrichment/enrichment_TAD_dotplot.png` | MINUTE_2 | TAD-boundary hypergeometric enrichment of significant peaks per mark |
 | `tables/enrichment_chromHMM.tsv` + `figures/enrichment/enrichment_chromHMM{,_sizeweighted}_dotplot.png` | MINUTE_2 | ChromHMM-state enrichment per mark, per-region (Wilcoxon) + size-weighted (permutation) |
 | `tables/diffloss_group_overview.tsv` | MINUTE_3 | co-loss / H4K20me3-only / stable: n, median size, median log2FC per mark |
+| `tables/diffloss_group_definitions.tsv` | MINUTE_3 | group sizes under **absolute vs median-centred** cutoffs + the medians used — robustness check for the uncoupling claim |
 | `tables/diffloss_chromHMM_{coverage,enrichment}.tsv` + `figures/differential_loss/diffloss_chromHMM_*.png` | MINUTE_3 | per-group ChromHMM coverage + enrichment (per-region & size-weighted) |
 | `tables/diffloss_repeat_{composition,enrichment}.tsv` + `figures/differential_loss/diffloss_repeat_*.png` | MINUTE_3 | repeat composition + enrichment (Fisher OR vs stable): IAP/ERV, young mouse L1 (L1MdA/T/Gf/F) |
 | `tables/diffloss_{region_composition,gene_family_pct}.tsv` + `figures/differential_loss/diffloss_*.png` | MINUTE_3 | genomic region, TSS distance, gene-family %, domain size per group |
