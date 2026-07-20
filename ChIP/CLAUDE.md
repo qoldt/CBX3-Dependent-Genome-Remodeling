@@ -54,6 +54,8 @@ Rscript run_MINUTE.R        # or interactively: source("run_MINUTE.R")
 ```
 
 Stages 2–5 only need the `.rds` from MINUTE_1; stage 6 needs stage 5's output.
+Stage 7 is independent of 2–6 — it re-reads the H3K36me3 (and H3K4me3) bigWigs
+because gene bodies and promoters are not in the peak-based counts.
 
 ## Where parameters live — edit `config.R` / `samples.tsv` only
 

@@ -213,7 +213,7 @@ your downloaded filenames differ, edit that sheet (nothing else).
 
 ```bash
 cd ChIP
-Rscript run_MINUTE.R                      # all stages (MINUTE_1–6)
+Rscript run_MINUTE.R                      # all stages (MINUTE_1–7)
 # or, if the store is elsewhere:
 MINUTE_DATA=/path/to/store Rscript run_MINUTE.R
 ```
