@@ -64,13 +64,64 @@ source of truth** for parameters; stage scripts must not redefine them. It holds
 - **`sig_thresholds` + `is_significant()`** — the significance definition
   (`|log2FC| > lfc & pvalue < p`, per mark), shared by every stage that needs a
   "significant" set, so those sets are guaranteed identical.
-- Shared plotting constants + helpers: `geno_colors`, `theme_m`, `mark_levels`,
-  and `hyper_row()` (one hypergeometric enrichment row) — used across stages.
+- Shared plotting constants + helpers: `geno_colors`, `repeat_palette`,
+  `theme_m`, `mark_levels`, and `hyper_row()` (one hypergeometric enrichment
+  row) — used across stages.
+- **Colour palettes** — all figure colours come from the [`ltc`](https://github.com/loukesio/ltc-color-palettes)
+  package (`install.packages("ltc")`), and are defined in `config.R` only:
+  - **discrete / categorical → `gaby`** (5 colours). Use `scale_fill_gaby()` /
+    `scale_colour_gaby()`, or index `gaby_cols` for a named vector. `gaby_pal(n)`
+    interpolates past 5 (only the chromosome strip in MINUTE_2 needs that).
+  - **continuous / heatmaps → `heatmap0`** (9 colours). Sequential:
+    `scale_fill_heat0()` / `scale_colour_heat0()`. Diverging (log2FC, z-score):
+    `scale_fill_heat0_div()` / `scale_colour_heat0_div()`, which use the ramp's
+    ends around its own cream midpoint. ComplexHeatmap/circlize:
+    `heat_col_fun(breaks)`, e.g. `heat_col_fun(seq(-2, 2, length.out = length(heat_cols)))`.
+
+  Stage scripts must not write raw hex codes. Greys (`grey65`/`grey75`/`grey80`)
+  are kept deliberately for "neutral / background / not-a-category" levels —
+  they are meant to recede, so they are not drawn from the palette.
 
 Genotype/replicate come from `samples.tsv` (matched by sample_id), NOT from
 positional `rep()` calls — the DESeq2 design and heatmap annotation cannot drift
 from the actual bigWig set. To change a cutoff/peak file, edit `config.R`; to
 add/remove/rename a sample, edit `samples.tsv`.
+
+### Sample exclusion — HP1gKO rep2 is dropped BY DEFAULT
+
+Replicates are **nested**: WT rep1-3 / rep4-6 are technical replicates of
+biological replicates 1 and 2; likewise HP1gKO rep2-3 (rep1's library failed)
+and rep4-6. **HP1gKO rep2 is the highest-signal library in all five marks and is
+badly discordant with rep3, its own technical twin** (H4K20me3 median coverage
+1.92 vs 1.14, against a bio-2 trio at 0.99–1.32) — a technical failure, so
+`config.R` excludes it by default via `exclude_samples`.
+
+Excluding it deepens the global loss (H4K20me3 median log2FC **−0.474 → −0.678**)
+while the control marks stay near zero, and roughly halves the apparent "gain"
+set. Note ~0.04–0.07 of that deepening is a general offset from removing the
+highest KO library, so it is not purely correction.
+
+Two env vars control this (both default to the committed behaviour):
+
+```r
+MINUTE_EXCLUDE=none          # keep ALL samples (reproduces the pre-exclusion run)
+MINUTE_EXCLUDE=HP1gKO:2,...  # sample_ids or <genotype>:<replicate> pairs
+MINUTE_RESULTS=results_alt   # write the whole output tree elsewhere
+```
+
+**Caveat exclusion does not fix:** the design is still `~condition`, so technical
+replicates are treated as independent and the effective n is **2 biological
+replicates vs 2**, not 6 vs 4.
+
+**Threshold sensitivity — read this before quoting compartment sizes.**
+MINUTE_3's groups use *absolute* log2FC cutoffs, so they are **not
+shift-invariant**: when the global shift changes, peaks migrate between groups
+without any change in biology. Excluding rep2 moves H3K9me3's median from −0.22
+to −0.42 and the compartments restructure accordingly (stable 4,105 → 931;
+H4K20me3_only 13,682 → 8,481; co_loss 19,938 → 46,921). Any claim of the form
+"H4K20me3 loss is uncoupled from H3K9me3" depends on where those cutoffs sit
+relative to the shifted distributions — express such comparisons relative to each
+mark's own global median if you need them to be robust.
 
 ## Data dependencies (NOT in git — download per the README)
 

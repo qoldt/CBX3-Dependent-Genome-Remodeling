@@ -10,10 +10,21 @@
 # Operates purely on annotated_results columns (no bigWig re-read).
 # Runs after MINUTE_1 (needs the annotated .rds).
 #
-# QC note: HP1gKO replicate 2 has globally elevated signal (a scaling residual,
-# uniform across all marks) - with sizeFactors=1 this makes the measured losses
-# CONSERVATIVE. Do NOT "correct" via DESeq2 median-of-ratios (erases the global
-# H4K20me3 loss). See memory: gene-family-hush-derepression.
+# QC note: HP1gKO replicate 2 has globally elevated signal, uniform across all
+# marks. It is now EXCLUDED BY DEFAULT (config.R) - it is discordant with rep3,
+# its own technical replicate, so it is a technical failure rather than a scaling
+# residual. Losses were correspondingly CONSERVATIVE while it was included
+# (H4K20me3 median log2FC -0.474 with it, -0.678 without).
+# Do NOT "correct" via DESeq2 median-of-ratios (erases the global H4K20me3 loss).
+#
+# THRESHOLD CAVEAT: the cutoffs below are ABSOLUTE, so these groups are NOT
+# shift-invariant - when a mark's global median moves, peaks migrate between
+# groups with no change in biology. Excluding rep2 moved H3K9me3's median from
+# -0.22 to -0.42 and restructured the compartments (stable 4,105 -> 931;
+# H4K20me3_only 13,682 -> 8,481; co_loss 19,938 -> 46,921). With absolute cuts
+# the question is "did it lose?" (against a genome-wide loss, nearly everything
+# did); centring each mark on its own median instead asks "did it lose MORE than
+# typical?", which is what a compartment claim actually needs.
 # ================================================================
 source("config.R")
 suppressPackageStartupMessages({ library(ggplot2); library(dplyr); library(data.table) })
@@ -36,7 +47,7 @@ d$group <- with(d, ifelse(log2FoldChange < H4_LOST_CUT & k9_l2fc < K9_LOSS_CUT, 
                    ifelse(abs(log2FoldChange) < UNCH_CUT & abs(k9_l2fc) < UNCH_CUT,  "stable", NA))))
 g <- d[!is.na(d$group), ]
 g$group <- factor(g$group, levels = c("stable", "H4K20me3_only", "co_loss"))
-grp_cols <- c(stable = "grey65", H4K20me3_only = "#1f78b4", co_loss = "#e31a1c")
+grp_cols <- c(stable = "grey65", H4K20me3_only = gaby_cols[3], co_loss = gaby_cols[5])
 
 cat("=== group sizes ===\n"); print(table(g$group))
 
@@ -71,7 +82,7 @@ fwrite(hmm_cov, file.path(tables_dir, "diffloss_chromHMM_coverage.tsv"), sep = "
 cov_long <- melt(as.data.table(hmm_cov), id.vars = "group", variable.name = "state", value.name = "cov")
 cov_long[, state := sub("^hmm_", "", state)]
 g_cov <- ggplot(cov_long, aes(state, group, fill = cov)) +
-  geom_tile(colour = "white") + scale_fill_viridis_c(name = "mean\ncoverage") +
+  geom_tile(colour = "white") + scale_fill_heat0(name = "mean\ncoverage") +
   labs(title = "Mean ChromHMM state coverage per group", x = "ChromHMM state", y = NULL) +
   theme_m + theme(axis.text.x = element_text(angle = 45, hjust = 1))
 save_fig(g_cov, "diffloss_chromHMM_coverage", "differential_loss", width = 9, height = 3.2)
@@ -108,8 +119,7 @@ hmm_dot <- function(lr, fdr, ttl) {
            state = factor(state, levels = sort(unique(state)))) %>%
     ggplot(aes(contrast, state, size = neglog10FDR, colour = .data[[lr]])) +
     geom_point() +
-    scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
-                           midpoint = 0, name = expression(log[2]~"ratio")) +
+    scale_colour_heat0_div( name = expression(log[2]~"ratio")) +
     scale_size_continuous(name = expression(-log[10]("FDR"))) +
     labs(title = ttl, x = NULL, y = "ChromHMM state") +
     theme_m + theme(axis.text.x = element_text(angle = 20, hjust = 1))
@@ -126,6 +136,7 @@ rep_comp <- g %>% mutate(rc = ifelse(is.na(repeat_class), "NA", repeat_class)) %
   count(group, rc) %>% group_by(group) %>% mutate(frac = n / sum(n)) %>% ungroup()
 fwrite(rep_comp, file.path(tables_dir, "diffloss_repeat_composition.tsv"), sep = "\t")
 g_rep <- ggplot(rep_comp, aes(group, frac, fill = rc)) + geom_col() +
+  scale_fill_manual(values = repeat_palette, na.value = "grey80") +
   labs(title = "Repeat-class composition per group", x = NULL, y = "fraction of regions", fill = "repeat_class") +
   theme_m
 save_fig(g_rep, "diffloss_repeat_composition", "differential_loss", width = 6, height = 4)
@@ -175,6 +186,7 @@ reg_comp <- g %>% mutate(gr = ifelse(is.na(genomic_region), "NA", genomic_region
   count(group, gr) %>% group_by(group) %>% mutate(frac = n / sum(n)) %>% ungroup()
 fwrite(reg_comp, file.path(tables_dir, "diffloss_region_composition.tsv"), sep = "\t")
 g_reg <- ggplot(reg_comp, aes(group, frac, fill = gr)) + geom_col() +
+  scale_fill_disc() +
   labs(title = "Genomic-region composition per group", x = NULL, y = "fraction of regions", fill = "region") +
   theme_m
 save_fig(g_reg, "diffloss_region_composition", "differential_loss", width = 6.5, height = 4)

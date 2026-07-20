@@ -6,7 +6,11 @@ wild-type**, built on scaled bigWigs from the
 
 - **Marks:** H3K4me3, H3K9me2, H3K9me3, H4K20me3, H3K36me3
 - **Genome:** mouse mm39
-- **Design:** 6 WT vs 5 HP1gKO replicates, tested with DESeq2
+- **Design:** 6 WT vs 5 HP1gKO libraries, tested with DESeq2. **HP1gKO rep2 is
+  excluded by default** (technical failure — see below), so analyses run 6 vs 4.
+  Replicates are **nested**: WT rep1-3 / rep4-6 and HP1gKO rep2-3 / rep4-6 are
+  technical replicates of 2 biological replicates per genotype, so the effective
+  n is 2 vs 2.
 
 The workflow quantifies ChIP signal over called peaks, tests each mark for
 genotype-dependent changes, annotates the results (genomic region, gene,
@@ -231,6 +235,14 @@ them they define:
 
 - Roots/paths (`$MINUTE_DATA`, `data/peaks`, `results/…`, the handoff `.rds`)
 - `samples.tsv` — mark, genotype, replicate, bigWig filename per sample
+- `MINUTE_EXCLUDE` (env) — samples dropped before anything runs. **Defaults to
+  `HP1gKO:2`**: that library is the highest-signal one in all five marks and is
+  discordant with rep3, its own technical twin (H4K20me3 median coverage 1.92 vs
+  1.14, bio-2 trio 0.99-1.32). Excluding it deepens the global loss
+  (H4K20me3 median log2FC -0.474 -> -0.678) while control marks stay near zero,
+  and roughly halves the apparent "gain" set. Set `MINUTE_EXCLUDE=none` to
+  reproduce the pre-exclusion run; pair with `MINUTE_RESULTS=<dir>` to write
+  that run to a separate output tree.
 - `regions` — mark → input peak BED
 - `sig_thresholds` + `is_significant()` — the significance rule
 
@@ -337,7 +349,17 @@ median, 25th *and* 75th percentiles all negative). Two things follow:
 
 The diagnostic `figures/change_plots/log2FC_distribution_by_mark.png` (MINUTE_2)
 plots each mark's log2FC density with its median — the evidence behind these
-assignments. Two caveats: the global-loss claim is best stated as a
+assignments. Its companion
+`figures/change_plots/pvalue_distribution_by_mark.png` plots the per-peak
+p-value histogram against the uniform null. **Read it before quoting any
+p-value from this dataset:** the distributions are *depleted* near 0 and piled
+up near 1 (pi0 ~ 1.00; H3K36me3 has 0.0% of 77,781 peaks below p < 0.05), i.e.
+the tests are **conservatively miscalibrated**, not merely underpowered — with
+`sizeFactors = 1` the genome-wide shift is absorbed into DESeq2's dispersion
+estimate and inflates it. This is why no peak reaches `padj < 0.1` in either
+direction, and it is the strongest argument for the effect-size framing above.
+The visible *comb* pattern on the low-count marks is p-value discreteness caused
+by rounding mean coverage to integers (see `round()` in MINUTE_1). Two caveats: the global-loss claim is best stated as a
 **distributional** result (median shift, % of domains down), not a peak count;
 and individual **gene labels** on low-count marks (H4K20me3 baseMean ~1.6) are
 unreliable — the distribution is the finding, not any single locus.
@@ -413,6 +435,9 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 | `figures/heatmap/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_2 | clustered heatmap of significant peaks (k-means, seeded) |
 | `figures/change_plots/<mark>_changes_by_chr_coloured_by_{genomic_region,repeat}.png` | MINUTE_2 | per-chromosome domain-size vs log2FC, sized by domain size, coloured by region/repeat |
 | `figures/change_plots/log2FC_distribution_by_mark.png` | MINUTE_2 | per-mark log2FC density + median (global-shift diagnostic) |
+| `figures/change_plots/pvalue_distribution_by_mark.png` | MINUTE_2 | per-mark p-value histogram vs the uniform null, with pi0 (test-calibration diagnostic) |
+| `figures/change_plots/<mark>_MA_by_chr_coloured_by_{genomic_region,repeat}.png` | MINUTE_2 | as the change plots but x = ChIP signal, point size = domain size |
+| `figures/change_plots/<mark>_MA_density.png` | MINUTE_2 | single-panel binned-density MA, faceted by domain-size band |
 | `figures/relationships/relationship_total_*.png` | MINUTE_2 | genome-wide size×baseMean×log2FC: binned heatmap, scatter, size×signal interaction |
 | `figures/relationships/relationship_bycluster_*.png` | MINUTE_2 | relationship views faceted by k-means cluster; incl. H3K9me3-vs-H4K20me3 log2FC plane + all-regions-by-cluster |
 | `rds/cluster_analysis_inputs.rds` + `tables/significant_peaks_clusters.tsv` | MINUTE_2 | cluster table + per-sample signal matrix (self-consumed for cluster characterisation) |

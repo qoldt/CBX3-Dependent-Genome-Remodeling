@@ -86,7 +86,7 @@ p_enrich <- enrichment_df %>%
   ggplot(aes(annotation, odds_ratio, size = neglog10FDR, color = direction)) +
   geom_hline(yintercept = 1, linetype = "dashed") +
   geom_point(alpha = 0.9) + facet_wrap(~ ChIP, nrow = 1) + scale_y_log10() +
-  scale_color_manual(values = c(depleted = "steelblue3", enriched = "firebrick2")) +
+  scale_color_manual(values = c(depleted = gaby_cols[3], enriched = gaby_cols[5])) +
   labs(x = "Repeat class", y = "Odds ratio (log10)",
        size = expression(-log[10]("FDR")), color = NULL) +
   coord_flip() + theme_minimal(base_size = 12) +
@@ -206,7 +206,7 @@ percopy[, rep_class := factor(rep_class, levels = cls_order)][, mark := factor(m
 gA <- ggplot(agg, aes(mark, rep_class, fill = log2FC)) +
   geom_tile(colour = "white") +
   geom_text(aes(label = sprintf("%+.2f", log2FC)), size = 2.9) +
-  scale_fill_gradient2(low = "#2166ac", mid = "grey95", high = "#b2182b", midpoint = 0,
+  scale_fill_heat0_div(
                        name = "log2(KO/WT)") +
   scale_y_discrete(limits = rev(cls_order)) +
   labs(title = "Direct repeat-class signal change (aggregate over copies)",
@@ -221,7 +221,7 @@ gB <- ggplot(percopy, aes(rep_class, log2FC)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
   geom_boxplot(aes(fill = mark), outlier.size = 0.2, outlier.alpha = 0.1, linewidth = 0.3) +
   facet_wrap(~mark, nrow = 1) +
-  scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
+  scale_fill_disc(guide = "none") +
   coord_flip(ylim = c(-2, 1.5)) +
   labs(title = "Per-copy repeat signal change by class and mark",
        subtitle = "per-copy log2(KO/WT) over copies with measurable signal (bottom-quartile abundance dropped)",

@@ -96,7 +96,7 @@ if (length(kap1_tracks) == 0) {
               aes(set, obs_frac, label = sprintf("%.1fx\np=%.2g", fold, perm_p)),
               vjust = -0.3, size = 2.6, lineheight = 0.9) +
     facet_wrap(~track, ncol = 1, scales = "free_y") +
-    scale_fill_manual(values = c(observed = "#b2182b", expected = "grey70"), name = NULL) +
+    scale_fill_manual(values = c(observed = gaby_cols[5], expected = "grey70"), name = NULL) +
     labs(title = "KAP1/TRIM28 overlap vs size-matched null (permutation, N=2000)",
          subtitle = "fold = observed / size-matched expected; groups: merged-peak universe, families: all-exon universe",
          x = NULL, y = "fraction overlapping a KAP1 peak") +
@@ -177,7 +177,7 @@ if (length(kap1_tracks) == 0) {
     geom_boxplot(outlier.shape = NA, position = position_dodge(0.8), width = 0.7, linewidth = 0.3) +
     geom_text(data = lab, inherit.aes = FALSE, aes(set, y, label = txt), size = 2.4) +
     facet_grid(mark ~ track) +
-    scale_fill_manual(values = c(`TRUE` = "#b2182b", `FALSE` = "grey75"),
+    scale_fill_manual(values = c(`TRUE` = gaby_cols[5], `FALSE` = "grey75"),
                       labels = c(`TRUE` = "KAP1-bound", `FALSE` = "unbound"), name = NULL) +
     coord_cartesian(ylim = c(-2, 1)) +
     labs(title = "Does KAP1 binding predict the CBX3-dependent loss?",

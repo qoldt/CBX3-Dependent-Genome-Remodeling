@@ -3,17 +3,22 @@
 Differential histone-mark ChIP-seq in **HP1γ (Cbx3) conditional-knockout cortex**
 (*Emx1-Cre*) vs wild type. MINUTE multiplexed ChIP-seq, genome **mm39**, five
 marks (H3K4me3, H3K36me3, H3K9me2, H3K9me3, H4K20me3), 6 WT vs 5 HP1gKO
-replicates. DESeq2 with `sizeFactors = 1` (bigWigs are input-scaled), contrast
+libraries — **HP1gKO rep2 is excluded by default** as a technical failure
+(discordant with rep3, its own technical replicate), so analyses run 6 vs 4.
+Replicates are nested (technical replicates of 2 biological replicates per
+genotype), so the effective n is 2 vs 2. DESeq2 with `sizeFactors = 1` (bigWigs are input-scaled), contrast
 HP1gKO vs WT. Pipeline stages MINUTE_1–6 (see `../README.md`).
 
 ## Headline findings
 
 1. **H4K20me3 is lost almost genome-wide — the primary effect.** The entire
-   distribution shifts down (median log2FC ≈ **−0.47**, ~85% of domains reduced),
+   distribution shifts down (median log2FC ≈ **−0.68**, ~95% of domains reduced;
+   −0.47 / ~85% with HP1gKO rep2 retained),
    deepest over broad heterochromatin. This is a global change, not a
    minority-of-peaks change.
 
-2. **H3K9me3 loss is milder and region-specific** (median ≈ −0.22, ~80% down),
+2. **H3K9me3 loss is milder and region-specific** (median ≈ −0.42, ~89% down;
+   −0.22 / ~80% with rep2 retained),
    and per peak the two marks' losses are **weakly anti-correlated** (Spearman
    ρ ≈ −0.30 in the main heterochromatin clusters) — the peaks losing the most
    H4K20me3 are *not* the ones losing the most H3K9me3.

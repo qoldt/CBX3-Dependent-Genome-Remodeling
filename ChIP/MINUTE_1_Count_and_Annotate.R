@@ -26,7 +26,28 @@ for (mark in marks) {
   peaks <- import(region_file)
   seqlevelsStyle(peaks) <- "NCBI"
   cat(" - Imported", length(peaks), "regions\n")
-  
+
+  # --- Reuse cached counts when they exist -----------------------------------
+  # Quantifying the bigWigs is by far the slowest step, and the counts file holds
+  # one COLUMN per sample over a fixed peak set. So a run that only drops samples
+  # (a sensitivity analysis) needs no re-quantification - just take the columns
+  # it still wants. Reused only if the file covers every requested sample AND the
+  # peak set matches; otherwise fall through and re-quantify.
+  cached <- file.path(counts_dir, paste0(mark, "_bigwig_counts.tsv"))
+  if (file.exists(cached)) {
+    cdt <- data.table::fread(cached)
+    have <- names(cdt)[-1]
+    if (all(names(bigwigs) %in% have) && nrow(cdt) == length(peaks)) {
+      cat(" - Reusing cached counts:", cached,
+          sprintf("(%d of %d samples)\n", length(bigwigs), length(have)))
+      cdf <- as.data.frame(cdt[, names(bigwigs), with = FALSE])
+      rownames(cdf) <- as.character(cdt[[1]])
+      count_tables[[mark]] <- cdf
+      next
+    }
+    cat(" - Cached counts unusable (samples or peak set differ); re-quantifying\n")
+  }
+
   results <- mclapply(seq_along(bigwigs), function(i) {
     bw_file <- bigwigs[[i]]
     sample_name <- names(bigwigs)[i]

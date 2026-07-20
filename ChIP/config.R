@@ -30,8 +30,11 @@ bigwig_dir <- file.path(data_ext, "bigwig")
 annot_dir  <- file.path(data_ext, "annotation")
 
 # Repo-relative input / output dirs (scripts are run from ChIP/)
+# results_dir is overridable so a sensitivity analysis can be written to a
+# SEPARATE tree without disturbing the committed run:
+#   MINUTE_RESULTS=results_norep2 MINUTE_EXCLUDE=... Rscript run_MINUTE.R
 peaks_dir   <- "data/peaks"
-results_dir <- "results"
+results_dir <- path.expand(Sys.getenv("MINUTE_RESULTS", unset = "results"))
 counts_dir  <- file.path(results_dir, "counts")
 rds_dir     <- file.path(results_dir, "rds")
 tables_dir  <- file.path(results_dir, "tables")
@@ -93,17 +96,127 @@ suppressPackageStartupMessages({
   library(ggrepel)
   library(ComplexHeatmap)
   library(circlize)
+  library(ltc)
 })
 
+# --- Colour palettes: SINGLE SOURCE OF TRUTH for figure colours ---------------
+# Everything comes from the `ltc` package (install.packages("ltc")):
+#   discrete / categorical -> "gaby"      (5 colours)
+#   continuous / heatmaps  -> "heatmap0"  (9 colours, dark blue -> cream -> dark red)
+# Stage scripts must use the helpers below, not raw hex codes. Greys are kept for
+# "neutral / background / not-a-category" levels on purpose - they are meant to
+# recede, so they are deliberately NOT drawn from the palette.
+
+# gaby, in palette order: pale yellow, salmon, pale blue, blue, plum
+gaby_cols <- unname(ltc("gaby"))
+
+# gaby has only 5 colours. INTERPOLATING past that is not viable: gaby_pal(7)
+# put 5' UTR (#F4BE99) next to Distal Intergenic (#D8B1A3) on the genomic_region
+# change plots, which are indistinguishable in print - and Distal Intergenic is
+# the bulk of the points. So beyond 5 levels we switch palette entirely rather
+# than blend, using ltc's "hat" (10 colours), reordered so the first n are as
+# far apart in hue as possible: blue, red, green, purple, yellow, teal,
+# crimson, orange, green2, black.
+hat_cols <- unname(ltc("hat"))[c(6, 3, 8, 5, 1, 7, 4, 2, 9, 10)]
+
+# The project's categorical palette: gaby <=5 levels, hat 6-10, interpolated
+# hat beyond that (>10 categories is a labelling problem, not a colour one).
+disc_pal <- function(n) {
+  if (n <= length(gaby_cols))     gaby_cols[seq_len(n)]
+  else if (n <= length(hat_cols)) hat_cols[seq_len(n)]
+  else                            unname(ltc("hat", n, "continuous"))
+}
+scale_fill_disc   <- function(...) discrete_scale(aesthetics = "fill",   palette = disc_pal, ...)
+scale_colour_disc <- function(...) discrete_scale(aesthetics = "colour", palette = disc_pal, ...)
+
+# heatmap0, in palette order (index 5 = "#E9D8A6" is the pale midpoint)
+heat_cols <- unname(ltc("heatmap0"))
+heat_low  <- heat_cols[2]   # teal-blue
+heat_mid  <- heat_cols[5]   # cream
+heat_high <- heat_cols[8]   # dark red
+# Sequential (0 -> max): the full ramp.
+scale_fill_heat0   <- function(...) scale_fill_gradientn(colours = heat_cols, ...)
+scale_colour_heat0 <- function(...) scale_colour_gradientn(colours = heat_cols, ...)
+# Diverging (log2FC, z-score): the ramp's own ends around its cream midpoint.
+scale_fill_heat0_div   <- function(midpoint = 0, ...) scale_fill_gradient2(
+  low = heat_low, mid = heat_mid, high = heat_high, midpoint = midpoint, ...)
+scale_colour_heat0_div <- function(midpoint = 0, ...) scale_colour_gradient2(
+  low = heat_low, mid = heat_mid, high = heat_high, midpoint = midpoint, ...)
+# ComplexHeatmap / circlize: pass the break points, get a matching colorRamp2.
+#   symmetric z-score : heat_col_fun(seq(-2, 2, length.out = length(heat_cols)))
+#   sequential        : heat_col_fun(c(0.3, 1, 6))
+heat_col_fun <- function(breaks) circlize::colorRamp2(
+  breaks, grDevices::colorRampPalette(heat_cols)(length(breaks)))
+
 # --- Shared plotting constants (used across stages) ---
-geno_colors <- c(WT = "#1f78b4", HP1gKO = "#e31a1c")
+geno_colors <- c(WT = gaby_cols[4], HP1gKO = gaby_cols[5])
 theme_m     <- theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
 mark_levels <- c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3")
+
+# Repeat classes (shared by MINUTE_2's heatmap annotation + scatter plots and
+# MINUTE_3's composition bars).
+# USES "hat", NOT gaby, deliberately. All four repeat classes are abundant on
+# the change plots and need strong mutual contrast, and gaby cannot supply four
+# such colours: two of its five entries are pale (#fceaab, #a8c4cc) and vanish
+# against white, and its two blues are adjacent in hue. Earlier attempts here
+# put LINE/LTR on the two adjacent blues (the two classes carrying the result -
+# young L1 and IAP - became the hardest pair to distinguish), then put the
+# abundant "complex" class on pale yellow, where it was invisible.
+# hat's first four are blue / red / green / purple - all strong, all distinct.
+# LINE and LTR take blue and red, the most separated pair.
+repeat_palette <- c(LINE = hat_cols[1],    # blue
+                    LTR  = hat_cols[2],    # red
+                    SINE = hat_cols[3],    # green
+                    complex = hat_cols[4], # purple
+                    none = "grey80")
 
 # --- Sample sheet: SINGLE SOURCE OF TRUTH for samples ------------
 # Columns: sample_id, mark, genotype (WT/HP1gKO), replicate, bigwig (filename).
 # Genotype and replicate are read from here - NOT hard-coded in the stages.
 samples <- as.data.frame(data.table::fread("samples.tsv"))
+
+# --- Sample exclusion --------------------------------------------------------
+# DEFAULT: HP1gKO rep2 is EXCLUDED from every analysis.
+#
+# WHY. Replicates are NESTED, not independent: WT rep1-3 and rep4-6 are technical
+# replicates of biological replicates 1 and 2; likewise HP1gKO rep2-3 (rep1's
+# library failed) and rep4-6. HP1gKO rep2 is the highest-signal library in ALL
+# FIVE marks, and it is badly discordant with rep3 - its own technical twin
+# (H4K20me3 median coverage 1.92 vs 1.14, while the bio-2 trio sits at
+# 0.99-1.32). Technical replicates should agree; this one does not, so it is
+# treated as a technical failure rather than biological variation.
+#
+# EFFECT OF EXCLUDING IT: the global loss deepens (H4K20me3 median log2FC
+# -0.474 -> -0.678) while the control marks stay near zero, and the apparent
+# "gain" set roughly halves. Note ~0.04-0.07 of the deepening is a general
+# offset from dropping the highest KO library, so it is not all correction.
+#
+# Override with MINUTE_EXCLUDE: a comma-separated list of sample_id values or of
+# "<genotype>:<replicate>" pairs that expand across every mark. Use
+# MINUTE_EXCLUDE=none to keep ALL samples (reproduces the pre-exclusion run):
+#   MINUTE_EXCLUDE=none MINUTE_RESULTS=results_allreps Rscript run_MINUTE.R
+#
+# CAVEAT that exclusion does NOT fix: the DESeq2 design ~condition still treats
+# technical replicates as independent, so the effective n is 2 biological
+# replicates vs 2, not 6 vs 4. Per-peak p-values are anticonservative on that
+# count - though the p-value distributions (MINUTE_2 section 7) show they are
+# also conservatively miscalibrated by the global shift, which dominates.
+exclude_samples <- trimws(strsplit(Sys.getenv("MINUTE_EXCLUDE", unset = "HP1gKO:2"), ",")[[1]])
+if (identical(tolower(exclude_samples), "none")) exclude_samples <- character(0)
+exclude_samples <- exclude_samples[nzchar(exclude_samples)]
+if (length(exclude_samples)) {
+  pairs <- grepl(":", exclude_samples, fixed = TRUE)
+  drop  <- samples$sample_id %in% exclude_samples[!pairs]
+  for (p in exclude_samples[pairs]) {
+    gr <- strsplit(p, ":", fixed = TRUE)[[1]]
+    drop <- drop | (as.character(samples$genotype) == gr[1] &
+                    as.character(samples$replicate) == gr[2])
+  }
+  message("Excluding ", sum(drop), " sample(s): ",
+          paste(samples$sample_id[drop], collapse = ", "))
+  samples <- samples[!drop, , drop = FALSE]
+}
+
 samples$genotype    <- factor(samples$genotype, levels = c("WT", "HP1gKO"))
 samples$bigwig_path <- file.path(bigwig_dir, samples$bigwig)
 marks <- unique(as.character(samples$mark))   # preserves sample-sheet order
@@ -217,6 +330,33 @@ chromHMM_dominant <- function(cov) {
     chromHMM_purity = ifelse(rs > 0, cov[cbind(seq_len(nrow(cov)), mc)], NA_real_),
     stringsAsFactors = FALSE
   )
+}
+
+# --- Helper: UN-ROUNDED mean coverage per peak (a PLOTTING covariate) --------
+# MINUTE_1 rounds the per-peak mean coverage to integers to satisfy DESeq2, which
+# collapses `baseMean` onto a coarse k/n_samples lattice - for H4K20me3 that is
+# only ~214 distinct values across 116k peaks, with one value shared by >9,000
+# peaks. That is far too quantised to encode as a point size.
+#
+# The counts TSV is written BEFORE that rounding, so it keeps full precision.
+# Because sizeFactors = 1, the row mean of that file is EXACTLY what `baseMean`
+# would have been had we never rounded - the same quantity, un-degraded.
+#
+# Use this for AESTHETICS ONLY (point size, colour). All statistics must keep
+# using DESeq2's baseMean/log2FoldChange/pvalue, which are computed from the
+# rounded integer counts.
+# Returns a named numeric vector (peak_id -> mean scaled coverage), or NULL if
+# the counts file is missing.
+mean_coverage_by_peak <- function(mark) {
+  f <- file.path(counts_dir, paste0(mark, "_bigwig_counts.tsv"))
+  if (!file.exists(f)) {
+    warning("mean_coverage_by_peak(): no counts file for ", mark, " - ", f)
+    return(NULL)
+  }
+  dt  <- data.table::fread(f)
+  ids <- as.character(dt[[1]])                       # peak_id column
+  m   <- as.matrix(dt[, -1, with = FALSE])
+  stats::setNames(rowMeans(m, na.rm = TRUE), ids)
 }
 
 # --- Helper: bigWig paths for one mark, named by sample_id ---

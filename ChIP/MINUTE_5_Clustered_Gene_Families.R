@@ -87,7 +87,7 @@ g_fam_chg <- ggplot(long, aes(mark, log2FC, fill = mark)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
   geom_boxplot(outlier.size = 0.25, outlier.alpha = 0.2, linewidth = 0.3) +
   facet_wrap(~family, nrow = 1) +
-  scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
+  scale_fill_disc(guide = "none") +
   labs(title = "ChIP-signal change over gene-family exons (HP1gKO vs WT)",
        subtitle = "H3K9me3/H4K20me3 below 0 = loss of silencing marks over the family (CBX3/HUSH-dependent)",
        x = "Mark", y = "log2(KO / WT) per exon") +
@@ -118,8 +118,7 @@ g_fam_dot <- fam_summary %>%
          neglog10FDR = -log10(pmax(p_adj_BH, .Machine$double.xmin))) %>%
   ggplot(aes(mark, family, size = neglog10FDR, colour = median_log2FC)) +
   geom_point() +
-  scale_colour_gradient2(low = "steelblue3", mid = "grey90", high = "firebrick2",
-                         midpoint = 0, name = "median\nlog2FC") +
+  scale_colour_heat0_div( name = "median\nlog2FC") +
   scale_size_continuous(name = expression(-log[10]("FDR"))) +
   labs(title = "Gene-family exon change summary (HP1gKO vs WT)",
        subtitle = "colour = median log2(KO/WT); size = paired-Wilcoxon FDR", x = "Mark", y = NULL) +
@@ -131,7 +130,7 @@ g_fam_ma <- ggplot(long, aes((wt_signal + ko_signal) / 2, log2FC, colour = famil
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
   geom_point(size = 0.4, alpha = 0.4) +
   scale_x_log10() +
-  scale_colour_viridis_d(option = "D", end = 0.9, name = "Family") +
+  scale_colour_disc(name = "Family") +
   guides(colour = guide_legend(override.aes = list(size = 2.5, alpha = 1))) +
   facet_wrap(~mark, nrow = 1) +
   labs(title = "MA plot: gene-family exon change vs abundance",
@@ -157,6 +156,7 @@ draw_fam_hm <- function(mat, cols, ttl, name, w) {
   ha <- HeatmapAnnotation(Genotype = col_meta$Genotype[cols],
                           col = list(Genotype = geno_colors), show_annotation_name = TRUE)
   ht <- Heatmap(m, name = "row z", top_annotation = ha,
+                col = heat_col_fun(seq(-2, 2, length.out = length(heat_cols))),
                 column_split = droplevels(col_meta$Mark[cols]),
                 row_split = row_fam, cluster_columns = FALSE, cluster_rows = TRUE,
                 show_row_names = FALSE, show_column_names = FALSE,
@@ -294,7 +294,7 @@ g_prop <- ggplot(prop_sig, aes(reorder(family, -co_loss_frac), co_loss_frac, fil
   geom_text(aes(label = sprintf("%.0f%%%s\n(n=%d)", 100 * co_loss_frac,
                                 ifelse(!is.na(padj) & padj < 0.05, "*", ""), n_H4K20me3_lost)),
             vjust = -0.3, size = 3, lineheight = 0.9) +
-  scale_fill_viridis_d(option = "D", end = 0.9, guide = "none") +
+  scale_fill_disc(guide = "none") +
   ylim(0, 1.15) +
   labs(title = "H3K9me3 co-loss propensity by family vs genome-wide background",
        subtitle = sprintf("bars = H4K20me3-lost genes also losing H3K9me3; dashed = background (%.0f%%); * = Fisher vs background BH<0.05 (family_coloss_stats.txt)",
@@ -305,8 +305,8 @@ save_fig(g_prop, "family_coloss_propensity", "gene_families", width = 6.5, heigh
 
 # Plot B: dH3K9me3 vs dH4K20me3 per gene, faceted by family (the quantitative heatmap)
 cw[, class := factor(class, levels = c("co-loss (both)", "H4K20me3-only", "H3K9me3-only", "neither"))]
-class_cols <- c("co-loss (both)" = "#b2182b", "H4K20me3-only" = "#2166ac",
-                "H3K9me3-only" = "#f4a582", "neither" = "grey75")
+class_cols <- c("co-loss (both)" = gaby_cols[5], "H4K20me3-only" = gaby_cols[3],
+                "H3K9me3-only" = gaby_cols[2], "neither" = "grey75")
 g_cw <- ggplot(cw, aes(H4K20me3, H3K9me3, colour = class)) +
   geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
   geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey55") +

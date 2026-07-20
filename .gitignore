@@ -14,6 +14,8 @@ ChIP/results/figures/
 ChIP/results/bed/
 # large terminal cache (regenerable; not a downstream handoff)
 ChIP/results/rds/repeat_class_signal.rds
+# alternate output trees from MINUTE_RESULTS=... sensitivity runs (regenerable)
+ChIP/results_*/
 
 # Large raw inputs — downloaded from Google Drive (see ChIP/README.md), never
 # committed. Peaks (ChIP/data/peaks) ARE committed. Default download targets:
