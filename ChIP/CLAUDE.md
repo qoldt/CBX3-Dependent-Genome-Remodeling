@@ -23,6 +23,9 @@ handoff; every later stage reads it independently. Stage 6 also reads the
 family-exon signal persisted by **stage 5**.
 
 ```
+setup.R                                 # dependency manifest + installer (single source of truth
+  │                                     # for packages); config.R calls it, so a fresh clone
+  │                                     # self-installs on the first run
 config.R + samples.tsv                  # parameters + sample sheet (single sources of truth)
   │
 MINUTE_1_Count_and_Annotate.R           # bigWig signal -> counts -> DESeq2 -> annotate
@@ -74,6 +77,11 @@ source of truth** for parameters; stage scripts must not redefine them. It holds
 - Shared plotting constants + helpers: `geno_colors`, `repeat_palette`,
   `theme_m`, `mark_levels`, and `hyper_row()` (one hypergeometric enrichment
   row) — used across stages.
+- `ht_raster_device` — device ComplexHeatmap uses to rasterise heatmap bodies
+  over 2000 rows. Pass it to every `Heatmap()`. Its own default forces
+  `type = "cairo"` when `capabilities("cairo")` is TRUE, which on macOS without
+  XQuartz is TRUE while cairo cannot load — the temp image is never written and
+  the read-back fails. `ragg`'s `agg_png` needs no cairo/X11.
 - **Colour palettes** — all figure colours come from the [`ltc`](https://github.com/loukesio/ltc-color-palettes)
   package (`install.packages("ltc")`), and are defined in `config.R` only:
   - **discrete / categorical → `gaby`** (5 colours). Use `scale_fill_gaby()` /

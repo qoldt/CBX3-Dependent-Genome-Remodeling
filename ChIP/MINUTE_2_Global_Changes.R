@@ -240,7 +240,10 @@ ht <- Heatmap(
   column_split = col_annot$ChIP,
   column_title_gp = gpar(fontsize = 10),
   row_title = "Significant Peaks",
-  heatmap_legend_param = list(title = "Signal (Z-score)")
+  heatmap_legend_param = list(title = "Signal (Z-score)"),
+  # >2000 rows, so ComplexHeatmap rasterises the body; config.R picks a device
+  # that does not depend on cairo/XQuartz (see ht_raster_device there).
+  raster_device = ht_raster_device
 )
 
 #draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right")

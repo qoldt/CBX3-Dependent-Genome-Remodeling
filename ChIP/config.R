@@ -71,21 +71,31 @@ save_base_fig <- function(draw_fn, name, subdir = "", width = 10, height = 12, d
 annotated_rds <- file.path(rds_dir, "annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds")
 
 # --- Libraries (union used across the pipeline) ---
-# wigglescout is sensitive to its future/furrr stack. This is the ONLY combination
-# confirmed working here; restart R after installing so newer loaded versions unload:
-#   remotes::install_version("furrr",   version = "0.2.3")
-#   remotes::install_version("future",  version = "1.23.0")
-#   remotes::install_version("globals", version = "0.14.0")
-#   remotes::install_github("cnluzon/wigglescout")
-# If bw_loci() fails with "values must be length 1, but FUN(X[[i]]) result is
-# length N", the pins have drifted (or a stray future::plan() is set) - reinstall
-# the versions above / run future::plan("sequential"); do NOT edit the R scripts.
+# setup.R holds the dependency MANIFEST (CRAN / Bioconductor / GitHub) and the
+# installer. Sourcing it only defines functions; the call below installs whatever
+# is missing, so a fresh clone works on the first `Rscript run_MINUTE.R`.
+# Set MINUTE_AUTO_INSTALL=0 to turn the auto-install off (missing packages then
+# raise an error listing them, and `Rscript setup.R` installs them on demand).
+source("setup.R")
+minute_ensure_deps()
+
+# wigglescout <= 0.20 was sensitive to its future/furrr stack and needed pins
+# (furrr 0.2.3 / future 1.23.0 / globals 0.14.0), restarting R afterwards so newer
+# loaded versions unload. From 0.21 it no longer depends on future/furrr at all,
+# and setup.R installs the current release. On an OLD wigglescout, if bw_loci()
+# fails with "values must be length 1, but FUN(X[[i]]) result is length N", the
+# pins have drifted (or a stray future::plan() is set) - reinstall those versions
+# / run future::plan("sequential"); do NOT edit the R scripts.
 suppressPackageStartupMessages({
   library(ChIPseeker)
   library(AnnotationDbi)
   library(TxDb.Mmusculus.UCSC.mm39.knownGene)
   library(org.Mm.eg.db)
   library(GenomicRanges)
+  # GenomeInfoDb: seqlevelsStyle()<- / seqlevels(). GenomicRanges re-exported these
+  # up to Bioc 3.22 but no longer does (3.23+), so load it explicitly - the
+  # NCBI<->UCSC seqname flips throughout the pipeline depend on it.
+  library(GenomeInfoDb)
   library(rtracklayer)
   library(wigglescout)
   library(parallel)
@@ -98,6 +108,23 @@ suppressPackageStartupMessages({
   library(circlize)
   library(ltc)
 })
+
+# --- Heatmap rasterisation backend -------------------------------------------
+# ComplexHeatmap rasterises any heatmap body over 2000 rows: it renders the body
+# to a temporary image, reads it back, and embeds it as a single raster in the
+# figure. That is a FIGURE-SIZE optimisation, not data I/O - the alternative is
+# ~half a million vector rectangles in the PDF - but it does put an image device
+# on the pipeline's critical path.
+#
+# Its default device is grDevices::png(), and it forces type = "cairo" whenever
+# capabilities("cairo") is TRUE. On macOS without XQuartz that check LIES: R is
+# built with cairo support, so the flag is TRUE, but cairo.so cannot load (it
+# links to /opt/X11/lib). The device then fails to write the temp image with only
+# a warning, and the read-back dies with:
+#   Error in ... (temp_image) : unable to open ...heatmap_body_....png
+# ragg's agg_png is self-contained (no X11/cairo), and ComplexHeatmap does not
+# force a type on it. Pass this to every Heatmap() the pipeline draws.
+ht_raster_device <- if (requireNamespace("ragg", quietly = TRUE)) "agg_png" else "png"
 
 # --- Colour palettes: SINGLE SOURCE OF TRUTH for figure colours ---------------
 # Everything comes from the `ltc` package (install.packages("ltc")):
