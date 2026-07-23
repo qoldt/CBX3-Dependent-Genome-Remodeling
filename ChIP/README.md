@@ -111,42 +111,74 @@ elsewhere (e.g. an external mount).
 
 ## Requirements
 
-R (≥ 4.2) with the following packages:
+R (≥ 4.2). **Packages install themselves on the first run** — `config.R` sources
+`setup.R`, which holds the dependency manifest and installs anything missing
+(creating a user library first if there isn't a writable one, the usual snag on a
+fresh macOS R install). So on a clean machine this is the whole setup:
 
-**CRAN:** `data.table`, `dplyr`, `ggplot2`, `ggrepel`, `circlize`
-
-**Bioconductor:** `DESeq2`, `GenomicRanges`, `rtracklayer`, `ChIPseeker`,
-`AnnotationDbi`, `org.Mm.eg.db`, `TxDb.Mmusculus.UCSC.mm39.knownGene`,
-`ComplexHeatmap`
-
-**GitHub:** [`wigglescout`](https://github.com/cnluzon/wigglescout) — reads
-signal from bigWigs. It is **sensitive to the versions of its `future` stack**;
-this is the only combination confirmed working for this pipeline:
-
-| Package | Version | Source |
-|---------|---------|--------|
-| `furrr` | **0.2.3** | CRAN archive (`install_version`) |
-| `future` | **1.23.0** | CRAN archive |
-| `globals` | **0.14.0** | CRAN archive |
-| `wigglescout` | latest | `cnluzon/wigglescout` (GitHub) |
-
-```r
-install.packages("remotes")
-remotes::install_version("furrr",   version = "0.2.3")
-remotes::install_version("future",  version = "1.23.0")
-remotes::install_version("globals", version = "0.14.0")
-remotes::install_github("cnluzon/wigglescout")
+```sh
+cd ChIP && Rscript run_MINUTE.R      # installs what's missing, then runs
 ```
 
-**Restart R after installing** so any newer, already-loaded versions unload.
-Verify with `packageVersion("furrr")` etc. before running.
+To install without running the pipeline — or to repair an environment:
 
-> **Symptom of a version drift:** `bw_loci()` fails inside `MINUTE_1`/`MINUTE_3`
-> with `Error: values must be length 1, but FUN(X[[i]]) result is length N`. That
-> is `wigglescout`'s internal `future`/`furrr` map returning the wrong shape —
-> reinstall the pins above (and restart R) rather than editing the R scripts.
-> A stray `future::plan("multisession"/"multicore")` set by another package can
-> trigger the same error; `future::plan("sequential")` clears it.
+```sh
+Rscript setup.R
+```
+
+Set `MINUTE_AUTO_INSTALL=0` to disable the auto-install; missing packages then
+raise an error listing them instead of installing silently.
+
+The manifest lives in `setup.R` (`minute_deps`) and is the single source of truth
+— add a package there whenever you add a `library()` to `config.R`:
+
+**CRAN:** `data.table`, `dplyr`, `ggplot2`, `ggrepel`, `circlize`, `ltc`, `ragg`
+
+**Bioconductor:** `DESeq2`, `GenomicRanges`, `GenomeInfoDb`, `rtracklayer`,
+`ChIPseeker`, `AnnotationDbi`, `org.Mm.eg.db`,
+`TxDb.Mmusculus.UCSC.mm39.knownGene`, `ComplexHeatmap`
+
+**GitHub:** [`wigglescout`](https://github.com/cnluzon/wigglescout) — reads
+signal from bigWigs. **Pinned to a commit SHA** (`minute_pins` in `setup.R`):
+every number the pipeline produces comes through `bw_loci()`, so tracking `main`
+would let an upstream change move the results silently. The repo publishes no git
+tags, so a SHA is the only stable handle. An installed-but-off-pin copy is
+treated as missing and reinstalled, rather than accepted.
+
+CRAN/Bioconductor packages are not pinned individually — `BiocManager` ties the
+Bioconductor release to the R version. The manifest is a floor, not a lockfile;
+add `renv` if you need the whole graph locked.
+
+Confirmed working on R 4.6.1 / Bioconductor 3.23 / `wigglescout` 0.21.2
+(macOS arm64), and originally developed on R 4.2 / Bioc 3.16.
+
+> **`GenomeInfoDb` must be attached explicitly.** The pipeline flips seqnames
+> between NCBI (`1`) and UCSC (`chr1`) styles throughout. `GenomicRanges`
+> re-exported `seqlevelsStyle<-` up to Bioconductor 3.22 but no longer does, so on
+> Bioc ≥ 3.23 omitting it fails with
+> `could not find function "seqlevelsStyle<-"`.
+
+> **macOS without XQuartz: heatmaps fail on a cairo device that reports itself
+> as working.** Symptom, in `MINUTE_2`/`MINUTE_5`:
+> `Error in ...(temp_image) : unable to open ...heatmap_body_....png`.
+> ComplexHeatmap rasterises heatmap bodies over 2000 rows — it writes the body to
+> a temp image and reads it back — and forces `type = "cairo"` whenever
+> `capabilities("cairo")` is TRUE. On a CRAN macOS build that flag is TRUE while
+> `cairo.so` cannot actually load (it links to `/opt/X11/lib`, i.e. XQuartz), so
+> the write fails with only a warning and the read-back dies. `config.R` picks
+> `ragg`'s `agg_png` instead (`ht_raster_device`), which needs no cairo or X11.
+> Installing XQuartz also fixes it, but is not required.
+
+> **Older `wigglescout` (≤ 0.20) needed pinned `future`/`furrr`.** Symptom:
+> `bw_loci()` fails inside `MINUTE_1`/`MINUTE_3` with
+> `Error: values must be length 1, but FUN(X[[i]]) result is length N` — its
+> internal `future`/`furrr` map returning the wrong shape. The fix was
+> `remotes::install_version()` for `furrr` 0.2.3 / `future` 1.23.0 /
+> `globals` 0.14.0, then **restarting R** so newer loaded versions unload; a stray
+> `future::plan("multisession"/"multicore")` from another package triggers the
+> same error and `future::plan("sequential")` clears it. **From 0.21 `wigglescout`
+> dropped `future`/`furrr` entirely**, so `setup.R` installs the current release
+> and none of this applies. Never edit the R scripts to work around it.
 
 ---
 
