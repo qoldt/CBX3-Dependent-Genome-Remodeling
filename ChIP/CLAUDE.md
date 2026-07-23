@@ -161,7 +161,8 @@ bigWigs + annotation are hosted on Google Drive and download into repo-relative
 - Significance uses the **raw** `pvalue`, not BH-adjusted `padj`.
 - `annotated_results` (the `.rds`) contains **all** measured peaks with stats +
   annotation; significance is applied downstream, per stage, via `is_significant()`.
-- `results/` is git-ignored **except** `results/rds/` (the handoff `.rds` is tracked).
+- `results/` is git-ignored in full — every output, the `.rds` included, is
+  regenerable by `run_MINUTE.R` from the bigWigs + peaks + annotation.
 
 ## Not part of the pipeline
 

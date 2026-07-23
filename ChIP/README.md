@@ -96,7 +96,7 @@ ChIP/
     peaks/             # consensus/master peak BEDs             (committed)
     bigwig/            # *_<genotype>_rep*.mm39.scaled.bw       (download, git-ignored)
     annotation/        # LINE/SINE/LTR .mm39.bed + TAD BEDs     (download, git-ignored)
-  results/                                    # ALL generated output (git-ignored except rds/)
+  results/                                    # ALL generated output (git-ignored; regenerable)
     counts/  rds/  tables/  bed/
     figures/<subanalysis>/                     # per-analysis subfolders; each fig as .png + .pdf
   Minute Run/  Peak Calling/                  # cluster (Slurm) steps — see above
@@ -487,7 +487,7 @@ The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
 | File | Produced by | Contents |
 |------|-------------|----------|
 | `counts/<mark>_bigwig_counts.tsv` | MINUTE_1 | per-peak signal matrix |
-| `rds/annotated_results_...rds` | MINUTE_1 | all peaks + DESeq2 stats + annotation (tracked handoff) |
+| `rds/annotated_results_...rds` | MINUTE_1 | all peaks + DESeq2 stats + annotation (handoff to stages 2–7; git-ignored, regenerate with MINUTE_1) |
 | `figures/heatmap/2000maxgap_indsignificance_with_TAD.pdf` | MINUTE_2 | clustered heatmap of significant peaks (k-means, seeded) |
 | `figures/change_plots/<mark>_changes_by_chr_coloured_by_{genomic_region,repeat}.png` | MINUTE_2 | per-chromosome domain-size vs log2FC, sized by domain size, coloured by region/repeat |
 | `figures/change_plots/log2FC_distribution_by_mark.png` | MINUTE_2 | per-mark log2FC density + median (global-shift diagnostic) |

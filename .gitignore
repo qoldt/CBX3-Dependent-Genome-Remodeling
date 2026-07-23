@@ -6,14 +6,15 @@
 .RData
 .Rproj.user/
 
-# Generated analysis outputs — regenerable from the pipeline.
-# results/rds/ is intentionally NOT ignored (the handoff .rds is tracked).
+# Generated analysis outputs — regenerable from the bigWigs + peaks + annotation
+# by run_MINUTE.R, so none are committed (the .rds are tens of MB each). Only
+# MINUTE_3 can run off a committed handoff; every other stage re-reads bigWigs
+# anyway, so tracking the .rds bought little and cost repo size.
 ChIP/results/counts/
 ChIP/results/tables/
 ChIP/results/figures/
 ChIP/results/bed/
-# large terminal cache (regenerable; not a downstream handoff)
-ChIP/results/rds/repeat_class_signal.rds
+ChIP/results/rds/
 # alternate output trees from MINUTE_RESULTS=... sensitivity runs (regenerable)
 ChIP/results_*/
 

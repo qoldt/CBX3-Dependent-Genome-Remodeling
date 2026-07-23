@@ -15,7 +15,7 @@
 #     data/peaks/                consensus / master peak BEDs      (committed, small)
 #     $MINUTE_DATA/bigwig/       scaled mm39 bigWigs               (external, large)
 #     $MINUTE_DATA/annotation/   LINE / SINE / LTR / TAD BEDs      (external)
-#   Outputs (generated, git-ignored except results/rds/):
+#   Outputs (generated, git-ignored in full - all regenerable by run_MINUTE.R):
 #     results/counts/  results/rds/  results/tables/  results/figures/  results/bed/
 # ================================================================
 
