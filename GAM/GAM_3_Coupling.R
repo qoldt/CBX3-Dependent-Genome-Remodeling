@@ -40,6 +40,7 @@
 source("config.R")
 suppressPackageStartupMessages({
   library(ggplot2); library(data.table); library(GenomicRanges); library(IRanges)
+  library(patchwork)   # section D composes the synthesis panel; `+` needs it attached
 })
 
 
@@ -1211,4 +1212,90 @@ local({
   }
 
   message("GAM_4 done: tables in ", tables_dir, ", figures in ", file.path(fig_dir, sub_dir))
+})
+
+
+# ==============================================================================
+# SECTION D - the synthesis figure
+# ==============================================================================
+# The three sections above answer one question three ways and, until they were
+# merged, disagreed only in presentation. This panel says what each one actually
+# found, in plain language, on one page - so a reader does not have to
+# reconstruct it from three sets of axis labels and a machine-generated verdict
+# string.
+#
+# Deliberately NOT a new analysis. It reads the tables the sections just wrote.
+local({
+  f <- function(x) file.path(tables_dir, x)
+  need <- c("coupling_specificity.tsv", "gam7_coupling_by_distance.tsv",
+            "gam10_class_change.tsv")
+  if (!all(file.exists(f(need)))) {
+    message("synthesis figure skipped - needs: ", paste(need, collapse = ", "))
+    return(invisible(NULL))
+  }
+  FLAT <- 0.05
+
+  # --- panel 1: per-bin correlation, all five marks -------------------------
+  sp <- fread(f("coupling_specificity.tsv"))[variant == "raw"]
+  sp[, mark := factor(mark, levels = mark_levels)]
+  p1 <- ggplot(sp, aes(rho_lost, mark)) +
+    annotate("rect", xmin = -FLAT, xmax = FLAT, ymin = -Inf, ymax = Inf,
+             fill = "grey90") +
+    geom_vline(xintercept = 0, linewidth = .3, colour = "grey50") +
+    geom_errorbar(aes(xmin = ci_lo, xmax = ci_hi), orientation = "y",
+                  width = .18, colour = "grey35") +
+    geom_point(size = 2, colour = "#b2182b") +
+    # The x range must be wider than FLAT or the "too small to matter" band
+    # fills the panel and stops reading as a band.
+    coord_cartesian(xlim = c(-0.13, 0.13)) +
+    labs(subtitle = "1. Does a bin that loses more mark\n    also change its contacts more?",
+         x = "correlation across 20 kb bins", y = NULL,
+         caption = "grey band = too small to matter") +
+    theme_m + theme(plot.caption = element_text(hjust = 0, size = 7, colour = "grey40"))
+
+  # --- panel 2: the same question recounted locally, by distance ------------
+  g7 <- fread(f("gam7_coupling_by_distance.tsv"))[mark == "H4K20me3" & direction == "lost"]
+  g7 <- g7[band != "0-5Mb window"]
+  g7[, band := factor(band, levels = c("all (local)", "0.02-1Mb", "1-5Mb", "5-10Mb", ">10Mb"))]
+  p2 <- ggplot(g7, aes(rho, band)) +
+    annotate("rect", xmin = -FLAT, xmax = FLAT, ymin = -Inf, ymax = Inf, fill = "grey90") +
+    geom_vline(xintercept = 0, linewidth = .3, colour = "grey50") +
+    geom_point(size = 2, colour = "#b2182b") +
+    coord_cartesian(xlim = c(-0.13, 0.13)) +
+    labs(subtitle = "2. Same question, but counting contacts\n    locally instead of over 5 Mb",
+         x = "correlation across 20 kb bins", y = NULL,
+         caption = "H4K20me3; the 5 Mb window was a ~250x scale mismatch") +
+    theme_m + theme(plot.caption = element_text(hjust = 0, size = 7, colour = "grey40"))
+
+  # --- panel 3: where the effect actually is --------------------------------
+  cc <- fread(f("gam10_class_change.tsv"))[cls %in% c("inter_het", "eu_eu")]
+  cc[, cls := factor(fifelse(cls == "eu_eu", "euchromatin", "heterochromatin"),
+                     levels = c("heterochromatin", "euchromatin"))]
+  ord <- c("<0.2Mb", "0.2-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
+  cc <- cc[band %in% ord][, band := factor(band, levels = ord)]
+  p3 <- ggplot(cc, aes(band, pct, colour = cls, group = cls)) +
+    geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
+    geom_line() + geom_point(size = 1.8) +
+    geom_errorbar(aes(ymin = lo, ymax = hi), width = .15) +
+    scale_colour_manual(values = c(heterochromatin = "#b2182b", euchromatin = "#2166ac"),
+                        name = NULL) +
+    labs(subtitle = "3. Forget the marks' magnitude - just ask which\n    kind of chromatin changed",
+         x = "distance between the two bins", y = "change in contact strength (%)",
+         caption = "bars = 95% CI from a bootstrap over the 19 autosomes") +
+    theme_m + theme(legend.position = "bottom",
+                    plot.caption = element_text(hjust = 0, size = 7, colour = "grey40"))
+
+  pp <- p1 + p2 + p3 + patchwork::plot_layout(widths = c(1, 1, 1.25)) +
+    patchwork::plot_annotation(
+      title = "Does the H4K20me3 loss have a contact counterpart? Three ways of asking",
+      subtitle = paste0(
+        "Panels 1 and 2 find nothing, and that is a real negative, not a weak one: n = 119,952 bins, and the extremes make it concrete - ",
+        "bins losing the most\nH4K20me3 (median -0.76) and the least (-0.22) have identical contact densities. Panel 2 exists because panel 1's contact measure is ",
+        "integrated over\n5 Mb while the mark varies at 20 kb, so its null could have been a resolution limit; recounted locally, the null holds at every distance.\n\n",
+        "Panel 3 is where the signal is, and it is a different question: not 'how much mark did this bin lose' but 'what kind of chromatin is this'. ",
+        "Heterochromatin\ngains contacts while euchromatin loses them. So the architecture does change - it just does not track the size of the mark loss bin by bin."),
+      theme = theme(plot.title = element_text(face = "bold", size = 13),
+                    plot.subtitle = element_text(size = 8.5, colour = "grey25")))
+  save_fig(pp, "coupling_synthesis", subdir = "coupling", width = 13.5, height = 6.4)
+  cat("\nSaved the synthesis figure: figures/coupling/coupling_synthesis\n")
 })

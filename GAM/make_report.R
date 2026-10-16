@@ -171,8 +171,11 @@ parts$regions <- sec("Region plots",
   p_("Mark tracks are aggregated to 100 kb and faded by coverage, because per-bin log2FC at 20 kb is noise-dominated. Fill diverges from each mark's <em>genome median</em>, printed in the axis label &mdash; blue means above that median, which for a negative median is still a loss."),
   paste0(sapply(reg, function(r) embed_fig(sprintf("regions/%s.png", r), esc(r))), collapse = ""))
 
-parts$coupling <- sec("Coupling: where it stands",
-  "<div class='warn'>Three framings of one question currently coexist and disagree in presentation, not in substance. This section states them once; the figures themselves are still the old ones and are the lowest-priority item to redo.</div>",
+parts$coupling <- sec("Coupling: does the mark loss have a contact counterpart?",
+  p_("Three framings of one question, which until now lived in three files and disagreed only in presentation.",
+     "They are now one stage, and this figure is the synthesis:"),
+  embed_fig("coupling/coupling_synthesis.png"),
+  p_("In words:"),
   "<ul>",
   "<li><strong>GAM_3</strong> &mdash; per-bin Spearman of ChIP log2FC against differential-contact count. Returns a clean null: rho &minus;0.015 raw, &minus;0.046 partial on coverage, flat under every variant. Bins losing the most H4K20me3 (median &minus;0.764) and the least (&minus;0.222) have identical contact densities. n = 119,952, so this is a powered negative, not an underpowered one.</li>",
   "<li><strong>GAM_7</strong> &mdash; retracts GAM_3's premise: the contact variable is smeared over 5 Mb while the ChIP variable varies at 20 kb, a ~250&times; scale mismatch. The null is real for the question as posed but cannot distinguish &ldquo;no relationship&rdquo; from &ldquo;the contact variable cannot resolve that scale&rdquo;.</li>",
