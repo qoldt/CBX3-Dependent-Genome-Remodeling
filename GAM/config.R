@@ -169,6 +169,26 @@ chip_samples_tsv <- "../ChIP/samples.tsv"
 chip_peaks_dir <- "../ChIP/data/peaks"
 het_domain_bed <- file.path(chip_peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed")
 
+# Lamina-associated domains, Peric-Hupkes 2010 (GSE17051), lifted mm9 -> mm39 by
+# prepare_LAD_annotation.R. CONSTITUTIVE sets: cLAD is LAD in all four profiled
+# cell types, ciLAD is LAD in none. They are deliberately NOT neuronal - they are
+# the cell-type-invariant core, which is what makes them an axis independent of
+# our own marks and of either genotype. Per-cell-type (NPC, astrocyte) calls
+# exist in the same GEO entry if cell-type specificity ever matters.
+lad_bed   <- file.path(annot_dir, "cLAD_mm39.bed")
+cilad_bed <- file.path(annot_dir, "ciLAD_mm39.bed")
+load_lads <- function() {
+  if (!file.exists(lad_bed) || !file.exists(cilad_bed))
+    stop("LAD BEDs missing - run: Rscript prepare_LAD_annotation.R", call. = FALSE)
+  # One GRanges carrying a `class` column, not a list: every consumer so far
+  # wants to overlap both sets against the same bins and keep the label.
+  a <- rtracklayer::import(lad_bed);   a$class <- "cLAD"
+  b <- rtracklayer::import(cilad_bed); b$class <- "ciLAD"
+  g <- c(a, b)
+  g$class <- factor(g$class, levels = c("cLAD", "ciLAD"))
+  g
+}
+
 # --- Sample sheet + exclusion (mirrors ChIP/config.R) ------------
 # DEFAULT: HP1gKO rep2 is EXCLUDED, exactly as on the ChIP side - it is the
 # highest-signal library in all five marks and discordant with rep3, its own

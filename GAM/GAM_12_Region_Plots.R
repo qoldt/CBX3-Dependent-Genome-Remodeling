@@ -38,16 +38,33 @@ suppressPackageStartupMessages({ library(ggplot2); library(data.table); library(
 gam12_maxdist   <- NULL
 gam12_hotline   <- 5e6     # where the hotspot integration window ends
 
-# RAW NPMI panels: blue - white - yellow - orange - red. NPMI runs [-1, 1] with
-# 0 meaning independence, so white belongs at zero rather than at the bottom of
-# a sequential ramp.
-npmi_cols <- c("#2166ac", "#67a9cf", "#d1e5f0", "#ffffff",
-               "#fff0b3", "#fdae61", "#e8602c", "#a50026")
-# DIFFERENCE panel: a plain two-sided blue/red. A difference has no meaningful
-# intermediate colour the way NPMI's own scale does, and the yellow/orange band
-# reads as a third category rather than as "more".
+# RAW NPMI panels: blue (low) - white - yellow - orange - red (high), spanning
+# 0 to roughly the 99th percentile. Matching the collaborators' own figures:
+# their scale bar runs 0.0 to ~0.35 with blue at the BOTTOM, i.e. it is a
+# sequential ramp over the positive range, NOT a diverging scale centred on
+# zero. Centring at zero (an earlier attempt here) pushes nearly every value
+# into the warm half and flattens the structure, because almost all NPMI in a
+# cis matrix is positive.
+npmi_cols <- c("#3a6daa", "#73a8cd", "#c8e0ee", "#ffffff",
+               "#ffe9a8", "#fdc266", "#f08a3c", "#cf4b28")
+# DIFFERENCE panel: plain two-sided blue/red on a FIXED symmetric limit.
 diff_cols <- c("#2166ac", "#6ba3cd", "#ffffff", "#d6604d", "#b2182b")
+# Fixed delta-z limit, again matching their figures (scale bar -4 to +4). A
+# data-driven limit (we used the 99th percentile of |delta-z|) rescales every
+# panel to its own extremes, saturates the whole map and makes regions
+# incomparable; a fixed limit leaves the bulk pale so the strong contacts show.
+gam12_dz_lim    <- 4
+gam12_npmi_qcap <- 0.99
 gam12_hot_cut   <- 50      # slides: 50-75 differential contacts per window
+gam12_hot_mode  <- "both"  # "both" = net over heatmap; or "net" / "split"
+
+# Row heights in inches. Absolute, so the layout is the same whatever the region.
+gam12_h_hot    <- 0.75
+gam12_h_hotmap <- 0.55
+gam12_h_lad    <- 0.22
+gam12_h_mark   <- 0.70
+gam12_h_gene   <- 0.80
+gam12_h_chrome <- 1.70   # title, caption, x axis, inter-panel margins
 
 # Gene models for the annotation track, loaded once.
 GENES <- local({
@@ -109,21 +126,23 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
   if (is.null(maxdist)) maxdist <- to - from      # full distance: a true triangle
 
   # --- contact difference over the region ------------------------------------
-  raw_tri <- function(M, pos, ttl) {
-    # Raw NPMI on a sequential scale, 0 to the 99th percentile of THIS panel -
-    # the convention in Winick-Ng Fig. 1c. Shown per genotype so the structure
-    # is visible before any differencing.
+  raw_tri <- function(M, pos, ttl, cap = NULL) {
+    # Raw NPMI on a sequential scale, 0 to the 99th percentile - the convention
+    # in Winick-Ng Fig. 1c. Shown per genotype so the structure is visible
+    # before any differencing. `cap` is passed in and SHARED between the two
+    # genotypes: a per-panel cap put WT and HP1gKO on different scales, which
+    # defeats the whole point of showing them one above the other.
     mm <- nrow(M)
     q <- CJ(i = seq_len(mm), j = seq_len(mm))[j > i]
     q[, d := pos[j] - pos[i]]
     q <- q[d <= maxdist]
     q[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = M[cbind(i, j)])]
     q <- q[is.finite(v)]
-    cap <- as.numeric(quantile(abs(q$v), .99, na.rm = TRUE))
-    ggplot(q, aes(x, y, fill = pmax(-cap, pmin(v, cap)))) +
+    if (is.null(cap)) cap <- as.numeric(quantile(q$v, gam12_npmi_qcap, na.rm = TRUE))
+    ggplot(q, aes(x, y, fill = pmin(pmax(v, 0), cap))) +
       geom_tile(width = tw, height = tw) +
-      scale_fill_gradientn(colours = npmi_cols, limits = c(-cap, cap),
-                           name = "NPMI", guide = guide_colourbar(barheight = 3)) +
+      scale_fill_gradientn(colours = npmi_cols, limits = c(0, cap),
+                           name = "NPMI", guide = guide_colourbar(barheight = grid::unit(2.4, "cm"))) +
       scale_y_continuous(expand = c(0, 0), name = "sep (Mb)") +
       scale_x_continuous(expand = c(0, 0)) +
       coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
@@ -206,20 +225,21 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
   ij <- ij[d <= maxdist]
   ij[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = D[cbind(i, j)])]
   ij <- ij[is.finite(v)]
-  lim <- as.numeric(quantile(abs(ij$v), 0.99, na.rm = TRUE))
+  lim <- if (identical(diff_mode, "deltaz")) gam12_dz_lim
+         else as.numeric(quantile(abs(ij$v), 0.99, na.rm = TRUE))
   tw <- dbin / 1e6   # tiles overlap 2x on the rotated lattice, which fills it
 
   p_map <- ggplot(ij, aes(x, y, fill = pmax(-lim, pmin(lim, v)))) +
     geom_tile(width = tw, height = tw) +
     scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim), name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
-                         guide = guide_colourbar(barheight = 4)) +
+                         guide = guide_colourbar(barheight = grid::unit(2.8, "cm"))) +
     { if (gam12_hotline / 2 < maxdist / 2)
         geom_hline(yintercept = gam12_hotline / 2e6, linetype = 2, linewidth = .3,
                    colour = "grey30") } +
     { if (gam12_hotline / 2 < maxdist / 2)
         annotate("text", x = from / 1e6, y = gam12_hotline / 2e6, hjust = -0.04, vjust = -0.5,
                  size = 2.3, colour = "grey30", label = "max hotspot distance") } +
-    scale_y_continuous(expand = c(0, 0), name = "separation (Mb)") +
+    scale_y_continuous(expand = c(0, 0), name = "sep (Mb)") +
     scale_x_continuous(expand = c(0, 0)) +
     coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
     labs(subtitle = if (identical(diff_mode, "deltaz"))
@@ -229,27 +249,109 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                     plot.subtitle = element_text(size = 9),
                     plot.margin = margin(2, 4, 1, 4))
 
-  # --- hotspots as a heatmap: one row per direction ---------------------------
-  # Two rows read better than back-to-back bars at this width: the eye picks out
-  # contiguous patches of colour, which is what a hotspot IS, rather than trying
-  # to integrate a spiky bar profile.
-  hm <- melt(reg[, .(mid = (start + end) / 2e6,
-                     `lost in cKO` = n_contacts_lost,
-                     `gained in cKO` = n_contacts_gained)],
-             id.vars = "mid", variable.name = "dirn", value.name = "n")
-  hm[, dirn := factor(dirn, levels = c("gained in cKO", "lost in cKO"))]
-  hcap <- as.numeric(quantile(c(reg$n_contacts_lost, reg$n_contacts_gained), 0.99))
-  p_hot <- ggplot(hm, aes(mid, dirn, fill = pmin(n, hcap))) +
-    geom_tile(width = gam_binsize / 1e6, height = 0.92) +
-    scale_fill_gradientn(colours = c("white", "#f7c6b0", "#e06b4a", "#9e2a1f"),
-                         name = "diff.\ncontacts",
-                         guide = guide_colourbar(barheight = 3.2)) +
-    scale_x_continuous(expand = c(0, 0)) +
-    scale_y_discrete(expand = c(0, 0)) +
-    coord_cartesian(xlim = c(from, to) / 1e6) +
-    labs(y = NULL) +
-    theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
-                    panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
+  # --- hotspots: ONE net track, signed like the difference map above it -------
+  # These counts ARE contacts: per 20 kb bin, how many significant differential
+  # contacts (|delta-z| > 2, max NPMI > 0.1) that bin takes part in within 5 Mb,
+  # counted separately for the two directions. Plotting the two directions as
+  # separate rows asked the reader to subtract them by eye, so the default here
+  # is the net:
+  #
+  #     net = gained in cKO - lost in cKO
+  #
+  # which carries exactly the sign convention of the delta-z triangle (KO - WT),
+  # and takes its red and blue from the same palette. A bin that is red in the
+  # map is red in this track. Magnitude is the bar height, so a bin with 60 in
+  # each direction reads as "busy but balanced" (bar near zero), which a pair of
+  # heatmap rows showed as two hot patches and a single heatmap row could not
+  # show at all.
+  #
+  # gam12_hot_mode = "split" restores the two-row version: the net hides
+  # reciprocal bins, and that is occasionally the thing being asked about.
+  # The per-direction heatmap, kept as its own track: the net above hides a bin
+  # that is busy in BOTH directions (60 lost and 60 gained nets to zero), and
+  # those reciprocal bins are exactly where contacts are being redistributed
+  # rather than simply removed. Net answers "which way"; the heatmap answers
+  # "how much traffic, each way".
+  p_hot_hm <- local({
+    hm <- melt(reg[, .(mid = (start + end) / 2e6,
+                       `lost in cKO` = n_contacts_lost,
+                       `gained in cKO` = n_contacts_gained)],
+               id.vars = "mid", variable.name = "dirn", value.name = "n")
+    hm[, dirn := factor(dirn, levels = c("gained in cKO", "lost in cKO"))]
+    hcap <- as.numeric(quantile(c(reg$n_contacts_lost, reg$n_contacts_gained), 0.99))
+    if (!is.finite(hcap) || hcap <= 0) hcap <- 1
+    ggplot(hm, aes(mid, dirn, fill = pmin(n, hcap))) +
+      geom_tile(width = gam_binsize / 1e6, height = 0.92) +
+      scale_fill_gradientn(colours = c("white", "#f7c6b0", "#e06b4a", "#9e2a1f"),
+                           name = "diff.\ncontacts",
+                           guide = guide_colourbar(barheight = grid::unit(2.4, "cm"))) +
+      scale_x_continuous(expand = c(0, 0)) +
+      scale_y_discrete(expand = c(0, 0)) +
+      coord_cartesian(xlim = c(from, to) / 1e6) +
+      labs(y = NULL) +
+      theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                      axis.text.y = element_text(size = 6.5),
+                      panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
+  })
+
+  p_hot_net <- local({
+    hd <- reg[, .(mid = (start + end) / 2e6,
+                  net = n_contacts_gained - n_contacts_lost)]
+    # Symmetric limit so the two directions are drawn on one scale; without it a
+    # region that mostly loses contacts makes its few gains look enormous.
+    ncap <- as.numeric(quantile(abs(hd$net), 0.995, na.rm = TRUE))
+    if (!is.finite(ncap) || ncap <= 0) ncap <- 1
+    hd[, nc := pmax(-ncap, pmin(net, ncap))]
+    ggplot(hd, aes(mid, nc, fill = nc > 0)) +
+      geom_col(width = gam_binsize / 1e6) +
+      geom_hline(yintercept = 0, linewidth = .25, colour = "grey40") +
+      scale_fill_manual(values = c(`TRUE` = "#b2182b", `FALSE` = "#2166ac"),
+                        guide = "none") +
+      scale_x_continuous(expand = c(0, 0)) +
+      # Breaks at +/-ncap sit exactly on the panel edges (expand = 0) and collide
+      # with the rows above and below, so the scale goes in the axis title and
+      # only the zero line is labelled.
+      scale_y_continuous(limits = c(-ncap, ncap), expand = c(0, 0), breaks = 0) +
+      coord_cartesian(xlim = c(from, to) / 1e6) +
+      labs(y = sprintf("net diff.\ncontacts (+/-%d)", round(ncap))) +
+      theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                      axis.title.y = element_text(size = 7),
+                      panel.grid.major.x = element_blank(),
+                      plot.margin = margin(1, 4, 1, 4))
+  })
+
+  # "both" (the default) stacks net over heatmap; "net" and "split" give one.
+  hot_panels <- switch(gam12_hot_mode,
+                       net   = list(p_hot_net),
+                       split = list(p_hot_hm),
+                       list(p_hot_net, p_hot_hm))
+  hot_h <- switch(gam12_hot_mode,
+                  net   = gam12_h_hot,
+                  split = gam12_h_hotmap,
+                  c(gam12_h_hot, gam12_h_hotmap))
+
+  # --- LAD ribbon -------------------------------------------------------------
+  # Constitutive LADs (Peric-Hupkes 2010, lifted to mm39). External to both our
+  # genotypes and all five marks, so it is the one axis in this figure that
+  # cannot be circular. Drawn as a thin ribbon rather than a track because the
+  # only question asked of it is "is this stretch peripheral or not".
+  lads <- tryCatch(load_lads(), error = function(e) NULL)
+  p_lad <- if (is.null(lads)) NULL else {
+    lg <- as.data.table(as.data.frame(
+      IRanges::subsetByOverlaps(lads, GRanges(chrom, IRanges(from, to)))))
+    lg <- lg[, .(s = pmax(start, from) / 1e6, e = pmin(end, to) / 1e6, class)]
+    ggplot(lg) +
+      geom_rect(aes(xmin = s, xmax = e, ymin = 0, ymax = 1, fill = class)) +
+      scale_fill_manual(values = c(cLAD = "#53426b", ciLAD = "#cbbddc"),
+                        name = NULL, drop = FALSE) +
+      scale_x_continuous(expand = c(0, 0), limits = c(from, to) / 1e6) +
+      scale_y_continuous(expand = c(0, 0)) +
+      labs(y = "LAD") +
+      theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                      axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+                      axis.title.y = element_text(size = 7),
+                      panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
+  }
 
   # --- ChIP tracks ------------------------------------------------------------
   # Mark tracks: a smoothed profile, not one bar per 20 kb bin. Fill is by the
@@ -363,53 +465,144 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
   # undistorted however wide the region is.
   panel_w  <- max(2, fig_width - side_allow)      # inches of plotting area
   map_h_in <- panel_w * ((maxdist / 2) / (to - from))
-  tri <- if (show_raw) list(raw_tri(W0, pos, "WT"), raw_tri(K0, pos, "HP1gKO"), p_map)
+  # One cap from the pooled values of both genotypes, so the two raw panels are
+  # directly comparable and patchwork can collect their now-identical scales
+  # into a single legend instead of drawing two.
+  npmi_cap <- if (!show_raw) NULL else local({
+    kk <- CJ(i = seq_len(nrow(W0)), j = seq_len(nrow(W0)))[j > i]
+    kk <- kk[pos[j] - pos[i] <= maxdist]
+    v  <- c(W0[cbind(kk$i, kk$j)], K0[cbind(kk$i, kk$j)])
+    as.numeric(quantile(v[is.finite(v)], gam12_npmi_qcap, na.rm = TRUE))
+  })
+  tri <- if (show_raw) list(raw_tri(W0, pos, "WT", npmi_cap),
+                            raw_tri(K0, pos, "HP1gKO", npmi_cap), p_map)
          else list(p_map)
   # The raw panels are reference, the difference is the point, and the mark
   # panels need real height or their axis titles collapse into each other.
   # Absolute inches for every map row (so coord_fixed is honoured exactly),
   # relative "null" units for the tracks (so they share what is left).
   n_tri   <- length(tri)
-  track_h <- c(0.42, rep(0.78, length(panels)), 0.85)
-  heights <- grid::unit(c(rep(map_h_in, n_tri), track_h),
-                        c(rep("in", n_tri), rep("null", length(track_h))))
-  wrap_plots(c(tri, list(p_hot), panels, list(p_gene)), ncol = 1, heights = heights) +
+  # EVERY row gets an absolute height. Mixing "in" map rows with "null" track
+  # rows made the layout non-deterministic: patchwork hands the null rows
+  # whatever is left of the figure height, so shrinking the maps (a wide region,
+  # or a band) inflated the tracks to fill the page and the maps came out as
+  # slivers. With all rows in inches the figure height is just their sum, and a
+  # map row is the same physical size whatever else is in the figure.
+  lad_h   <- if (is.null(p_lad)) numeric(0) else gam12_h_lad
+  track_h <- c(hot_h, lad_h, rep(gam12_h_mark, length(panels)), gam12_h_gene)
+  heights <- grid::unit(c(rep(map_h_in, n_tri), track_h), "in")
+  # guides = "collect" is essential here, not cosmetic. Without it every panel
+  # keeps its own legend, and patchwork centres each one on ITS OWN ROW - so the
+  # LAD legend (two keys) was being centred on a 0.22 in row and spilled over
+  # the legends above and below it. Collected and top-justified, they stack.
+  wrap_plots(c(tri, hot_panels, if (is.null(p_lad)) NULL else list(p_lad),
+               panels, list(p_gene)), ncol = 1, heights = heights) +
+    plot_layout(guides = "collect") +
     plot_annotation(
       title = sprintf("%s:%.2f-%.2f Mb", chrom, from / 1e6, to / 1e6),
       theme = theme(plot.caption = element_text(hjust = 0, size = 7),
-                    plot.title = element_text(face = "bold", size = 13)),
+                    plot.title = element_text(face = "bold", size = 13),
+                    legend.spacing.y = grid::unit(12, "pt"),
+                    legend.box.spacing = grid::unit(10, "pt")),
       caption = paste0(
       "GAM: CA1 pyramidal cells, HP1g WT/cKO, 20 kb, |delta-z|>2, max NPMI>0.1; hotspots over 0-5 Mb. ",
       "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT).\n",
       "Contact map block-averaged and 3x3 smoothed for display; mark tracks running-mean smoothed. ",
       "All statistics elsewhere use unsmoothed values. Mark fill diverges from each mark's genome median (solid line); ",
-      "dotted line is zero where in range.")) -> out
-  attr(out, "gam_map_in") <- list(n = n_tri, h = map_h_in)
+      "dotted line is zero where in range.\n",
+      "Net diff. contacts = gained - lost per 20 kb bin, same sign convention as the difference map. ",
+      "LADs: constitutive cLAD/ciLAD, Peric-Hupkes 2010 (GSE17051), lifted mm9->mm39.")) &
+    theme(legend.justification = "top") -> out
+  # Exact figure height: every row plus the title/caption/axis furniture.
+  attr(out, "gam_map_in") <- list(n = n_tri, h = map_h_in,
+                                  total = n_tri * map_h_in + sum(track_h) + gam12_h_chrome)
   out
 }
 
-# --- the collaborators' own example regions, plus our blocks -----------------
+# --- regions -----------------------------------------------------------------
+# Each is rendered twice:
+#   <name>        full contact distance - a true isoceles triangle, every scale
+#                 comparable, but tall (three stacked maps at aspect 0.5).
+#   <name>_band   distance capped at gam12_band, which keeps the cells square
+#                 (the aspect just gets flatter) and fits on a screen.
+#
+# WHY 5 Mb FOR THE BAND. It is the window the delivered hotspot track integrates
+# over, so the map and the hotspot rows below it then describe exactly the same
+# contacts - anything visible in the band is in the track, and vice versa. It
+# also keeps every band plot on one distance scale, so regions are comparable.
+# The caveat is that several of our effects run past it: the chr16 block loses
+# most at 5-14 Mb and chr11 PROX at 5-20 Mb. For those, a wider band is the
+# right call; gam_region_plot(..., maxdist = 20e6) does it without touching
+# anything else, and the cells stay square because coord_fixed does not care
+# how flat the band is.
+# BAND SIZING. A fixed band distance cannot work across region sizes, because
+# what the eye reads is the panel's ASPECT, (maxdist / 2) / region width. At a
+# fixed 5 Mb that aspect is 0.045 over a 55 Mb region (an unreadable sliver) and
+# 1.39 over the 1.8 Mb Pcdh window - taller than the full triangle, and asking
+# for 5 Mb separations that a 1.8 Mb window does not contain.
+#
+# So the band is specified the way it is actually judged: by how tall the map
+# panel should be on the page. The distance follows from the geometry,
+#
+#     maxdist = 2 * (target height / panel width) * region width
+#
+# which keeps every band panel the same physical size. On the 24 Mb chr11 region
+# this lands at ~5 Mb, i.e. it reproduces the hand-picked value that looked
+# right, and it scales that same appearance to chr3 (~12 Mb) and chr16 (~21 Mb).
+# Those larger bands are also the honest ones for those regions: the chr16 block
+# operates at 5-14 Mb separations, which a 5 Mb band would have cut off.
+gam12_band_h   <- 0.95   # inches: target height of a band map panel
+gam12_band_min <- 2e6    # below this a band shows too few diagonals to read
+
+# The same NULL-means-whole-chromosome rule gam_region_plot() uses, hoisted so
+# the driver can size the band before building the plot.
+region_span <- function(chrom, from = NULL, to = NULL) {
+  reg <- A[chr == chrom]
+  c(if (is.null(from)) min(reg$start) else from,
+    if (is.null(to))   max(reg$end)   else to)
+}
+
+band_maxdist <- function(from, to, panel_w) {
+  md <- 2 * (gam12_band_h / panel_w) * (to - from)
+  max(md, gam12_band_min)
+}
+
 regions <- list(
   list("chr3",  30e6,  85e6, "chr3_30-85Mb"),
   list("chr11", 100e6, 125e6, "chr11_100-125Mb"),
   list("chr11", 1e6,   25e6,  "chr11_1-25Mb_lostblock"),
   list("chr16", NULL,  NULL,  "chr16_full"),
+  list("chr16", 70e6,  90e6,  "chr16_73-87Mb_lostblock"),
   list("chr18", 36.6e6, 38.4e6, "chr18_Pcdh"),
   list("chr18", 35.5e6, 39.5e6, "chr18_Pcdh_context")
 )
+FIGW <- 11; SIDE <- 2.6
 for (r in regions) {
-  nm <- r[[4]]
-  message("Plotting ", nm)
-  FIGW <- 11; SIDE <- 2.6
-  p <- tryCatch(gam_region_plot(r[[1]], r[[2]], r[[3]], fig_width = FIGW, side_allow = SIDE),
-                error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
-  if (!is.null(p)) {
-    # Total height = the map rows at their required absolute height, plus a
-    # fixed allowance for the tracks, title and caption. Saving at any other
-    # height would leave the maps correct but the tracks squeezed or stretched.
-    a <- attr(p, "gam_map_in")
-    h <- if (is.null(a)) 14 else a$n * a$h + 6.5
-    save_fig(p, nm, subdir = "regions", width = FIGW, height = h)
+  for (mode in c("full", "band")) {
+    nm <- if (mode == "band") paste0(r[[4]], "_band") else r[[4]]
+    md <- NULL
+    if (mode == "band") {
+      lim <- region_span(r[[1]], r[[2]], r[[3]])
+      md  <- band_maxdist(lim[1], lim[2], max(2, FIGW - SIDE))
+      # A "band" as tall as the full triangle is the full triangle. Emitting it
+      # under a _band name would just be a duplicate file with a misleading name.
+      if (md >= 0.9 * (lim[2] - lim[1])) {
+        message("Skipping ", nm, ": region is ", round((lim[2] - lim[1]) / 1e6, 1),
+                " Mb, the full triangle is already compact")
+        next
+      }
+    }
+    message("Plotting ", nm,
+            if (is.null(md)) "" else sprintf(" (band %.1f Mb)", md / 1e6))
+    p <- tryCatch(gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
+                                  fig_width = FIGW, side_allow = SIDE),
+                  error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
+    if (!is.null(p)) {
+      a <- attr(p, "gam_map_in")
+      h <- if (is.null(a)) 14 else a$total
+      save_fig(p, nm, subdir = "regions", width = FIGW, height = h)
+    }
   }
 }
-cat("\nGAM_12 complete. gam_region_plot() is reusable for any region.\n")
+cat("\nGAM_12 complete. gam_region_plot() is reusable for any region;",
+    "pass maxdist to set the band height.\n")
