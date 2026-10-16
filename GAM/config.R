@@ -163,6 +163,11 @@ minute_data <- path.expand(Sys.getenv("MINUTE_DATA", unset = "../ChIP/data"))
 bigwig_dir  <- file.path(minute_data, "bigwig")
 annot_dir   <- file.path(minute_data, "annotation")
 chip_samples_tsv <- "../ChIP/samples.tsv"
+# The consensus peak BEDs are committed in the ChIP tree (small), unlike the
+# bigWigs and annotation. GAM_10 reads the merged H3K9me3/H4K20me3 set from here
+# to define heterochromatin domains.
+chip_peaks_dir <- "../ChIP/data/peaks"
+het_domain_bed <- file.path(chip_peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed")
 
 # --- Sample sheet + exclusion (mirrors ChIP/config.R) ------------
 # DEFAULT: HP1gKO rep2 is EXCLUDED, exactly as on the ChIP side - it is the
