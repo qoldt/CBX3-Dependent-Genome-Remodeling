@@ -83,6 +83,38 @@ inlining it. GAM-only dependency: `R.utils` (for gzipped `fread`).
     `scale_fill_heat0_div`, `heat_col_fun`, `geno_colors`, `repeat_palette`,
     `theme_m`). No raw hex. Save with `save_fig(plot, name, subdir=)`.
 
+## The ChIP tracks at 20 kb are noise-dominated (2026-10-16)
+
+The genome-wide medians are sound. **Local per-bin structure is not**, and it has
+already been misread once.
+
+The bigWigs are input-scaled, so per-bin coverage is 0.1-3, not counts. GAM_1
+multiplies by `gam_count_scale` (10) and rounds so DESeq2 has integers, which
+means DESeq2 sees roughly **1-11 per 20 kb bin**, and `results()` returns an
+**unshrunk** `log2FoldChange`. Measured per-bin sd: 0.14-0.16 for the broad
+marks, up to **0.57 for H3K4me3** in its lowest-coverage quartile. 84% of
+H3K4me3 bins have `baseMean < 0.5`; 30% of H3K9me3 bins and 17% of H3K36me3.
+
+What this cost: H3K36me3 appeared to be **increased** over the Pcdh cluster. It
+is not. Pcdh median is -0.049 against a genome median of -0.052, p = 0.93 versus
+the rest of the genome, and the apparent bulge at chr18:37.3-37.8 Mb is -0.061,
+p = 0.55. **Nothing at Pcdh differs from genome background at 20 kb, H3K4me3
+included** - the peak-level H3K4me3 gain is a promoter-scale effect that a 20 kb
+bin dilutes away. Use the ChIP peak-level results for anything focal.
+
+**`lfcShrink` is not the fix.** ashr collapses H3K36me3 and H3K9me2 to exactly
+0.000 (sd 0.000) and pulls H4K20me3 from -0.497 to -0.212, because a shrinkage
+prior assumes most effects are null - the same assumption as median-of-ratios
+normalisation, which `sizeFactors = 1` exists here to avoid. Do not re-test this.
+
+The fix is representational, and GAM_12 implements it: aggregate the DISPLAY to
+`gam12_mark_binsize` (100 kb), coverage-weighted; floor the panel y-span
+(`gam12_mark_minspan`) so a narrow dynamic range is not stretched to full height;
+and set opacity from `baseMean` against the mark's q90 so regions with no signal
+visibly fade. Also note the track FILL diverges from each mark's **genome
+median**, not from zero - blue means "above that median", which for a negative
+median is still a loss.
+
 ## A/B compartments: PARKED, axis weakly determined (2026-10-16)
 
 The compartment call runs and no longer produces artifacts, but it is **not

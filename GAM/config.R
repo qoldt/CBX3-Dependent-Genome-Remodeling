@@ -189,6 +189,124 @@ load_lads <- function() {
   g
 }
 
+# --- TAD partitions -----------------------------------------------------------
+# Two independent partitions, kept side by side on purpose. Any "this locus talks
+# to distal TADs differently" claim depends on where the boundaries are, so a
+# result that only holds under one partition is a result about the partition.
+#
+#   EXTERNAL  published boundaries, fixed across genotypes. Non-circular, but a
+#             different cell type and blind to anything the KO does.
+#   OWN       insulation minima from our own GAM, per genotype. Self-consistent
+#             with the contact data and free to move between genotypes, but it is
+#             our own call, so it cannot also be evidence about boundary strength.
+tad_boundary_bed <- file.path(annot_dir, "TAD_boundaries_mm39.bed")
+
+# Intervals are the spans BETWEEN consecutive boundaries. The deposited
+# boundaries are ~150 kb wide, so a TAD runs from the end of one to the start of
+# the next; the boundary bodies themselves belong to neither TAD.
+load_tads_external <- function(chroms = gam_autosomes) {
+  if (!file.exists(tad_boundary_bed))
+    stop("missing TAD boundaries: ", tad_boundary_bed, call. = FALSE)
+  b <- data.table::fread(tad_boundary_bed, header = FALSE, select = 1:3,
+                         col.names = c("chr", "start", "end"))
+  b[, chr := ifelse(grepl("^chr", chr), chr, paste0("chr", chr))]
+  b <- b[chr %in% chroms]
+  data.table::setorder(b, chr, start)
+  out <- b[, {
+    s <- end[-.N]; e <- start[-1]
+    .(start = s, end = e)
+  }, by = chr]
+  out <- out[end > start]
+  out[, tad_id := sprintf("%s:%d-%d", chr, start, end)]
+  out[]
+}
+
+# Insulation here is mean NPMI ACROSS the boundary at bin i (GAM_2), so a LOW
+# value means few cross-boundary contacts, i.e. a strong boundary - boundaries
+# are local MINIMA. Prominence is measured in local sd so one threshold works on
+# chromosomes with different contact density.
+gam_tad_insul <- list(smooth_bins = 5L, win = 10L, prominence = 0.5, min_bins = 10L)
+
+call_tads_insulation <- function(genotype = c("WT", "HP1gKO"),
+                                 chroms = gam_autosomes,
+                                 pars = gam_tad_insul) {
+  genotype <- match.arg(genotype)
+  f <- file.path(results_dir, "rds", "npmi_bin_features.rds")
+  if (!file.exists(f)) stop("run GAM_2 first: ", f, call. = FALSE)
+  ft <- data.table::as.data.table(readRDS(f)$features)
+  col <- paste0("insulation_", genotype)
+  ft <- ft[chr %in% chroms, .(chr, start, end, v = get(col))]
+  data.table::setorder(ft, chr, start)
+  bd <- ft[, {
+    y <- v
+    g <- is.finite(y)
+    num <- as.numeric(stats::filter(ifelse(g, y, 0), rep(1, pars$smooth_bins), sides = 2))
+    den <- as.numeric(stats::filter(g * 1, rep(1, pars$smooth_bins), sides = 2))
+    sm  <- ifelse(is.finite(den) & den > 0, num / den, NA_real_)
+    n <- length(sm); idx <- seq_len(n)
+    isMin <- vapply(idx, function(i) {
+      w <- seq(max(1L, i - pars$win), min(n, i + pars$win))
+      is.finite(sm[i]) && sum(is.finite(sm[w])) > pars$win &&
+        sm[i] <= min(sm[w], na.rm = TRUE)
+    }, logical(1))
+    sdv <- stats::sd(sm, na.rm = TRUE)
+    prom <- vapply(idx, function(i) {
+      w <- seq(max(1L, i - pars$win), min(n, i + pars$win))
+      if (!is.finite(sm[i]) || !is.finite(sdv) || sdv <= 0) return(NA_real_)
+      (max(sm[w], na.rm = TRUE) - sm[i]) / sdv
+    }, numeric(1))
+    keep <- which(isMin & is.finite(prom) & prom >= pars$prominence)
+    # enforce a minimum separation, keeping the deeper minimum of a close pair
+    if (length(keep) > 1) {
+      ord <- keep[order(sm[keep])]
+      taken <- integer(0)
+      for (i in ord) if (!any(abs(i - taken) < pars$min_bins)) taken <- c(taken, i)
+      keep <- sort(taken)
+    }
+    .(bidx = keep, bstart = start[keep], bend = end[keep])
+  }, by = chr]
+  # boundaries -> intervals between them
+  out <- bd[, { s <- bend[-.N]; e <- bstart[-1]; .(start = s, end = e) }, by = chr]
+  out <- out[end > start]
+  out[, tad_id := sprintf("%s:%d-%d", chr, start, end)]
+  out[]
+}
+
+# --- Heterochromatin domains, merged -------------------------------------------
+# het_domain_bed is 126,197 fragments of MEAN WIDTH 3.5 kb (444 Mb total). It is a
+# merged PEAK set, not a domain set: GAM_10 reduce()s it and keeps whatever single
+# fragment happens to exceed a width cut, which is not the same thing as a domain.
+# Gap-merging first is what turns it into one. Parameters are swept in GAM_13 -
+# these are the chosen values, and every domain-level result is reported against
+# the unmerged set too, as the hotspot domains already are.
+# CHOSEN FROM THE SWEEP IN GAM_13. The fragments percolate: genome coverage runs
+# 1.3% (gap 0) -> 4.5% (10 kb) -> 17.5% (20 kb) -> 64.8% (50 kb) at min_width
+# 100 kb, because once the gap exceeds the typical spacing between peaks
+# everything fuses into chromosome-length blocks. 10 kb sits below that
+# transition and yields 331 domains over 110 Mb, median 160 kb - genuinely large
+# domains rather than the whole genome.
+#
+# Worth stating plainly: this BED contains very little large-domain structure.
+# At gap 0 only 33 Mb sits in pieces >= 100 kb, so the 444 Mb it covers is almost
+# entirely sub-50 kb peaks. GAM_10's "domains >= 100 kb" were whichever single
+# fragments happened to be long, not merged domains.
+gam_het_merge <- list(gap = 10000L, min_width = 100000L)
+
+merge_het_domains <- function(gap = gam_het_merge$gap,
+                              min_width = gam_het_merge$min_width,
+                              chroms = gam_autosomes) {
+  if (!file.exists(het_domain_bed)) stop("missing ", het_domain_bed, call. = FALSE)
+  dm <- data.table::fread(het_domain_bed, header = FALSE, select = 1:3,
+                          col.names = c("chr", "start", "end"))
+  dm[, chr := ifelse(grepl("^chr", chr), chr, paste0("chr", chr))]
+  dm <- dm[chr %in% chroms]
+  g <- GenomicRanges::reduce(
+         GenomicRanges::GRanges(dm$chr, IRanges::IRanges(dm$start + 1, dm$end)),
+         min.gapwidth = gap, ignore.strand = TRUE)
+  g <- g[GenomicRanges::width(g) >= min_width]
+  g
+}
+
 # --- Sample sheet + exclusion (mirrors ChIP/config.R) ------------
 # DEFAULT: HP1gKO rep2 is EXCLUDED, exactly as on the ChIP side - it is the
 # highest-signal library in all five marks and discordant with rep3, its own

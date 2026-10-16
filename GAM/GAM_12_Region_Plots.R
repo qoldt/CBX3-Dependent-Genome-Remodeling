@@ -733,7 +733,15 @@ regions <- list(
   list("chr16", NULL,  NULL,  "chr16_full"),
   list("chr16", 70e6,  90e6,  "chr16_73-87Mb_lostblock"),
   list("chr18", 36.6e6, 38.4e6, "chr18_Pcdh"),
-  list("chr18", 35.5e6, 39.5e6, "chr18_Pcdh_context")
+  list("chr18", 35.5e6, 39.5e6, "chr18_Pcdh_context"),
+  # The other derepressed clustered families, each the largest cluster of its
+  # family by gene count, padded ~1 Mb so the flanks are visible. Located from
+  # the ChIP-side family regexes (^Zfp, ^Vmn, ^(Olfr|Or[0-9])) rather than
+  # hand-picked coordinates, so they move if the annotation does.
+  list("chr13", 65.0e6, 69.2e6,  "chr13_KRABZFP"),    # 28 Zfp genes, 66.01-68.23
+  list("chr17", 20.0e6, 25.1e6,  "chr17_KRABZFP"),    # 23 Zfp genes, 20.98-24.07
+  list("chr7",  18.6e6, 25.0e6,  "chr7_Vmn"),         # 87 Vmn genes, 19.58-24.01
+  list("chr2",  83.9e6, 91.5e6,  "chr2_Olfr")         # 224 Olfr genes, 84.91-90.48
 )
 FIGW <- 11; SIDE <- 2.6
 for (r in regions) {
