@@ -141,15 +141,28 @@ for (cls in c("LINE", "LTR")) {
   for (nm in names(rep_defs)[vapply(rep_defs, `[`, "", 1) == cls]) {
     cp <- rm_dt[grepl(rep_defs[[nm]][2], repName)]
     if (!nrow(cp)) next
+    # Restrict to the chromosomes the bin grid actually covers BEFORE the guard
+    # below. The complete UCSC rmsk table spans scaffolds and chrX/chrY, none of
+    # which exist in the autosome-only GAM grid, so ~10-15% of copies cannot map
+    # for entirely legitimate reasons. Counting those as failures would make the
+    # seqname guard fire on correct data and hide the thing it is for.
+    n_all <- nrow(cp)
+    cp <- cp[chr %in% as.character(seqlevels(bins))]
+    if (!nrow(cp)) {
+      warning(nm, ": no copies on the gridded chromosomes - check seqname style",
+              call. = FALSE); next
+    }
     # Assign each copy to ONE bin by its midpoint: IAPs are ~7 kb and L1s up to 6 kb,
     # so overlap-assignment would put one copy in 2-3 bins and inflate the set with
     # neighbours that are not really "carrying" the element. rmsk start is 0-based.
     mid <- GRanges(cp$chr, IRanges(start = floor((cp$start + cp$end) / 2) + 1, width = 1))
     h   <- suppressWarnings(findOverlaps(mid, bins, ignore.strand = TRUE))
-    # same guard as for the families: a chr-style mismatch would give zero here
+    # Same guard as for the families, now applied only to copies on gridded
+    # chromosomes: a chr-style mismatch would still drive this to zero.
     stopifnot(length(h) / length(mid) > 0.8)
     rep_bins[[nm]] <- sort(unique(subjectHits(h)))
-    message(sprintf("  %-12s %6d copies -> %5d bins", nm, nrow(cp), length(rep_bins[[nm]])))
+    message(sprintf("  %-12s %6d of %6d copies on gridded chr -> %5d bins",
+                    nm, nrow(cp), n_all, length(rep_bins[[nm]])))
   }
 }
 target_sets <- c(fam_bins, rep_bins)
