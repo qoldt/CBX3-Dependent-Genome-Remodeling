@@ -21,7 +21,8 @@ source("config.R")
 suppressPackageStartupMessages({ library(data.table); library(base64enc) })
 
 OUT <- file.path(results_dir, "GAM_REPORT.html")
-MAXW <- 1500L           # px, downscale wider images before embedding
+MAXW <- 1100L           # px, downscale wider images before embedding (keeps the
+                        # single-file HTML small enough to open on a phone)
 msg <- function(...) cat(sprintf(...), "\n", sep = "")
 tmpd <- file.path(tempdir(), "gamreport"); dir.create(tmpd, showWarnings = FALSE)
 
@@ -146,6 +147,8 @@ parts$chrom <- sec("Per-chromosome characterisation",
   p_("chr11 and chr16 were flagged by the data producers; chr3 and chr7 carry large GAM_6 blocks; chr18 holds the Pcdh cluster."),
   "<div class='warn'><strong>Retraction.</strong> An earlier agent reported chr11 as having &ldquo;the strongest mark-contact coupling of any chromosome, rho +0.51 to +0.66, rank 1 of 19&rdquo;. That agent produced no output file and the numbers had no source. Directly computed, chr11 <em>is</em> rank 1 of 19 &mdash; but at rho = 0.128, with chr17 at &minus;0.149 (larger, opposite sign) and a genome-wide value of 0.012. The ordering is weak evidence.</div>",
   embed_fig("chromosomes/chromosome_ranking.png"),
+  "<div class='warn'><strong>A tempting over-read, tested and rejected.</strong> chr7 is by far the most heterochromatic chromosome (20.2% of bins against 7.2% genome-wide) <em>and</em> gains contacts at every separation, while chr11 is the least (3.1%) and loses most. Across all 19 autosomes that relationship is absent: rho = &minus;0.014, p = 0.96. The two are simply the extremes of both rankings at once.</div>",
+  embed_fig("chromosomes/het_content_vs_net.png"),
   tbl("gam15_chromosome_ranking.tsv", "All 19 autosomes, so any one chromosome can be read against the spread.", max_rows = 20L),
   embed_fig("chromosomes/contact_budget_by_chromosome.png"),
   tbl("gam15_contact_budget.tsv", "Contact budget by chromosome, chromatin class and separation.", max_rows = 60L),
@@ -154,7 +157,10 @@ parts$chrom <- sec("Per-chromosome characterisation",
            embed_fig(sprintf("chromosomes/%s_overview.png", ch)),
            md_file(file.path(results_dir, "chromosomes", paste0(ch, ".md"))))), collapse = ""))
 
-reg <- c("chr18_Pcdh", "chr18_Pcdh_band", "chr13_KRABZFP_band", "chr17_KRABZFP_band",
+# chr18_Pcdh has no _band variant by design: at 1.8 Mb the full triangle is
+# already compact, so band_maxdist() skips it rather than writing a duplicate
+# under a misleading name.
+reg <- c("chr18_Pcdh", "chr18_Pcdh_context_band", "chr13_KRABZFP_band", "chr17_KRABZFP_band",
          "chr7_Vmn_band", "chr2_Olfr_band", "chr16_full_band", "chr11_1-25Mb_lostblock_band",
          "chr3_30-85Mb_band")
 parts$regions <- sec("Region plots",

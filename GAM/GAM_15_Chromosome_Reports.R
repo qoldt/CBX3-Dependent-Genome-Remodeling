@@ -100,6 +100,33 @@ msg("genome-wide rho = %.4f; spread across chromosomes %.3f to %.3f - small and 
     min(rk$rho_H4K20me3), max(rk$rho_H4K20me3))
 msg("so a chromosome's RANK is weak evidence on its own.")
 
+# A tempting over-read, tested and rejected. chr7 is by far the most
+# heterochromatic chromosome (20.2% of bins vs 7.2% genome-wide) AND gains
+# contacts at every separation, while chr11 is the least (3.1%) and loses most -
+# which invites "heterochromatin-rich chromosomes gain". Across all 19 autosomes
+# that relationship is absent: rho = -0.014, p = 0.96. The two are simply the
+# extremes of both rankings at once. Recorded so it is not re-derived.
+chr_net <- A[, .(mean_net = mean(net, na.rm = TRUE)), by = chr]
+rk <- merge(rk, chr_net, by = "chr")
+ct <- suppressWarnings(cor.test(rk$frac_het, rk$mean_net, method = "spearman"))
+msg("\nheterochromatin content vs net contact change, across the 19 autosomes: rho = %.3f, p = %.3f",
+    ct$estimate, ct$p.value)
+msg("  (chr7 is 20.2%% het and gains, chr11 is 3.1%% and loses - but across all 19 there is no relationship)")
+fwrite(rk, file.path(tables_dir, "gam15_chromosome_ranking.tsv"), sep = "\t")
+
+p <- ggplot(rk, aes(frac_het, mean_net, label = chr)) +
+  geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
+  geom_point(aes(colour = chr %in% FOCUS), size = 2) +
+  ggrepel::geom_text_repel(size = 2.8, colour = "grey30", max.overlaps = 20) +
+  scale_colour_manual(values = c(`TRUE` = "#b2182b", `FALSE` = "grey65"), guide = "none") +
+  labs(title = "Heterochromatin content does not predict a chromosome's contact change",
+       subtitle = sprintf(paste0("Spearman rho = %.3f, p = %.2f over the 19 autosomes. chr7 (most heterochromatic, gains) ",
+                                 "and chr11 (least, loses most)\nare the extremes of both rankings at once, which is not ",
+                                 "the same as a relationship."), ct$estimate, ct$p.value),
+       x = "fraction of bins heterochromatic", y = "mean net contact change per bin") +
+  theme_m
+save_fig(p, "het_content_vs_net", subdir = fig_sub, width = 7.5, height = 5.5)
+
 p <- ggplot(rk, aes(reorder(chr, rho_H4K20me3), rho_H4K20me3, fill = chr %in% FOCUS)) +
   geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
   geom_col(width = .7) + coord_flip() +
@@ -238,22 +265,33 @@ for (ch in FOCUS) {
                                       if (length(v)) sprintf("%+.1f%%", v) else "-" })
     writeLines(sprintf("| %s | %s |", cl, paste(r, collapse = " | ")), con)
   }
+  # A single averaged verdict is misleading here: chr11 averages to "follows"
+  # while losing 33.8% of het-het contacts at 5-10 Mb, which is the opposite of
+  # the genome-wide gain. State the contrast per band and let it speak.
+  dif <- sapply(BANDNM, function(b) {
+    h <- bu[cls == "het-het" & band == b, pct]; e <- bu[cls == "eu-eu" & band == b, pct]
+    if (length(h) && length(e)) h - e else NA_real_
+  })
   writeLines(c("",
-    sprintf("Genome-wide the pattern is het-het gaining and eu-eu losing; %s %s that.", ch,
-            if (nrow(bu) && isTRUE(bu[cls == "het-het", mean(pct, na.rm = TRUE)] <
-                                   bu[cls == "eu-eu", mean(pct, na.rm = TRUE)]))
-              "**inverts**" else "follows"), ""), con)
+    "het-het minus eu-eu, per band (genome-wide this is positive: heterochromatin gains while euchromatin loses):", "",
+    paste0("| ", paste(BANDNM, collapse = " | "), " |"),
+    paste0("|", paste(rep("---", length(BANDNM)), collapse = "|"), "|"),
+    paste0("| ", paste(ifelse(is.finite(dif), sprintf("%+.1f", dif), "-"), collapse = " | "), " |"),
+    "",
+    sprintf("Bands where this chromosome runs against the genome-wide direction: %s.",
+            { neg <- BANDNM[is.finite(dif) & dif < 0]
+              if (length(neg)) paste(neg, collapse = ", ") else "none" }), ""), con)
   if (!is.null(bl) && nrow(bl)) {
     writeLines(c("## Large one-directional blocks (GAM_6)", "",
       sprintf("%d block(s) on this chromosome, %.1f Mb in total.", nrow(bl),
               sum(bl$end - bl$start) / 1e6), ""), con)
-    writeLines("| start (Mb) | end (Mb) | width (Mb) | direction |", con)
-    writeLines("|---|---|---|---|", con)
+    writeLines("| start (Mb) | end (Mb) | width (Mb) | direction | mean net |", con)
+    writeLines("|---|---|---|---|---|", con)
+    setorder(bl, start)
     for (i in seq_len(nrow(bl)))
-      writeLines(sprintf("| %.2f | %.2f | %.2f | %s |", bl$start[i] / 1e6, bl$end[i] / 1e6,
-                         (bl$end[i] - bl$start[i]) / 1e6,
-                         if ("direction" %in% names(bl)) as.character(bl$direction[i])
-                         else if ("class" %in% names(bl)) as.character(bl$class[i]) else "?"), con)
+      writeLines(sprintf("| %.2f | %.2f | %.2f | %s | %+.2f |", bl$start[i] / 1e6, bl$end[i] / 1e6,
+                         (bl$end[i] - bl$start[i]) / 1e6, as.character(bl$dirn[i]),
+                         bl$mean_net[i]), con)
     writeLines("", con)
   }
   writeLines(c("## Caveats carried from the pipeline", "",
