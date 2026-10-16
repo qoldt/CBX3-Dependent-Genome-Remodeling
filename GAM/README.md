@@ -110,20 +110,25 @@ GAM_1_Bins_and_Signal.R           ChIP signal/stats + annotation on the 20 kb gr
   ▼
 GAM_2_NPMI_Compartments.R         NPMI -> PC1 compartments, insulation, decay
   │   writes results/rds/npmi_bin_features.rds
-  ├─▶ GAM_3_Contact_Coupling.R
-  ├─▶ GAM_4_Compartments_vs_Contacts.R
-  └─▶ GAM_5_HUSH_and_Repeats_Contacts.R
+  ├─▶ GAM_3_Coupling.R
+  ├─▶ GAM_4_Large_Scale.R
+  ├─▶ GAM_5_Heterochromatin.R
+  ├─▶ GAM_6_Targets.R
+  └─▶ GAM_7_Figures.R
 ```
 
 | Stage | Inputs | Outputs |
 |-------|--------|---------|
 | **GAM_1** `Bins_and_Signal` | ChIP bigWigs (`MINUTE_DATA`), the ChIP annotated `.rds` (`require_chip_rds()`), Hotspots, repeat/TAD/ChromHMM annotation | `rds/gam_bins_annotated.rds`: the 123,133-bin autosomal grid with per-bin ChIP DESeq2 stats and signal, per-bin differential contact counts (`n_contacts_lost`/`n_contacts_gained`), repeat fractions, ChromHMM coverage, TAD boundary, TSS count, and ChIP compartment labels (`compartment_abs`, `compartment_centred`) |
 | **GAM_2** `NPMI_Compartments` | NPMI matrices (both genotypes, autosomes + chrX/chrY), GAM_1 rds | `rds/npmi_bin_features.rds`: per bin and genotype PC1, A/B compartment, insulation, short/long-range NPMI, decay slope, valid-cell count; PC1/insulation deltas and A/B switch class; saddle matrices |
-| **GAM_3** `Contact_Coupling` | GAM_1 + GAM_2 rds | how per-bin contact remodelling relates to ChIP change (tables/figures) |
-| **GAM_4** `Compartments_vs_Contacts` | GAM_1 + GAM_2 rds | ChIP-defined compartments vs GAM compartments vs contact remodelling |
-| **GAM_5** `HUSH_and_Repeats_Contacts` | GAM_1 + GAM_2 rds | HUSH/CBX3 targets and repeat content vs contact remodelling, using size-matched permutation nulls |
+| **GAM_3** `Coupling` | GAM_1 + GAM_2 rds | does contact remodelling coincide with the mark loss? Three framings in one file: per-bin Spearman (a powered null), a local recount from the pairs that retracts its scale premise, and contact density per ChIP compartment. Writes `coupling_*`, `gam7_*`, `gam4_*` |
+| **GAM_4** `Large_Scale` | GAM_1 + GAM_2 rds | the 10-25 Mb one-directional blocks (41.6% of the genome) and the block x block contact budget. Writes `gam6_*`, `gam8_*` |
+| **GAM_5** `Heterochromatin` | GAM_1 + GAM_2 rds, NPMI | heterochromatin domains built three ways, intra vs inter contacts, mark-change strata, domain size, and the constitutive-LAD cross. Writes `gam10_*`, `gam11_*`, `gam13_*` |
+| **GAM_6** `Targets` | GAM_1 + GAM_2 rds, GAM_4 tables | HUSH/CBX3 target families and repeats against matched background, protocadherin at native resolution, and the Pcdh TAD against every other chr18 TAD under two TAD partitions. Writes `gam5_*`, `gam9_*`, `gam14_*` |
+| **GAM_7** `Figures` | GAM_1 + GAM_2 rds, NPMI | region plots (contact map, differential contacts, hotspot calls, LADs, five marks, genes) and per-chromosome characterisation. Writes `regions/`, `chromosomes/`, `gam15_*` |
 
-GAM_1 and GAM_2 are sustained all-core jobs; GAM_3-5 need only the two `.rds`
+GAM_1, GAM_2, GAM_5 and GAM_7 are sustained all-core jobs; GAM_3, GAM_4 and GAM_6
+need mainly the two `.rds`
 files and can be re-run independently. The two `.rds` schemas are summarised in
 [`CLAUDE.md`](CLAUDE.md). PC1 is oriented per chromosome so that A (positive) is
 the H3K4me3-high side, which is why GAM_2 depends on GAM_1.
@@ -151,7 +156,7 @@ A single stage, once its inputs exist:
 
 ```bash
 cd GAM
-Rscript GAM_3_Contact_Coupling.R
+Rscript GAM_3_Coupling.R
 ```
 
 ### Environment variables

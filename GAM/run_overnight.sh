@@ -57,23 +57,20 @@ run() {
 say "overnight batch starting; log=$LOG"
 
 # Priority 1 - heterochromatin domains and the Pcdh TAD question
-run het_domains GAM_13_Het_Domains_Expanded.R \
+run het_domains GAM_5_Heterochromatin.R \
   "$RESULTS/tables/gam13_merge_sweep.tsv" \
   "$RESULTS/tables/gam13_domain_definitions.tsv" \
   "$RESULTS/tables/gam13_intra_vs_inter.tsv"
 
-run pcdh_tads GAM_14_Pcdh_TAD_Interactions.R \
+run targets GAM_6_Targets.R \
   "$RESULTS/tables/gam14_pcdh_tad_summary.tsv" \
-  "$RESULTS/tables/gam14_pcdh_by_separation.tsv"
+  "$RESULTS/tables/gam14_pcdh_by_separation.tsv" \
+  "$RESULTS/tables/gam9_pcdh_native_profile.tsv"
 
-# Priority 2 - per-chromosome characterisation
-run chromosomes GAM_15_Chromosome_Reports.R \
+# Priority 2/3 - region plots and per-chromosome characterisation
+run figures GAM_7_Figures.R \
   "$RESULTS/tables/gam15_chromosome_ranking.tsv" \
-  "$RESULTS/tables/gam15_contact_budget.tsv" \
-  "$RESULTS/chromosomes/chr11.md"
-
-# Priority 3 - region plots, now including the other clustered families
-run region_plots GAM_12_Region_Plots.R \
+  "$RESULTS/chromosomes/chr11.md" \
   "$RESULTS/figures/regions/chr18_Pcdh.pdf" \
   "$RESULTS/figures/regions/chr7_Vmn.pdf" \
   "$RESULTS/figures/regions/chr2_Olfr.pdf"

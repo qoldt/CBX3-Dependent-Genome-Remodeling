@@ -10,20 +10,38 @@ provenance: `results/METHODS.md`.
 Run from the **`GAM/` directory** (no `setwd()`):
 
 ```
-config.R                              # parameters, path builders, loaders (single source of truth)
-GAM_1_Bins_and_Signal.R               # ChIP signal/stats + annotation on the 20 kb grid  (heavy)
+config.R                      parameters, path builders, loaders (single source of truth)
+GAM_1_Bins_and_Signal.R       ChIP signal/stats + annotation on the 20 kb grid     (heavy)
   │  writes results/rds/gam_bins_annotated.rds
-GAM_2_NPMI_Compartments.R             # NPMI -> PC1/compartments/insulation/decay           (heavy)
+GAM_2_NPMI_Compartments.R     NPMI -> PC1/compartments/insulation/decay            (heavy)
   │  needs GAM_1 (PC1 orientation); writes results/rds/npmi_bin_features.rds
-  ├── GAM_3_Contact_Coupling.R
-  ├── GAM_4_Compartments_vs_Contacts.R
-  └── GAM_5_HUSH_and_Repeats_Contacts.R   # 3-5 read only the two .rds; independent of each other
+  ├── GAM_3_Coupling.R        does contact remodelling coincide with the mark loss?
+  ├── GAM_4_Large_Scale.R     10-25 Mb one-directional blocks + block contact budget
+  ├── GAM_5_Heterochromatin.R heterochromatin domains, intra vs inter, mark strata  (heavy)
+  ├── GAM_6_Targets.R         HUSH families, repeats, protocadherin, the Pcdh TAD
+  └── GAM_7_Figures.R         region plots + per-chromosome overviews               (heavy)
+
+utilities (not pipeline stages, run on their own):
+  QC_Hotspot_Domains.R        hotspot domain parameter sweep, for the collaborating lab
+  prepare_LAD_annotation.R    fetch + liftOver the constitutive LAD sets to mm39
+  export_igv.R                refresh the minimal IGV session
+  make_report.R               assemble results/GAM_REPORT.html from whatever has run
+  run_overnight.sh            run the batch under the thermal guard, checking outputs
 ```
 
-`Rscript run_GAM.R` runs them in order. It also needs the ChIP pipeline to have
+**Stages were consolidated 2026-10-17 (15 scripts -> 7).** Each merged stage keeps
+its sections in `local({...})` blocks labelled with the stage they came from, and
+**every output file name is unchanged** (`gam6_*`, `gam8_*`, `gam9_*`, `gam10_*`,
+`gam11_*`, `gam13_*`, `gam14_*`, `gam15_*`, `coupling_*`), so the prefixes no
+longer match the file they live in - grep the prefix, not the filename. The merge
+was verified by re-running every stage and diffing all 50 result tables
+byte-for-byte against the pre-merge outputs.
+
+`Rscript run_GAM.R` runs them in order; `./run_overnight.sh` runs the analysis
+batch under the thermal guard and asserts each stage's outputs are non-empty. It also needs the ChIP pipeline to have
 run (`../ChIP/results/rds/annotated_results_*.rds`; `require_chip_rds()` stops
-with an actionable message otherwise). GAM_1 and GAM_2 are sustained all-core
-jobs: run them under the `safe-local-alignment` skill. GAM_3-5 should `stop()`
+with an actionable message otherwise). GAM_1, GAM_2, GAM_5 and GAM_7 are sustained all-core
+jobs: run them under the `safe-local-alignment` skill. GAM_3-7 should `stop()`
 with "run GAM_1 first" if an rds is missing; they must not recompute anything
 GAM_1/GAM_2 provide, and join on `bin_id`.
 

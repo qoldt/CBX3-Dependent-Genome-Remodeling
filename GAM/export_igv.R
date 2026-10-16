@@ -124,7 +124,7 @@ blk_src <- file.path(bed_dir, "gam6_large_blocks.bed")
 if (file.exists(blk_src)) {
   file.copy(blk_src, file.path(igv_dir, "gam_large_blocks.bed"), overwrite = TRUE)
   message("  gam_large_blocks.bed  (copied from GAM_6)")
-} else message("  (no large-block bed - run GAM_6_Large_Blocks.R)")
+} else message("  (no large-block bed - run GAM_4_Large_Scale.R)")
 
 # --- session file ------------------------------------------------------------
 # Relative paths, so the folder can be moved or sent as a unit.
