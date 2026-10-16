@@ -83,46 +83,51 @@ inlining it. GAM-only dependency: `R.utils` (for gzipped `fread`).
     `scale_fill_heat0_div`, `heat_col_fun`, `geno_colors`, `repeat_palette`,
     `theme_m`). No raw hex. Save with `save_fig(plot, name, subdir=)`.
 
-## A/B compartments: how the axis is defined (resolved in code, unverified on data)
+## A/B compartments: PARKED, axis weakly determined (2026-10-16)
 
-GAM_2 does **not** take the leading eigenvector as the compartment axis, and does
-**not** median-centre it. Both of those were wrong in the first draft and the
-reasoning is worth keeping, because the failure was invisible:
+The compartment call runs and no longer produces artifacts, but it is **not
+reliable on most chromosomes**. Do not report an A/B assignment, a net A<->B
+shift, or `compartment_switch` without restating the quality numbers below.
 
-- Taking the top eigenvector unconditionally gave, on chr19, a vector with 97% of
-  bins on one side of zero. That is not an A/B split; it is the overall contact
-  structure. In Hi-C-like data the compartment signal sits in PC1 **or** PC2
-  depending on the chromosome, which is why cooltools-style pipelines select by
-  correlation with GC or gene density.
-- Median-centring the result forced `frac_A = 0.5` per chromosome per genotype,
-  which in turn forced GAM_4's switch table to near-symmetric A→B / B→A counts
-  **whatever the biology did** (chr19 draft: 609 vs 612). It masked the first
-  problem and made the net-shift question unanswerable by construction.
+**What was wrong and is now fixed.** The first draft ranked candidate
+eigenvectors purely by correlation with an active-chromatin reference. That
+picks the wrong vector: measured on chr19/chr11/chr3, the LEADING eigenvector is
+systematically degenerate (`frac_A` 0.04-0.13 - nearly every bin on one side,
+i.e. the overall contact-structure component) yet often correlates slightly
+*better* with active marks than the real compartment vector (chr19 WT: PC1
+|rho| 0.32 at frac_A 0.038 vs PC2 |rho| 0.23 at frac_A 0.64). Balance is now a
+precondition over 4 eigenvectors, not a tiebreak. Result: implausible `frac_A`
+13/38 -> 0/38, PC1 chosen 2/38 instead of 19/38.
 
-What it does instead: `select_compartment_pc()` computes two eigenvectors and
-picks whichever correlates better (|Spearman|) with an **active-chromatin
-reference**, then orients the sign by the same reference. The reference is the
-mean of the per-bin z-scores of **WT H3K4me3 and WT H3K36me3**.
+**What is still wrong.** Usable axis (|rho| > 0.4) only **11 of 38** chromosome x
+genotype combinations; median |rho| 0.348; WT-vs-KO PC agreement 0.383. The
+switch table is near-symmetric (A->B 21,393 vs B->A 21,078) and that symmetry is
+*not* forced by construction this time - but **do not read it as "no net
+shift"**: 36% of bins switching is what axis noise looks like.
 
-Why those two marks:
-- They are complementary at this resolution. H3K4me3 is punctate at promoters and
-  thin across a 20 kb bin; H3K36me3 is broad over transcribed gene bodies and
-  better matched to the bin size. Their average is steadier than either alone.
-- They are the marks that **do not change** in the KO (per-bin median log2FC
-  +0.000 and −0.052, against −0.497 for H4K20me3). The A/B axis is therefore the
-  same ruler in both genotypes. Anchoring on H3K9me3/H4K20me3 would be circular —
-  the axis would move with the effect under study.
+**Usable without reservation** (none depend on the PC): insulation,
+`npmi_short` / `npmi_long`, `decay_slope`, and the raw NPMI. Chromosomes with a
+decent axis if a restricted analysis is wanted: chr11 (0.48), chr5 (0.42),
+chr8 (0.42), chr2 (0.40).
 
-With the right eigenvector selected, no re-centring is needed and `frac_A` is free
-to differ from 0.5, which is what makes a net A↔B shift detectable.
+**Leads for the next attempt, in priority order:**
+1. **Coarsen further** to 250 kb - 1 Mb. 20 kb -> 100 kb moved |rho| only
+   0.304 -> 0.348, but the direction was right and the step was small.
+2. **Change the A/B anchor.** The H3K4me3+H3K36me3 reference tops out at
+   |rho| 0.725; GC content or gene density is the field standard and may anchor
+   better where the marks are thin over 100 kb.
+3. **Accept the limit.** With 2 merged biological replicates and z>2 baked in,
+   "GAM NPMI at this depth does not support compartment calling" is a legitimate
+   and reportable conclusion. Prefer it over tuning until the numbers look clean.
 
-**Still to confirm on the first real run** (the numbers are in
-`tables/npmi_compartment_orientation.tsv`): how often `which_pc == 2` — if that is
-common, say so in the methods rather than leaving it implicit; that `rho_pc1` vs
-`rho_pc2` separate cleanly, since a near-tie means the axis is poorly determined
-for that chromosome; and that WT and KO PC correlate strongly genome-wide, because
-a wholesale reorganisation is a much bigger claim than this design can support.
-Until those are checked, treat `compartment_switch` as diagnostic.
+Already ruled out, do not re-test: O-E is not double-correcting (raw NPMI decays
+properly with distance, 0.69 at 20 kb to 0.12 at 20 Mb), and axis quality does
+not track chromosome size (rho = -0.04), so it is not a power problem.
+
+**Cache gotcha:** `gam2_params$version` must be bumped whenever the compartment
+METHOD changes, not only its parameters - a cached per-chromosome reduction
+carries the PC it was computed with. A re-test once silently read stale pre-fix
+reductions because of this. Currently version 2.
 
 ## The `.rds` handoffs (schemas)
 
