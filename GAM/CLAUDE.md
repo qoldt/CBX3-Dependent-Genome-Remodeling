@@ -83,6 +83,38 @@ inlining it. GAM-only dependency: `R.utils` (for gzipped `fread`).
     `scale_fill_heat0_div`, `heat_col_fun`, `geno_colors`, `repeat_palette`,
     `theme_m`). No raw hex. Save with `save_fig(plot, name, subdir=)`.
 
+## OPEN ISSUE — the A/B compartment call is not yet trustworthy
+
+**Do not report an absolute A/B assignment, or a net A→B compartment shift, from
+the current GAM_2 code.** Two coupled problems, both unresolved:
+
+1. **PC1 is median-centred per chromosome per genotype**, so `frac_A ≈ 0.5` by
+   construction and a chromosome-wide A/B imbalance cannot be represented. That
+   in turn constrains GAM_4's switch table to near-symmetric A→B and B→A counts
+   whatever the biology does. GAM_2's chr19 smoke test shows the signature
+   exactly: A→B 609 vs B→A 612. The code comment calls this "fine for the
+   WT-vs-KO question" — that is the one claim in this stage that is wrong, since
+   the WT-vs-KO question in GAM_4 *is* the net shift.
+2. **The leading eigenvector may not be the compartment eigenvector.** GAM_2
+   computes two (`eigs_sym(k = 2)`) but always takes the first, and the raw PC1
+   on chr19 sat ~2 SD above zero with 97% of bins on one side — the signature of
+   a coverage/mean component rather than an A/B split. Standard practice is to
+   select the eigenvector that best tracks an independent A/B marker, which here
+   would be the H3K4me3 reference already loaded for orientation.
+
+Centring was a reasonable response to (2), but it masks (2) rather than fixing
+it, and it costs (1).
+
+**What IS usable now:** PC1 as a within-chromosome *ranking*, the WT-vs-KO PC1
+*delta* at matched rank, insulation, the distance bands and the decay slope.
+**What is not:** `frac_A`, `compartment_<g>`, `compartment_switch`, and any
+claim of the form "the KO moves territory from A to B".
+
+**To resolve, on the first real run:** record each eigenvector's correlation with
+WT H3K4me3 per chromosome and see whether PC1 or PC2 tracks it; then set the A/B
+boundary from that marker rather than from PC1's own median. Until then treat
+GAM_4's compartment-switch section as diagnostic output, not a result.
+
 ## The `.rds` handoffs (schemas)
 
 **`results/rds/gam_bins_annotated.rds`** (GAM_1), a named list:

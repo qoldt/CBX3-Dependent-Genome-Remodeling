@@ -28,7 +28,13 @@ source("../shared/setup.R")
 # delegates .gz decompression to R.utils. Without it every loader below fails
 # with "fread() requires 'R.utils'". The ChIP assay reads plain BEDs/bigWigs, so
 # this belongs to GAM rather than the shared manifest.
-minute_add_deps(cran = "R.utils")
+# RSpectra: GAM_2 gets PC1 from the correlation OPERATOR via eigs_sym() without
+# ever materialising the n x n correlation matrix (~760 MB on chr1) or paying an
+# O(n^3) eigen(). It has a power-iteration fallback, so without this entry a
+# fresh clone still runs but silently takes the slower, less accurate path -
+# which is exactly the kind of difference that should not depend on what happens
+# to be installed.
+minute_add_deps(cran = c("R.utils", "RSpectra", "hexbin"))
 minute_ensure_deps()
 source("../shared/common.R")
 
