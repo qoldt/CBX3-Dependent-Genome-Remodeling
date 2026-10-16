@@ -59,7 +59,7 @@ for (mk in colnames(X$l2fc)) A[[mk]] <- X$l2fc[match(A$bin_id, rownames(X$l2fc))
 gam_region_plot <- function(chrom, from = NULL, to = NULL,
                             marks = mark_levels,     # all five, in the project order
                             maxdist = gam12_maxdist, hot_cut = gam12_hot_cut,
-                            smooth_map = TRUE) {
+                            smooth_map = TRUE, show_raw = TRUE) {
 
   reg <- A[chr == chrom]
   if (is.null(from)) from <- min(reg$start)
@@ -68,13 +68,38 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
   if (nrow(reg) < 10) stop("region too small: ", chrom, ":", from, "-", to, call. = FALSE)
 
   # --- contact difference over the region ------------------------------------
+  raw_tri <- function(M, pos, ttl) {
+    # Raw NPMI on a sequential scale, 0 to the 99th percentile of THIS panel -
+    # the convention in Winick-Ng Fig. 1c. Shown per genotype so the structure
+    # is visible before any differencing.
+    mm <- nrow(M)
+    q <- CJ(i = seq_len(mm), j = seq_len(mm))[j > i]
+    q[, d := pos[j] - pos[i]]
+    q <- q[d <= maxdist]
+    q[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = M[cbind(i, j)])]
+    q <- q[is.finite(v)]
+    cap <- as.numeric(quantile(q$v, .99, na.rm = TRUE))
+    ggplot(q, aes(x, y, fill = pmin(v, cap))) +
+      geom_tile(width = tw, height = tw) +
+      scale_fill_gradientn(colours = c("#ffffff", "#ffe3b0", "#f0a04b", "#c0392b", "#5c0f12"),
+                           name = "NPMI", guide = guide_colourbar(barheight = 3)) +
+      scale_y_continuous(expand = c(0, 0), name = "sep (Mb)") +
+      scale_x_continuous(expand = c(0, 0)) +
+      coord_cartesian(xlim = c(from, to) / 1e6, expand = FALSE) +
+      labs(subtitle = ttl) +
+      theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                      plot.subtitle = element_text(size = 9),
+                      plot.margin = margin(2, 4, 1, 4))
+  }
+
   mats <- lapply(c(WT = "WT", KO = "HP1gKO"), function(g) {
     m <- load_npmi(g, chrom)
     ids <- intersect(reg$bin_id, rownames(m))
     m[ids, ids, drop = FALSE]
   })
   ids <- intersect(rownames(mats$WT), rownames(mats$KO))
-  D <- mats$KO[ids, ids] - mats$WT[ids, ids]
+  W0 <- mats$WT[ids, ids]; K0 <- mats$KO[ids, ids]
+  D <- K0 - W0
   pos <- as.numeric(sub("-.*", "", sub(".*:", "", ids)))
   rm(mats); gc(FALSE)
 
@@ -91,6 +116,11 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
     S1 <- rowsum(Z, grp); N1 <- rowsum(nn * 1, grp)
     S2 <- t(rowsum(t(S1), grp)); N2 <- t(rowsum(t(N1), grp))
     D <- S2 / pmax(N2, 1); D[N2 == 0] <- NA
+    agg1 <- function(M) { Zz <- M; nz <- is.finite(Zz); Zz[!nz] <- 0
+      a1 <- rowsum(Zz, grp); b1 <- rowsum(nz * 1, grp)
+      a2 <- t(rowsum(t(a1), grp)); b2 <- t(rowsum(t(b1), grp))
+      R <- a2 / pmax(b2, 1); R[b2 == 0] <- NA; R }
+    W0 <- agg1(W0); K0 <- agg1(K0)
     pos <- as.numeric(tapply(pos, grp, mean))
     rm(Z, nn, S1, N1, S2, N2); gc(FALSE)
   }
@@ -131,11 +161,10 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
     scale_y_continuous(expand = c(0, 0), name = "separation (Mb)") +
     scale_x_continuous(expand = c(0, 0)) +
     coord_cartesian(xlim = c(from, to) / 1e6, expand = FALSE) +
-    labs(title = sprintf("%s:%.1f-%.1f Mb", chrom, from / 1e6, to / 1e6),
-         subtitle = sprintf("Contact difference to %.0f Mb separation. Red = more contact in cKO, blue = more in WT.",
-                            maxdist / 1e6)) +
+    labs(subtitle = "cKO - WT  (red = more contact in cKO)") +
     theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
-                    plot.margin = margin(4, 4, 1, 4))
+                    plot.subtitle = element_text(size = 9),
+                    plot.margin = margin(2, 4, 1, 4))
 
   # --- hotspots as a heatmap: one row per direction ---------------------------
   # Two rows read better than back-to-back bars at this width: the eye picks out
@@ -187,11 +216,18 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
       # the sign splits the data into two groups, and each group's polygon then
       # joins its own points straight across the other's territory - which drew
       # long straight wedges wherever positive values were sparse.
-      geom_ribbon(aes(ymin = 0, ymax = pmin(v, 0)), fill = "#c0392b", na.rm = TRUE) +
-      geom_ribbon(aes(ymin = 0, ymax = pmax(v, 0)), fill = "#2166ac", na.rm = TRUE) +
+      # The fill diverges from THAT MARK'S GENOME MEDIAN, not from zero. With a
+      # near-genome-wide loss (H4K20me3 median -0.497, ~100% of bins down) a
+      # zero baseline paints the whole track solid red and hides everything; the
+      # informative quantity is deviation from the typical loss. The y axis
+      # still shows absolute log2FC, and the solid line marks the median, so
+      # nothing is hidden - only the fill reference changes.
+      geom_ribbon(aes(ymin = gm, ymax = pmin(v, gm)), fill = "#c0392b", na.rm = TRUE) +
+      geom_ribbon(aes(ymin = gm, ymax = pmax(v, gm)), fill = "#2166ac", na.rm = TRUE) +
       geom_line(linewidth = .25, colour = "grey25", na.rm = TRUE) +
-      geom_hline(yintercept = 0, linewidth = .3, colour = "grey45") +
-      geom_hline(yintercept = gm, linewidth = .3, colour = "grey55", linetype = 2) +
+      geom_hline(yintercept = gm, linewidth = .35, colour = "grey30") +
+      { if (rng[1] < 0 && rng[2] > 0)
+          geom_hline(yintercept = 0, linewidth = .3, colour = "grey65", linetype = 3) } +
       scale_x_continuous(expand = c(0, 0)) +
       scale_y_continuous(n.breaks = 3, expand = expansion(mult = 0.04)) +
       coord_cartesian(xlim = c(from, to) / 1e6, ylim = rng, expand = FALSE) +
@@ -219,8 +255,8 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
     # a label - the Pcdh cluster otherwise prints 40 overlapping names
     gd[, lab := NA_character_]
     gd[w >= span * 0.015, lab := sym]
-    gd[, rk := frank(-w, ties.method = "first"), by = row]
-    gd[rk > 6, lab := NA_character_]
+    gd[, rk := frank(-w, ties.method = "first")]
+    gd[rk > 10, lab := NA_character_]
   } else gd <- data.table(x1 = numeric(0), x2 = numeric(0), row = integer(0), lab = character(0))
   p_gene <- ggplot(gd) +
     geom_segment(aes(x = x1, xend = x2, y = row, yend = row), linewidth = 2.2,
@@ -241,15 +277,23 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
   # still reserves the full row height for the panel and leaves a band of
   # whitespace under a wide region. A floor keeps very wide views legible.
   map_h <- max(0.85, min(3.2, (maxdist / 2) / (to - from) * 11))
-  wrap_plots(c(list(p_map, p_hot), panels, list(p_gene)), ncol = 1,
-             heights = c(map_h, 0.55, rep(0.60, length(panels)), 0.72)) +
-    plot_annotation(theme = theme(plot.caption = element_text(hjust = 0, size = 7)),
+  tri <- if (show_raw) list(raw_tri(W0, pos, "WT"), raw_tri(K0, pos, "HP1gKO"), p_map)
+         else list(p_map)
+  # The raw panels are reference, the difference is the point, and the mark
+  # panels need real height or their axis titles collapse into each other.
+  tri_h <- if (show_raw) c(map_h * 0.72, map_h * 0.72, map_h) else map_h
+  wrap_plots(c(tri, list(p_hot), panels, list(p_gene)), ncol = 1,
+             heights = c(tri_h, 0.42, rep(0.78, length(panels)), 0.85)) +
+    plot_annotation(
+      title = sprintf("%s:%.2f-%.2f Mb", chrom, from / 1e6, to / 1e6),
+      theme = theme(plot.caption = element_text(hjust = 0, size = 7),
+                    plot.title = element_text(face = "bold", size = 13)),
       caption = paste0(
       "GAM: CA1 pyramidal cells, HP1g WT/cKO, 20 kb, |delta-z|>2, max NPMI>0.1; hotspots over 0-5 Mb. ",
-      "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT); red = lost, blue = gained, ",
-      "dashed = that mark's genome median.\n",
+      "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT).\n",
       "Contact map block-averaged and 3x3 smoothed for display; mark tracks running-mean smoothed. ",
-      "All statistics elsewhere use unsmoothed values."))
+      "All statistics elsewhere use unsmoothed values. Mark fill diverges from each mark's genome median (solid line); ",
+      "dotted line is zero where in range."))
 }
 
 # --- the collaborators' own example regions, plus our blocks -----------------
@@ -258,14 +302,14 @@ regions <- list(
   list("chr11", 100e6, 125e6, "chr11_100-125Mb"),
   list("chr11", 1e6,   25e6,  "chr11_1-25Mb_lostblock"),
   list("chr16", NULL,  NULL,  "chr16_full"),
-  list("chr18", 30e6,  46e6,  "chr18_Pcdh_wide"),
-  list("chr18", 35e6,  40e6,  "chr18_Pcdh")
+  list("chr18", 36.6e6, 38.4e6, "chr18_Pcdh"),
+  list("chr18", 35.5e6, 39.5e6, "chr18_Pcdh_context")
 )
 for (r in regions) {
   nm <- r[[4]]
   message("Plotting ", nm)
   p <- tryCatch(gam_region_plot(r[[1]], r[[2]], r[[3]]),
                 error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
-  if (!is.null(p)) save_fig(p, nm, subdir = "regions", width = 11, height = 9)
+  if (!is.null(p)) save_fig(p, nm, subdir = "regions", width = 11, height = 14)
 }
 cat("\nGAM_12 complete. gam_region_plot() is reusable for any region.\n")
