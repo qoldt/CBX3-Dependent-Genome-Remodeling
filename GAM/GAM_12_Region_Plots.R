@@ -31,7 +31,22 @@ source("config.R")
 suppressPackageStartupMessages({ library(ggplot2); library(data.table); library(patchwork)
   library(TxDb.Mmusculus.UCSC.mm39.knownGene); library(org.Mm.eg.db) })
 
-gam12_maxdist   <- 5e6     # matches the hotspot integration window
+# Full contact distance by default, as the collaborators do ("Full chrom
+# distance for contact maps"). Capping at 5 Mb on a 90 Mb chromosome forces a
+# 40:1 sliver that no panel height can draw honestly - that was the distortion.
+# The 5 Mb hotspot ceiling is drawn as a reference line instead.
+gam12_maxdist   <- NULL
+gam12_hotline   <- 5e6     # where the hotspot integration window ends
+
+# RAW NPMI panels: blue - white - yellow - orange - red. NPMI runs [-1, 1] with
+# 0 meaning independence, so white belongs at zero rather than at the bottom of
+# a sequential ramp.
+npmi_cols <- c("#2166ac", "#67a9cf", "#d1e5f0", "#ffffff",
+               "#fff0b3", "#fdae61", "#e8602c", "#a50026")
+# DIFFERENCE panel: a plain two-sided blue/red. A difference has no meaningful
+# intermediate colour the way NPMI's own scale does, and the yellow/orange band
+# reads as a third category rather than as "more".
+diff_cols <- c("#2166ac", "#6ba3cd", "#ffffff", "#d6604d", "#b2182b")
 gam12_hot_cut   <- 50      # slides: 50-75 differential contacts per window
 
 # Gene models for the annotation track, loaded once.
@@ -50,6 +65,28 @@ X <- readRDS(g1)
 A <- as.data.table(X$annot); setorder(A, chr, start)
 for (mk in colnames(X$l2fc)) A[[mk]] <- X$l2fc[match(A$bin_id, rownames(X$l2fc)), mk]
 
+# z-score within each genomic distance (each diagonal). This is the
+# collaborators' normalisation, and it must be computed on the WHOLE chromosome
+# matrix, not on a displayed sub-region: a 2 Mb window leaves ~90 values per
+# diagonal, so a region-local z-score is a different, much noisier quantity than
+# the chromosome-wide one their delta-z column carries.
+# Walking diagonals is O(n^2); masking the matrix once per distance is O(n^3)
+# and does not finish on a full chromosome.
+zbydist <- function(M) {
+  n <- nrow(M)
+  # One grouped pass over every cell, keyed by diagonal offset. A loop over
+  # diagonals re-allocates an index matrix thousands of times and does not
+  # finish on a full chromosome; this is a single data.table grouping.
+  dt <- data.table(v = as.vector(M),
+                   d = as.vector(abs(.row(dim(M)) - .col(dim(M)))))
+  dt[, z := NA_real_]
+  dt[is.finite(v), z := {
+    sdv <- stats::sd(v)
+    if (.N < 10L || !is.finite(sdv) || sdv < 1e-9) NA_real_ else (v - mean(v)) / sdv
+  }, by = d]
+  matrix(dt$z, n, n, dimnames = dimnames(M))
+}
+
 # ---------------------------------------------------------------
 # gam_region_plot(chrom, from, to, marks)
 #   chrom  "chr11"; from/to in bp (NULL = whole chromosome)
@@ -59,13 +96,16 @@ for (mk in colnames(X$l2fc)) A[[mk]] <- X$l2fc[match(A$bin_id, rownames(X$l2fc))
 gam_region_plot <- function(chrom, from = NULL, to = NULL,
                             marks = mark_levels,     # all five, in the project order
                             maxdist = gam12_maxdist, hot_cut = gam12_hot_cut,
-                            smooth_map = TRUE, show_raw = TRUE) {
+                            smooth_map = TRUE, show_raw = TRUE,
+                            diff_mode = c("deltaz", "raw")) {
+  diff_mode <- match.arg(diff_mode)
 
   reg <- A[chr == chrom]
   if (is.null(from)) from <- min(reg$start)
   if (is.null(to))   to   <- max(reg$end)
   reg <- reg[start >= from & end <= to]
   if (nrow(reg) < 10) stop("region too small: ", chrom, ":", from, "-", to, call. = FALSE)
+  if (is.null(maxdist)) maxdist <- to - from      # full distance: a true triangle
 
   # --- contact difference over the region ------------------------------------
   raw_tri <- function(M, pos, ttl) {
@@ -78,10 +118,10 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
     q <- q[d <= maxdist]
     q[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = M[cbind(i, j)])]
     q <- q[is.finite(v)]
-    cap <- as.numeric(quantile(q$v, .99, na.rm = TRUE))
-    ggplot(q, aes(x, y, fill = pmin(v, cap))) +
+    cap <- as.numeric(quantile(abs(q$v), .99, na.rm = TRUE))
+    ggplot(q, aes(x, y, fill = pmax(-cap, pmin(v, cap)))) +
       geom_tile(width = tw, height = tw) +
-      scale_fill_gradientn(colours = c("#ffffff", "#ffe3b0", "#f0a04b", "#c0392b", "#5c0f12"),
+      scale_fill_gradientn(colours = npmi_cols, limits = c(-cap, cap),
                            name = "NPMI", guide = guide_colourbar(barheight = 3)) +
       scale_y_continuous(expand = c(0, 0), name = "sep (Mb)") +
       scale_x_continuous(expand = c(0, 0)) +
@@ -94,12 +134,27 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
 
   mats <- lapply(c(WT = "WT", KO = "HP1gKO"), function(g) {
     m <- load_npmi(g, chrom)
+    zm <- if (identical(diff_mode, "deltaz")) zbydist(m) else NULL
     ids <- intersect(reg$bin_id, rownames(m))
-    m[ids, ids, drop = FALSE]
+    list(raw = m[ids, ids, drop = FALSE],
+         z   = if (is.null(zm)) NULL else zm[ids, ids, drop = FALSE])
   })
-  ids <- intersect(rownames(mats$WT), rownames(mats$KO))
-  W0 <- mats$WT[ids, ids]; K0 <- mats$KO[ids, ids]
-  D <- K0 - W0
+  ids <- intersect(rownames(mats$WT$raw), rownames(mats$KO$raw))
+  W0 <- mats$WT$raw[ids, ids]; K0 <- mats$KO$raw[ids, ids]
+  # DIFFERENCE MODE.
+  #   "deltaz" reproduces the collaborators' pipeline - each matrix z-scored
+  #     within each genomic distance (chromosome-wide, see zbydist above), then
+  #     subtracted. Raw NPMI falls ~6x from 20 kb to 20 Mb, so a raw difference
+  #     is dominated by the near-diagonal and long-range structure is invisible;
+  #     delta-z puts every separation on the same footing.
+  #   "raw" keeps KO - WT in NPMI units, the right scale when the question is
+  #     absolute contact frequency.
+  # SIGN: they compute z(WT) - z(cKO), so their positive means LOST in the KO.
+  # This repo uses positive = MORE in the KO throughout, so our map is their map
+  # inverted. Stated on the panel so it is not read backwards.
+  D <- if (identical(diff_mode, "deltaz"))
+         mats$KO$z[ids, ids] - mats$WT$z[ids, ids]
+       else K0 - W0
   pos <- as.numeric(sub("-.*", "", sub(".*:", "", ids)))
   rm(mats); gc(FALSE)
 
@@ -155,13 +210,20 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
 
   p_map <- ggplot(ij, aes(x, y, fill = pmax(-lim, pmin(lim, v)))) +
     geom_tile(width = tw, height = tw) +
-    scale_fill_gradient2(low = "#2166AC", mid = "white", high = "#B2182B",
-                         midpoint = 0, name = "KO - WT\nNPMI",
+    scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim), name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
                          guide = guide_colourbar(barheight = 4)) +
+    { if (gam12_hotline / 2 < maxdist / 2)
+        geom_hline(yintercept = gam12_hotline / 2e6, linetype = 2, linewidth = .3,
+                   colour = "grey30") } +
+    { if (gam12_hotline / 2 < maxdist / 2)
+        annotate("text", x = from / 1e6, y = gam12_hotline / 2e6, hjust = -0.04, vjust = -0.5,
+                 size = 2.3, colour = "grey30", label = "max hotspot distance") } +
     scale_y_continuous(expand = c(0, 0), name = "separation (Mb)") +
     scale_x_continuous(expand = c(0, 0)) +
     coord_cartesian(xlim = c(from, to) / 1e6, expand = FALSE) +
-    labs(subtitle = "cKO - WT  (red = more contact in cKO)") +
+    labs(subtitle = if (identical(diff_mode, "deltaz"))
+           "delta-z, cKO - WT  (red = more contact in cKO; note their slides use the opposite sign)"
+         else "cKO - WT NPMI  (red = more contact in cKO)") +
     theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
                     plot.subtitle = element_text(size = 9),
                     plot.margin = margin(2, 4, 1, 4))
@@ -195,8 +257,10 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
   # which put two different greys/reds on values that were both negative and was
   # unreadable.) The dashed line is that mark's genome-wide median, so you can
   # still see where a region is worse than typical.
-  smw <- max(3L, round(nrow(reg) / 220))
-  mk_panel <- function(mk, last = FALSE) {
+  # Lighter smoothing than before: enough to read as a profile, not so much
+  # that real features are flattened. ~1/600 of the region, floor of 3 bins.
+  smw <- max(3L, round(nrow(reg) / 600))
+  mk_panel <- function(mk, last = FALSE, show_key = FALSE) {
     # Keep every bin, including those with no value: dropping them lets
     # geom_area draw a straight wedge across the gap, which looks like real
     # signal. Smoothing ignores the gaps; plotting leaves them as breaks.
@@ -222,23 +286,29 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
       # informative quantity is deviation from the typical loss. The y axis
       # still shows absolute log2FC, and the solid line marks the median, so
       # nothing is hidden - only the fill reference changes.
-      geom_ribbon(aes(ymin = gm, ymax = pmin(v, gm)), fill = "#c0392b", na.rm = TRUE) +
-      geom_ribbon(aes(ymin = gm, ymax = pmax(v, gm)), fill = "#2166ac", na.rm = TRUE) +
-      geom_line(linewidth = .25, colour = "grey25", na.rm = TRUE) +
+      geom_ribbon(aes(ymin = gm, ymax = pmin(v, gm), fill = "below"), na.rm = TRUE) +
+      geom_ribbon(aes(ymin = gm, ymax = pmax(v, gm), fill = "above"), na.rm = TRUE) +
       geom_hline(yintercept = gm, linewidth = .35, colour = "grey30") +
       { if (rng[1] < 0 && rng[2] > 0)
           geom_hline(yintercept = 0, linewidth = .3, colour = "grey65", linetype = 3) } +
+      scale_fill_manual(values = c(below = "#c0392b", above = "#2166ac"),
+                        breaks = c("below", "above"),
+                        labels = c("below mark's genome median", "above it"),
+                        name = NULL) +
       scale_x_continuous(expand = c(0, 0)) +
       scale_y_continuous(n.breaks = 3, expand = expansion(mult = 0.04)) +
       coord_cartesian(xlim = c(from, to) / 1e6, ylim = rng, expand = FALSE) +
       labs(y = mk, x = if (last) sprintf("%s (Mb)", chrom) else NULL) +
-      theme_m + theme(plot.margin = margin(1, 4, if (last) 2 else 1, 4),
+      theme_m + theme(legend.position = if (show_key) "right" else "none",
+                      legend.key.size = unit(9, "pt"), legend.text = element_text(size = 7),
+                      plot.margin = margin(1, 4, if (last) 2 else 1, 4),
                       axis.title.y = element_text(size = 8),
                       axis.text.y = element_text(size = 6.5),
                       axis.title.x = if (last) element_text() else element_blank(),
                       axis.text.x  = if (last) element_text() else element_blank())
   }
-  panels <- lapply(seq_along(marks), function(i) mk_panel(marks[i], FALSE))
+  panels <- lapply(seq_along(marks), function(i)
+                   mk_panel(marks[i], FALSE, show_key = (i == 1L)))
 
   # --- gene track -------------------------------------------------------------
   gg <- GENES[as.character(seqnames(GENES)) == chrom &
