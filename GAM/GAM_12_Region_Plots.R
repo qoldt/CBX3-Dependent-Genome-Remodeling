@@ -67,6 +67,27 @@ gam12_h_mark   <- 0.70
 gam12_h_gene   <- 0.80
 gam12_h_chrome <- 1.70   # title, caption, x axis, inter-panel margins
 
+# MINIMUM Y SPAN of a mark panel, in log2FC. Without a floor the axis fits
+# whatever the region happens to contain, so a mark with almost no dynamic range
+# there has its noise stretched to the full panel height and reads as dramatic
+# structure. Marks with real signal already exceed this and are unaffected.
+gam12_mark_minspan <- 0.5
+
+# DISPLAY BIN FOR THE MARK TRACKS. The analysis grid is 20 kb, but a per-bin
+# log2FC at 20 kb is noise-dominated: after the x10 count scaling DESeq2 sees
+# integers of roughly 1-11 per bin, and the resulting unshrunk ratio has a
+# per-bin sd of 0.14-0.16 for the broad marks and up to 0.57 for H3K4me3 -
+# several times the local effects people try to read off these tracks.
+# Aggregating the DISPLAY to 100 kb gives ~5x the counts and roughly halves that
+# noise. Every statistic elsewhere still uses the 20 kb values.
+#
+# Shrinkage is deliberately NOT used for this: ashr collapses H3K36me3 and
+# H3K9me2 to exactly zero and pulls H4K20me3 from -0.497 to -0.212, because a
+# shrinkage prior assumes most effects are null - the same assumption as
+# median-of-ratios normalisation, which sizeFactors = 1 exists here to avoid.
+gam12_mark_binsize <- 100000
+gam12_mark_npoints <- 1200   # columns the mark track is resampled onto
+
 # Gene models for the annotation track, loaded once.
 GENES <- local({
   g <- genes(TxDb.Mmusculus.UCSC.mm39.knownGene, single.strand.genes.only = TRUE)
@@ -82,6 +103,15 @@ if (!file.exists(g1)) stop("GAM_1 output not found:\n  ", g1,
 X <- readRDS(g1)
 A <- as.data.table(X$annot); setorder(A, chr, start)
 for (mk in colnames(X$l2fc)) A[[mk]] <- X$l2fc[match(A$bin_id, rownames(X$l2fc)), mk]
+# baseMean too: the mark tracks need it both to weight the aggregation and to
+# fade bins where there is no signal to take a ratio of.
+local({
+  S <- as.data.table(as.data.frame(X$stats))
+  for (mk in colnames(X$l2fc)) {
+    d <- S[mark == mk]
+    A[[paste0("bm_", mk)]] <<- d$baseMean[match(A$bin_id, d$bin_id)]
+  }
+})
 
 # z-score within each genomic distance (each diagonal). This is the
 # collaborators' normalisation, and it must be computed on the WHOLE chromosome
@@ -402,12 +432,19 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
   }
 
   # --- ChIP tracks ------------------------------------------------------------
-  # Mark tracks: a smoothed profile, not one bar per 20 kb bin. Fill is by the
-  # SIGN of log2FC - red below zero is signal lost in the KO, blue above zero is
-  # gained. (The previous version coloured by "above or below the genome median",
-  # which put two different greys/reds on values that were both negative and was
-  # unreadable.) The dashed line is that mark's genome-wide median, so you can
-  # still see where a region is worse than typical.
+  # Mark tracks: a smoothed profile, not one bar per 20 kb bin.
+  #
+  # READ THE FILL CAREFULLY. It diverges from that mark's GENOME MEDIAN, not
+  # from zero, so blue means "above the median" and NOT "increased in the KO".
+  # For a mark whose median is negative, blue is still a loss - just a smaller
+  # one than typical. This has already been misread once: H3K36me3 looks blue
+  # over the Pcdh cluster, but its value there is -0.049 against a genome median
+  # of -0.052, i.e. still down, and +0.004 off the genome is p = 0.93.
+  #
+  # The fill also carries no magnitude - +0.004 and +0.4 are the same blue - and
+  # the y axis auto-scales per panel, so a mark with a narrow dynamic range has
+  # its noise stretched to fill the panel. Hence the median value printed in the
+  # axis label below: the reference is never left implicit.
   # Lighter smoothing than before: enough to read as a profile, not so much
   # that real features are flattened. ~1/600 of the region, floor of 3 bins.
   smw <- max(3L, round(nrow(reg) / 600))
@@ -415,18 +452,74 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
     # Keep every bin, including those with no value: dropping them lets
     # geom_area draw a straight wedge across the gap, which looks like real
     # signal. Smoothing ignores the gaps; plotting leaves them as breaks.
-    d <- reg[, .(mid = (start + end) / 2e6, v = get(mk))]
-    ok <- is.finite(d$v)
-    sm <- rep(NA_real_, nrow(d))
-    if (sum(ok) > smw) {
-      f <- as.numeric(stats::filter(ifelse(ok, d$v, 0), rep(1, smw), sides = 2))
-      k <- as.numeric(stats::filter(ok * 1, rep(1, smw), sides = 2))
-      sm <- ifelse(is.finite(k) & k > 0, f / k, NA_real_)
-    }
-    d[, v := ifelse(ok, ifelse(is.na(sm), v, sm), NA_real_)]
+    d <- reg[, .(start, end, v = get(mk), bm = get(paste0("bm_", mk)))]
+    # Aggregate to the display bin, weighting each 20 kb log2FC by its coverage.
+    # An unweighted mean lets a near-empty bin - whose ratio is almost pure
+    # noise - count as much as a well-covered one.
+    fac <- max(1L, round(gam12_mark_binsize / gam_binsize))
+    d[, grp := ((seq_len(.N) - 1L) %/% fac) + 1L]
+    d <- d[, {
+      ok <- is.finite(v) & is.finite(bm) & bm > 0
+      .(x0 = min(start) / 1e6, x1 = max(end) / 1e6,
+        v  = if (!any(ok)) NA_real_ else sum(v[ok] * bm[ok]) / sum(bm[ok]),
+        bm = if (!any(ok)) 0        else mean(bm[ok]))
+    }, by = grp]
     gm <- median(A[[mk]], na.rm = TRUE)
+    # Opacity carries coverage: a display bin at or above the mark's median
+    # baseMean is solid, one with nothing in it fades out. This is what stops a
+    # region with no signal in either genotype from drawing a confident profile
+    # - the H3K4me3 case, where 84% of 20 kb bins have baseMean < 0.5.
+    # q90, not the median: for a focal mark the median bin is itself empty
+    # (H3K4me3 median baseMean 0.12 against q90 3.18 - the signal lives in the
+    # top decile, the promoters), so a median reference would render most of an
+    # empty track solid. q90 adapts per mark on its own: H3K9me2 is uniform
+    # (1.10 vs 1.39) and stays solid, H3K4me3 correctly goes faint nearly
+    # everywhere except over real peaks.
+    bm_ref <- quantile(A[[paste0("bm_", mk)]], 0.9, na.rm = TRUE)
+    d[, a := pmax(0.10, pmin(1, bm / bm_ref))]
+    d[!is.finite(a), a := 0.10]
     rng <- range(c(d$v, 0, gm), na.rm = TRUE)
-    ggplot(d, aes(mid, v)) +
+    # MINIMUM SPAN. Without this the y axis fits whatever the region happens to
+    # contain, so a mark with almost no dynamic range here (H3K36me3 varies by
+    # ~0.15 over the Pcdh cluster) gets its noise stretched to the full panel
+    # height and reads as dramatic structure. Floor the span and tiny deviations
+    # look tiny, which is what they are. Marks with real signal are unaffected
+    # because their own range already exceeds the floor.
+    if (diff(rng) < gam12_mark_minspan) {
+      mid <- (rng[1] + rng[2]) / 2
+      rng <- c(mid - gam12_mark_minspan / 2, mid + gam12_mark_minspan / 2)
+      rng <- range(c(rng, 0, gm))   # never clip zero or the median out of view
+    }
+    # SMOOTH SILHOUETTE. The 100 kb aggregation is what controls the noise, but
+    # drawn as rects it reads as steps. Resample the aggregated values onto a
+    # fine grid so the outline is a continuous bigwig-style profile while the
+    # numbers behind it stay the aggregated ones. rule = 1 leaves NA outside the
+    # data, so a gap stays a gap instead of being bridged.
+    fine <- local({
+      mid <- (d$x0 + d$x1) / 2
+      ok  <- is.finite(d$v)
+      fx  <- seq(from / 1e6, to / 1e6, length.out = gam12_mark_npoints)
+      itp <- function(y, dflt) if (sum(ok) >= 2)
+               stats::approx(mid[ok], y[ok], xout = fx, rule = 1)$y else rep(dflt, length(fx))
+      # Linear interpolation leaves visible corners at each 100 kb midpoint,
+      # which on a small region (Pcdh is only ~18 display bins) reads as a
+      # polygon rather than a profile. A short running mean ON THE FINE GRID
+      # rounds them without the overshoot a spline would introduce, and it
+      # cannot invent structure: the window is half a display bin.
+      ppb  <- length(fx) / max(1, nrow(d))
+      smw2 <- max(3L, as.integer(round(ppb / 2)))
+      roll <- function(y) {
+        g <- is.finite(y)
+        num <- as.numeric(stats::filter(ifelse(g, y, 0), rep(1, smw2), sides = 2))
+        den <- as.numeric(stats::filter(g * 1, rep(1, smw2), sides = 2))
+        out <- ifelse(is.finite(den) & den > 0, num / den, NA_real_)
+        ifelse(g & !is.finite(out), y, out)   # keep the ends
+      }
+      data.table(x = fx, v = roll(itp(d$v, NA_real_)),
+                 a = { z <- roll(itp(d$a, 0.10)); z[!is.finite(z)] <- 0.10; z })
+    })
+    fw <- diff(fine$x[1:2])
+    ggplot() +
       # Two ribbons clipped at zero, NOT geom_area(fill = v < 0): mapping fill to
       # the sign splits the data into two groups, and each group's polygon then
       # joins its own points straight across the other's territory - which drew
@@ -437,8 +530,19 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
       # informative quantity is deviation from the typical loss. The y axis
       # still shows absolute log2FC, and the solid line marks the median, so
       # nothing is hidden - only the fill reference changes.
-      geom_ribbon(aes(ymin = gm, ymax = pmin(v, gm), fill = "below"), na.rm = TRUE) +
-      geom_ribbon(aes(ymin = gm, ymax = pmax(v, gm), fill = "above"), na.rm = TRUE) +
+      geom_ribbon(data = fine, aes(x = x, ymin = gm, ymax = pmin(v, gm),
+                                   fill = "below"), na.rm = TRUE) +
+      geom_ribbon(data = fine, aes(x = x, ymin = gm, ymax = pmax(v, gm),
+                                   fill = "above"), na.rm = TRUE) +
+      # Coverage fade. Alpha cannot vary within a single ribbon polygon, so the
+      # fading is a wash of background-coloured rects laid over the finished
+      # ribbon at alpha = 1 - coverage. At ~1200 columns it reads as continuous,
+      # and the silhouette underneath stays smooth.
+      geom_rect(data = fine, aes(xmin = x - fw / 2, xmax = x + fw / 2,
+                                 ymin = rng[1], ymax = rng[2], alpha = 1 - a),
+                fill = "white", na.rm = TRUE) +
+      scale_alpha_identity() +
+      # after the wash, so the reference lines stay crisp
       geom_hline(yintercept = gm, linewidth = .35, colour = "grey30") +
       { if (rng[1] < 0 && rng[2] > 0)
           geom_hline(yintercept = 0, linewidth = .3, colour = "grey65", linetype = 3) } +
@@ -449,7 +553,8 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
       scale_x_continuous(expand = c(0, 0)) +
       scale_y_continuous(n.breaks = 3, expand = expansion(mult = 0.04)) +
       coord_cartesian(xlim = c(from, to) / 1e6, ylim = rng, expand = FALSE) +
-      labs(y = mk, x = if (last) sprintf("%s (Mb)", chrom) else NULL) +
+      labs(y = sprintf("%s\nmed %+.2f", mk, gm),
+           x = if (last) sprintf("%s (Mb)", chrom) else NULL) +
       theme_m + theme(legend.position = if (show_key) "right" else "none",
                       legend.key.size = unit(9, "pt"), legend.text = element_text(size = 7),
                       plot.margin = margin(1, 4, if (last) 2 else 1, 4),
@@ -555,9 +660,13 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
       caption = paste0(
       "GAM: CA1 pyramidal cells, HP1g WT/cKO, 20 kb, |delta-z|>2, max NPMI>0.1. ",
       "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT).\n",
-      "Contact map block-averaged and 3x3 smoothed for display; mark tracks running-mean smoothed. ",
-      "All statistics elsewhere use unsmoothed values. Mark fill diverges from each mark's genome median (solid line); ",
-      "dotted line is zero where in range.\n",
+      "Contact map block-averaged and 3x3 smoothed for display. ",
+      "MARK TRACKS are aggregated to 100 kb for display (coverage-weighted) because per-bin log2FC at 20 kb is noise-dominated ",
+      "(sd 0.14-0.16 for the broad marks, up to 0.57 for H3K4me3); opacity is coverage, so faint means little signal to take a ratio of. ",
+      "All statistics elsewhere use unsmoothed values.\n",
+      "MARK FILL diverges from each mark's GENOME MEDIAN (solid line, value in the axis label), not from zero: ",
+      "blue means above that median, which for a negative median is still a loss. Dotted line is zero where in range. ",
+      "The fill shows direction only, not magnitude - read the y axis before calling anything a change.\n",
       "Diff. contacts = count of significant differential contacts per 20 kb bin within 5 Mb (the dashed line on the map); ",
       "net = gained - lost, same sign convention as the difference map. Those are COUNTS, every bin has one. ",
       "Hotspot is the separate CALL on that count: bins at or above the collaborators' 50-75 per-window cutoff. ",
