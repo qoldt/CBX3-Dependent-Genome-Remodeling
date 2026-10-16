@@ -56,11 +56,12 @@ diff_cols <- c("#2166ac", "#6ba3cd", "#ffffff", "#d6604d", "#b2182b")
 gam12_dz_lim    <- 4
 gam12_npmi_qcap <- 0.99
 gam12_hot_cut   <- 50      # slides: 50-75 differential contacts per window
-gam12_hot_mode  <- "both"  # "both" = net over heatmap; or "net" / "split"
+gam12_count_mode <- "net"  # diff-contact COUNT panels: "net" / "split" / "both"
 
 # Row heights in inches. Absolute, so the layout is the same whatever the region.
 gam12_h_hot    <- 0.75
 gam12_h_hotmap <- 0.55
+gam12_h_hotcall<- 0.50
 gam12_h_lad    <- 0.22
 gam12_h_mark   <- 0.70
 gam12_h_gene   <- 0.80
@@ -238,7 +239,7 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                    colour = "grey30") } +
     { if (gam12_hotline / 2 < maxdist / 2)
         annotate("text", x = from / 1e6, y = gam12_hotline / 2e6, hjust = -0.04, vjust = -0.5,
-                 size = 2.3, colour = "grey30", label = "max hotspot distance") } +
+                 size = 2.3, colour = "grey30", label = "diff. contact counting window") } +
     scale_y_continuous(expand = c(0, 0), name = "sep (Mb)") +
     scale_x_continuous(expand = c(0, 0)) +
     coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
@@ -265,14 +266,14 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
   # heatmap rows showed as two hot patches and a single heatmap row could not
   # show at all.
   #
-  # gam12_hot_mode = "split" restores the two-row version: the net hides
+  # gam12_count_mode = "split" restores the two-row version: the net hides
   # reciprocal bins, and that is occasionally the thing being asked about.
   # The per-direction heatmap, kept as its own track: the net above hides a bin
   # that is busy in BOTH directions (60 lost and 60 gained nets to zero), and
   # those reciprocal bins are exactly where contacts are being redistributed
   # rather than simply removed. Net answers "which way"; the heatmap answers
   # "how much traffic, each way".
-  p_hot_hm <- local({
+  p_count_hm <- local({
     hm <- melt(reg[, .(mid = (start + end) / 2e6,
                        `lost in cKO` = n_contacts_lost,
                        `gained in cKO` = n_contacts_gained)],
@@ -283,7 +284,7 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
     ggplot(hm, aes(mid, dirn, fill = pmin(n, hcap))) +
       geom_tile(width = gam_binsize / 1e6, height = 0.92) +
       scale_fill_gradientn(colours = c("white", "#f7c6b0", "#e06b4a", "#9e2a1f"),
-                           name = "diff.\ncontacts",
+                           name = "diff. contacts\nper bin",
                            guide = guide_colourbar(barheight = grid::unit(2.4, "cm"))) +
       scale_x_continuous(expand = c(0, 0)) +
       scale_y_discrete(expand = c(0, 0)) +
@@ -294,7 +295,7 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                       panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
   })
 
-  p_hot_net <- local({
+  p_count_net <- local({
     hd <- reg[, .(mid = (start + end) / 2e6,
                   net = n_contacts_gained - n_contacts_lost)]
     # Symmetric limit so the two directions are drawn on one scale; without it a
@@ -320,15 +321,62 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                       plot.margin = margin(1, 4, 1, 4))
   })
 
-  # "both" (the default) stacks net over heatmap; "net" and "split" give one.
-  hot_panels <- switch(gam12_hot_mode,
-                       net   = list(p_hot_net),
-                       split = list(p_hot_hm),
-                       list(p_hot_net, p_hot_hm))
-  hot_h <- switch(gam12_hot_mode,
+  # --- hotspots: the CALL, not the count --------------------------------------
+  # These are two different things and the earlier version of this figure
+  # conflated them. The delivered Hotspots/ files are a dense per-bin COUNT -
+  # every mappable bin has one, median 14 - so they are a differential-contact
+  # density track, not a hit list. A hotspot is what you get after thresholding
+  # that count: the collaborators' slides give 50-75 differential contacts per
+  # window as the cutoff. gam12_hot_cut carries that value and until now was
+  # accepted by this function and never used.
+  #
+  # Drawn as discrete blocks so it reads as a call. The repo also has a second,
+  # smoothed definition (gam_hotspot_domains() in config.R: q90 + gap merging,
+  # used by GAM_1 to emit domains); that one is deliberately NOT what is drawn
+  # here, because these panels are showing the collaborators' own track under
+  # the collaborators' own cutoff. Whichever is meant has to be said out loud.
+  p_hotspot <- local({
+    # ONE row, direction carried by colour. Only 26 bins genome-wide (0.1% of
+    # hotspot bins) are called in both directions, so a single row loses almost
+    # nothing - but those 26 get their own colour rather than letting whichever
+    # is drawn second silently paint over the other.
+    hs <- reg[, .(mid = (start + end) / 2e6,
+                  l = n_contacts_lost   >= hot_cut,
+                  g = n_contacts_gained >= hot_cut)]
+    hs <- hs[l | g]
+    hs[, call := fifelse(l & g, "both", fifelse(g, "gained in cKO", "lost in cKO"))]
+    hs[, call := factor(call, levels = c("gained in cKO", "lost in cKO", "both"))]
+    ggplot(hs, aes(mid, 1, fill = call)) +
+      geom_tile(width = gam_binsize / 1e6, height = 1) +
+      scale_fill_manual(values = c(`gained in cKO` = "#b2182b",
+                                   `lost in cKO`   = "#2166ac",
+                                   both            = "#5d3a7a"),
+                        # drop unused levels: "both" is 0.1% of hotspot bins
+                        # genome-wide, so on most regions keeping it would put an
+                        # empty key in the legend of every figure.
+                        name = sprintf("hotspot (>=%d)", hot_cut), drop = TRUE) +
+      scale_x_continuous(expand = c(0, 0)) +
+      scale_y_continuous(expand = c(0, 0)) +
+      coord_cartesian(xlim = c(from, to) / 1e6) +
+      labs(y = "hotspot") +
+      theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                      axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+                      axis.title.y = element_text(size = 7),
+                      panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
+  })
+
+  # "both" (the default) stacks net count over per-direction count; either way
+  # the hotspot CALL is a separate track below them.
+  hot_panels <- switch(gam12_count_mode,
+                       net   = list(p_count_net),
+                       split = list(p_count_hm),
+                       list(p_count_net, p_count_hm))
+  hot_h <- switch(gam12_count_mode,
                   net   = gam12_h_hot,
                   split = gam12_h_hotmap,
                   c(gam12_h_hot, gam12_h_hotmap))
+  hot_panels <- c(hot_panels, list(p_hotspot))
+  hot_h      <- c(hot_h, gam12_h_hotcall)
 
   # --- LAD ribbon -------------------------------------------------------------
   # Constitutive LADs (Peric-Hupkes 2010, lifted to mm39). External to both our
@@ -505,12 +553,14 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                     legend.spacing.y = grid::unit(12, "pt"),
                     legend.box.spacing = grid::unit(10, "pt")),
       caption = paste0(
-      "GAM: CA1 pyramidal cells, HP1g WT/cKO, 20 kb, |delta-z|>2, max NPMI>0.1; hotspots over 0-5 Mb. ",
+      "GAM: CA1 pyramidal cells, HP1g WT/cKO, 20 kb, |delta-z|>2, max NPMI>0.1. ",
       "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT).\n",
       "Contact map block-averaged and 3x3 smoothed for display; mark tracks running-mean smoothed. ",
       "All statistics elsewhere use unsmoothed values. Mark fill diverges from each mark's genome median (solid line); ",
       "dotted line is zero where in range.\n",
-      "Net diff. contacts = gained - lost per 20 kb bin, same sign convention as the difference map. ",
+      "Diff. contacts = count of significant differential contacts per 20 kb bin within 5 Mb (the dashed line on the map); ",
+      "net = gained - lost, same sign convention as the difference map. Those are COUNTS, every bin has one. ",
+      "Hotspot is the separate CALL on that count: bins at or above the collaborators' 50-75 per-window cutoff. ",
       "LADs: constitutive cLAD/ciLAD, Peric-Hupkes 2010 (GSE17051), lifted mm9->mm39.")) &
     theme(legend.justification = "top") -> out
   # Exact figure height: every row plus the title/caption/axis furniture.
