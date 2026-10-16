@@ -9,7 +9,7 @@ comparing HP1γ knockout vs wild-type across three complementary assays.
 |--------|-------|--------|
 | [`ChIP/`](ChIP/) | Multiplexed ChIP-seq (MINUTE pipeline) — differential histone-mark analysis over called peaks | Active |
 | `scRNAseq/` | Single-cell RNA-seq | Planned |
-| `GAM/` | Genome Architecture Mapping | Planned |
+| [`GAM/`](GAM/) | Genome Architecture Mapping — 20 kb NPMI contact maps, differential contacts, integrated with the ChIP results | Active |
 
 Each folder is self-contained, with its own README describing inputs, usage, and
 outputs. Genome build is mouse **mm39** throughout.
@@ -52,6 +52,37 @@ uncoupled from H3K9me3**, derepressing HUSH/CBX3-target gene clusters
 Full details: [`ChIP/README.md`](ChIP/README.md) (pipeline + outputs),
 [`ChIP/results/EXECUTIVE_SUMMARY.md`](ChIP/results/EXECUTIVE_SUMMARY.md)
 (findings), [`ChIP/results/METHODS.md`](ChIP/results/METHODS.md) (data sources).
+
+## GAM analysis — methods summary
+
+Genome Architecture Mapping of **HP1γ (Cbx3) conditional-knockout vs wild-type**
+nuclei, genome **mm39**, **20 kb** bins. Two biological replicates per genotype,
+merged upstream, so the effective n is 2 vs 2 — matching the ChIP side.
+
+- **Inputs.** Dense per-chromosome **NPMI** matrices per genotype (autosomes +
+  chrX/chrY), plus delivered **differential contact** pairs and per-bin
+  **hotspot** counts (autosomes only; z > 2, NPMI > 0.1, counts within 0-5 Mb).
+  Genotype is encoded only by the folder name.
+- **Direction.** Contacts stronger in WT are **lost** in the KO; those stronger in
+  cKO are **gained**. All downstream columns are named from the KO's point of view.
+- **Integration.** ChIP signal and DESeq2 statistics are projected onto the same
+  20 kb autosomal grid, with the ChIP compartments (median-centred labels
+  primary), repeat content, ChromHMM state and TAD boundaries per bin. PC1
+  compartments, insulation and contact decay come from the NPMI matrices, with PC1
+  oriented per chromosome to the H3K4me3-high side.
+- **Key analytical choices.** The delivered files carry no replicate dimension, so
+  no p-value is attached to a contact; GAM-side statistics use size- or
+  composition-matched permutation nulls on the bin side. Matrices are processed
+  one chromosome at a time.
+- **Stages** (`GAM/run_GAM.R`): (1) bins, ChIP signal and annotation -> (2) NPMI
+  compartments/insulation/decay -> (3) contact coupling, (4) compartments vs
+  contacts, (5) HUSH targets and repeats vs contacts; stages 3-5 read the outputs
+  of 1 and 2.
+
+No GAM results have been generated yet. Full details:
+[`GAM/README.md`](GAM/README.md) (data and pipeline),
+[`GAM/results/METHODS.md`](GAM/results/METHODS.md) (data sources and open
+provenance questions).
 
 ## Data
 

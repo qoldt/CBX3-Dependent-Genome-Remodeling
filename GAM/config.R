@@ -143,6 +143,75 @@ require_chip_rds <- function() {
   chip_rds
 }
 
+# --- ChIP inputs that GAM re-quantifies --------------------------
+# GAM_1 puts ChIP signal on the GAM bin grid, so it needs the ChIP bigWigs, the
+# ChIP annotation BEDs and the ChIP sample sheet.
+#
+# WHY NOT source("../ChIP/config.R"): both configs define results_dir /
+# counts_dir / rds_dir / fig_dir / tables_dir by the SAME names, so sourcing the
+# ChIP one here would silently redirect every GAM output into ChIP/results (and
+# re-attach the whole ChIP library set). The few things GAM needs are therefore
+# re-derived below, and they MUST track ChIP/config.R: same MINUTE_DATA root,
+# same sample sheet, same default exclusion.
+minute_data <- path.expand(Sys.getenv("MINUTE_DATA", unset = "../ChIP/data"))
+bigwig_dir  <- file.path(minute_data, "bigwig")
+annot_dir   <- file.path(minute_data, "annotation")
+chip_samples_tsv <- "../ChIP/samples.tsv"
+
+# --- Sample sheet + exclusion (mirrors ChIP/config.R) ------------
+# DEFAULT: HP1gKO rep2 is EXCLUDED, exactly as on the ChIP side - it is the
+# highest-signal library in all five marks and discordant with rep3, its own
+# technical twin, so it is treated as a technical failure. Keeping the same
+# default is what makes the per-bin log2FC comparable to the published
+# peak-level numbers; MINUTE_EXCLUDE=none reproduces the all-library run.
+# Syntax: comma-separated sample_ids and/or <genotype>:<replicate> pairs.
+gam_load_samples <- function() {
+  sm <- as.data.frame(data.table::fread(chip_samples_tsv))
+  ex <- trimws(strsplit(Sys.getenv("MINUTE_EXCLUDE", unset = "HP1gKO:2"), ",")[[1]])
+  if (identical(tolower(ex), "none")) ex <- character(0)
+  ex <- ex[nzchar(ex)]
+  excluded <- character(0)
+  if (length(ex)) {
+    pairs <- grepl(":", ex, fixed = TRUE)
+    drop  <- sm$sample_id %in% ex[!pairs]
+    for (q in ex[pairs]) {
+      gr <- strsplit(q, ":", fixed = TRUE)[[1]]
+      drop <- drop | (as.character(sm$genotype) == gr[1] &
+                      as.character(sm$replicate) == gr[2])
+    }
+    excluded <- sm$sample_id[drop]
+    message("Excluding ", sum(drop), " sample(s): ", paste(excluded, collapse = ", "))
+    sm <- sm[!drop, , drop = FALSE]
+  }
+  sm$genotype    <- factor(sm$genotype, levels = c("WT", "HP1gKO"))
+  sm$bigwig_path <- file.path(bigwig_dir, sm$bigwig)
+  attr(sm, "excluded_ids") <- excluded
+  sm
+}
+
+# --- Quantification parameters -----------------------------------
+# COUNT_SCALE: DESeq2 needs integers, but mean coverage over a 20 kb bin is
+# often below 1, so plain rounding would collapse most bins onto 0/1. Scaling by
+# 10 before rounding preserves the gradation; the factor cancels in log2FC, and
+# baseMean is divided back out so it stays on the coverage scale. Same value and
+# reasoning as ChIP/MINUTE_7_H3K36me3_Genes.R.
+gam_count_scale <- 10
+
+# Cores for the per-sample bigWig reads. Leaves one core free; GAM_1 is a
+# sustained all-core job on a laptop, so lower this (GAM_CORES=4) when running
+# it alongside anything else.
+gam_cores <- as.integer(Sys.getenv("GAM_CORES", unset = max(1, parallel::detectCores() - 1)))
+
+# --- Compartment cutoffs: MINUTE_3's, VERBATIM -------------------
+# Do not retune these here. They define the stable / H4K20me3_only / co_loss
+# groups, and the whole point of reusing them is that the GAM bins are labelled
+# by the SAME rule as the ChIP peaks. Note they are ABSOLUTE and therefore not
+# shift-invariant against a genome-wide loss, which is why every GAM stage
+# treats the median-CENTRED variant as primary (ChIP/results/COMPARTMENT_CUTOFFS.md).
+H4_LOST_CUT <- -0.5    # H4K20me3 log2FC below this = "H4K20me3-lost"
+K9_LOSS_CUT <- -0.3    # H3K9me3  log2FC below this = "H3K9me3-loss"
+UNCH_CUT    <-  0.15   # |log2FC| below this = "unchanged"
+
 # --- The shared coordinate system --------------------------------
 # The 20 kb grid that BOTH assays are projected onto. mm39_bins() comes from
 # shared/common.R; UCSC seqnames, autosomes by default (matching the GAM

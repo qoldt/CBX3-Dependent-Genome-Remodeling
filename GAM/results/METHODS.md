@@ -1,0 +1,69 @@
+# Methods notes — GAM
+
+## Data sources and processing parameters
+
+Genome Architecture Mapping (GAM) data for **HP1γ (Cbx3) conditional knockout
+(cKO) vs wild type (WT)**, aligned to **mm39** and binned at **20 kb**. The
+delivered products (about 7.7 GB, git-ignored) are:
+
+- **NPMI matrices**, one dense square matrix per chromosome per genotype (chr1-19,
+  chrX, chrY), `HP1g_mm39.segregation_at20000.2026-02-23.passed_qc.curated.sigma.2.6.NPMI.<chr>.squared.txt.gz`.
+  Parameters recoverable from the filename: segregation table at 20 kb, dated
+  2026-02-23, restricted to `passed_qc.curated` profiles, `sigma.2.6`. Genotype is
+  encoded only by the directory (`WT_at20Kb` / `cKO_at20Kb`); the filenames are
+  identical between the two.
+- **Differential contacts** (`Diff_contacts/`, 38 `.bg2.gz`, autosomes only),
+  WT vs cKO contact pairs called significant by the upstream caller with
+  **z > 2**, **NPMI > 0.1** (in the selecting genotype) and no distance cap
+  (`maxdist = inf`). Observed contact distances span 20 kb to 57.18 Mb. A
+  contact is labelled by the genotype in which it is stronger: `selWT`
+  (25,558,790 pairs; lost in the KO) and `selcKO` (25,042,198 pairs; gained).
+- **Hotspots** (`Hotspots/`, 38 `.bg.gz`, autosomes only): per 20 kb bin, the
+  number of significant differential contacts within 0-5 Mb. About 114,793
+  (selWT) and 114,651 (selcKO) bins carry a count (range 1-162) out of 123,133
+  autosomal bins, so these are dense continuous tracks rather than hit lists.
+
+**Replication.** Two biological replicates per genotype, merged upstream into a
+single segregation table per genotype (confirmed by the data owner). The effective
+biological n is 2 vs 2, the same as the ChIP side, where 6 WT vs 4 HP1gKO
+libraries are nested technical replicates of 2 biological replicates per
+genotype. The delivered files have no replicate dimension, so the z > 2 filter is
+the only significance carried by the inputs; downstream statistics use
+matched-background permutation on the bin side (size-matched nulls via
+`size_perm()`), not a p-value on a contact.
+
+**Integration with ChIP.** ChIP signal and DESeq2 statistics (from the MINUTE
+pipeline, `../ChIP/`) are projected onto the 20 kb autosomal GAM grid. Seqnames
+are flipped between NCBI (ChIP peaks) and UCSC (GAM) with `to_ucsc()`/`to_ncbi()`.
+Differential contact direction is expressed from the KO's point of view (`selWT`
+= lost, `selcKO` = gained). Chromatin compartments from ChIP use the MINUTE_3
+cutoffs, with the median-centred variant as primary. PC1 compartments from NPMI
+are oriented per chromosome so that A is the H3K4me3-high side.
+
+No GAM results have been generated at the time of writing.
+
+---
+
+## OPEN QUESTIONS / TODO — provenance not recoverable from the files
+
+These are **not** known and must not be assumed. Each needs an answer from the
+data owner before this file can be treated as complete.
+
+1. **How many nuclear profiles (tubes) per genotype** went into the WT and cKO
+   segregation tables, before and after QC? Depth per genotype affects NPMI
+   noise and could bias a WT-vs-cKO comparison if unequal.
+2. **What are the QC criteria behind `passed_qc.curated`?** Which metrics and
+   thresholds, and what does "curated" add (manual review?).
+3. **What was sigma 2.6 fit on?** Which data or procedure set the value, and was
+   it fit per genotype or jointly?
+4. **Which GAM protocol variant was used, and what is the reference?** (For
+   example standard GAM, multiplex GAM, or another; slice thickness; number of
+   nuclear profiles per tube.) Citation to be added.
+5. **Is the cKO the same Emx1-Cre Cbx3 conditional-knockout cortex as the ChIP
+   data?** Same tissue, age, sex and genotype definition, or a different cohort?
+6. **Which tool produced the NPMI matrices and differential contacts**, and what
+   does the caller assume (distributions, multiple-testing handling, how `deltaz`
+   is defined)? The upstream version and command are not recorded in the files.
+7. **Are the two merged biological replicates balanced** in profile count, and
+   were they collected in the same batch? Pooling unequal replicates would let
+   one replicate dominate a genotype.
