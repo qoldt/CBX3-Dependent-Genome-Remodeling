@@ -87,6 +87,7 @@ gam12_mark_minspan <- 0.5
 # median-of-ratios normalisation, which sizeFactors = 1 exists here to avoid.
 gam12_mark_binsize <- 100000
 gam12_mark_npoints <- 1200   # columns the mark track is resampled onto
+gam12_cov_warn     <- 0.75   # below this fraction of finite NPMI cells, warn on the figure
 
 # Gene models for the annotation track, loaded once.
 GENES <- local({
@@ -208,6 +209,18 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
        else K0 - W0
   pos <- as.numeric(sub("-.*", "", sub(".*:", "", ids)))
   rm(mats); gc(FALSE)
+
+  # DATA COVERAGE, stated on the figure. A region whose bins are detected in few
+  # nuclear profiles has mostly NA in the NPMI matrix, and an NA map renders as
+  # white - indistinguishable from "no contacts here". That is this repo's
+  # documented worst failure mode: an absence of measurement that reads as a
+  # clean biological result. The vomeronasal cluster on chr7 is the live
+  # example: 11% finite cells against 97% in its own flanks, so its apparently
+  # empty contact map is missing data, not absent contact.
+  npmi_cov <- mean(is.finite(W0[upper.tri(W0)]))
+  if (npmi_cov < gam12_cov_warn)
+    message(sprintf("  WARNING: only %.0f%% of NPMI cells are finite here - the map is mostly missing data",
+                    100 * npmi_cov))
 
   # AGGREGATE before drawing. Subsampling every k-th bin aliases: the rotated
   # lattice beats against the raster grid and the map reads as diagonal streaks
@@ -658,6 +671,9 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                     legend.spacing.y = grid::unit(12, "pt"),
                     legend.box.spacing = grid::unit(10, "pt")),
       caption = paste0(
+      if (npmi_cov < gam12_cov_warn)
+        sprintf("DATA COVERAGE WARNING: only %.0f%% of NPMI cells in this region are measured. White areas of the contact maps are MISSING DATA, not absent contact.\n", 100 * npmi_cov)
+      else sprintf("NPMI cells measured in this region: %.0f%%. ", 100 * npmi_cov),
       "GAM: CA1 pyramidal cells, HP1g WT/cKO, 20 kb, |delta-z|>2, max NPMI>0.1. ",
       "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT).\n",
       "Contact map block-averaged and 3x3 smoothed for display. ",
