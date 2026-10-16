@@ -9,6 +9,39 @@ Replicates are nested (technical replicates of 2 biological replicates per
 genotype), so the effective n is 2 vs 2. DESeq2 with `sizeFactors = 1` (bigWigs are input-scaled), contrast
 HP1gKO vs WT. Pipeline stages MINUTE_1–6 (see `../README.md`).
 
+## ⚠ 2026-10-16 — repeat results must be re-run (truncated annotation)
+
+**Finding 5 and every repeat-class number below were computed on incomplete
+RepeatMasker annotation.** `data/annotation/LINE.mm39.bed` contained **only chr1 and
+chr2**; `SINE.mm39.bed` stopped at chr12; `LTR.mm39.bed` at chr18. All three were UCSC
+Table Browser exports that had hit an output row cap, ending in `-----` footers. They
+totalled the ~185 MB the README documented, so size checks passed, and they parsed
+cleanly, so nothing flagged them.
+
+What this affects:
+
+- **Young-L1 numbers (L1MdT −0.45, L1MdGf −0.41, L1MdA −0.38) came from 2 of 19
+  autosomes** and are reported above as genome-wide. The complete LINE track has 8.2x
+  more rows.
+- **SINE** (the "shallowest loss ~−0.18" control) was missing chr13–19.
+- **IAP/ERVK** comes from LTR, which lacked only chr19, so those numbers are the least
+  affected — but still incomplete.
+- The **"IAP > young L1 > older ERV/LINE > SINE" ordering** may well survive, since it is
+  a relative comparison over detected copies, but it has not been re-derived.
+- Per-peak `repClass`/`repName` annotation in `rds/annotated_results_*.rds` is wrong
+  outside the covered chromosomes, so MINUTE_1 must be re-run too, not only MINUTE_4.
+
+Fixed on 2026-10-16 by replacing all three with class subsets derived from UCSC
+goldenPath `mm39/database/rmsk.txt.gz` (the complete 5.32M-row table; bulk download has
+no row cap). The new files validate against known genome composition — LINE 19.9%,
+SINE 7.4%, LTR 12.1% — where the old LINE file gave 2.1%. Superseded files are kept as
+`*.bed.truncated-tablebrowser`.
+
+**Do not quote any repeat number in this document until MINUTE_1 and MINUTE_4 have been
+re-run.** Nothing outside the repeat analyses is affected: the global H4K20me3/H3K9me3
+losses, the compartments, the gene-family results and the KAP1 intersection do not use
+these files.
+
 ## Headline findings
 
 > **Read compartment sizes as median-relative, not absolute.** MINUTE_3's group

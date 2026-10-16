@@ -229,10 +229,32 @@ hi <- match(bin_ids, hot$bin_id)
 n_lost   <- ifelse(is.na(hi), 0L, as.integer(hot$n_contacts_lost[hi]))
 n_gained <- ifelse(is.na(hi), 0L, as.integer(hot$n_contacts_gained[hi]))
 
-# --- 7. Compartments (MINUTE_3 cutoffs) ---------------------------------------
-# ABSOLUTE cutoffs are not shift-invariant against the genome-wide H4K20me3 loss
-# (ChIP/results/COMPARTMENT_CUTOFFS.md), so the median-CENTRED label is the
-# primary downstream one; both are recorded.
+# --- 7. Compartments: MAPPED from the MINUTE_3 peak labels --------------------
+# These labels are assigned on the PEAKS and transferred to bins by overlap, NOT
+# recomputed from per-bin log2FC. That distinction is the whole correctness of
+# this block.
+#
+# WHY. MINUTE_3's cutoffs (-0.5 / -0.3 / 0.15) were tuned on the PEAK log2FC
+# distribution, whose H4K20me3 IQR is 0.459. Averaging over 20 kb bins mixes
+# peak signal with flanking background and compresses that IQR to 0.242 - 1.9x
+# narrower. Re-applying an absolute -0.5 cutoff to the centred bin values
+# therefore demands h4 < median - 0.5 = -0.997, which sits BELOW the 5th
+# percentile of the bin distribution: it selected 147 bins (0.12%), giving 11
+# H4K20me3_only and 114 co_loss where the peak analysis has thousands. A cutoff
+# is not scale-free, and bins are a different scale.
+#
+# Mapping instead keeps the GAM compartments identical in definition to the
+# published ChIP ones, which is the point - GAM_4 asks whether THOSE compartments
+# remodel, so they must be the same objects.
+#
+# A bin gets the label of the labelled peak covering most of it (ties -> first).
+# Bins overlapping no labelled peak stay NA, as most will: the labels are defined
+# only on the shared H3K9me3/H4K20me3 peak set.
+ar3 <- readRDS(require_chip_rds())
+p20 <- ar3[["H4K20me3"]]; p9 <- ar3[["H3K9me3"]]
+p20$k9_l2fc <- p9$log2FoldChange[match(p20$peak_id, p9$peak_id)]
+p20 <- p20[is.finite(p20$k9_l2fc) & is.finite(p20$log2FoldChange), ]
+
 assign_comp <- function(h4, k9) {
   out <- rep(NA_character_, length(h4))
   ok  <- !is.na(h4) & !is.na(k9)
@@ -241,10 +263,50 @@ assign_comp <- function(h4, k9) {
   out[ok & abs(h4) < UNCH_CUT & abs(k9) < UNCH_CUT]      <- "stable"
   factor(out, levels = c("stable", "H4K20me3_only", "co_loss"))
 }
+# Peak-level medians, for the centred scheme - computed on peaks, where the
+# cutoffs belong.
+pmed_h4 <- median(p20$log2FoldChange, na.rm = TRUE)
+pmed_k9 <- median(p20$k9_l2fc,        na.rm = TRUE)
+pk_abs <- assign_comp(p20$log2FoldChange, p20$k9_l2fc)
+pk_cen <- assign_comp(p20$log2FoldChange - pmed_h4, p20$k9_l2fc - pmed_k9)
+
+pk_gr <- to_ucsc(GRanges(as.character(p20$chr),
+                         IRanges(as.numeric(p20$start), as.numeric(p20$end))))
+# Transfer by widest overlap. A 20 kb bin can span several labelled peaks, so
+# "widest" is a deliberate choice over "first" - it makes the label reflect the
+# territory the bin mostly is.
+transfer <- function(lab) {
+  h <- findOverlaps(bins, pk_gr, ignore.strand = TRUE)
+  if (!length(h)) return(factor(rep(NA_character_, length(bins)), levels = levels(lab)))
+  w  <- width(pintersect(bins[queryHits(h)], pk_gr[subjectHits(h)], ignore.strand = TRUE))
+  lv <- as.character(lab)[subjectHits(h)]
+  keep <- !is.na(lv)
+  if (!any(keep)) return(factor(rep(NA_character_, length(bins)), levels = levels(lab)))
+  d  <- data.table(q = queryHits(h)[keep], l = lv[keep], w = w[keep])
+  agg <- d[, .(w = sum(w)), by = .(q, l)][order(-w)][, .SD[1], by = q]
+  out <- rep(NA_character_, length(bins)); out[agg$q] <- agg$l
+  factor(out, levels = levels(lab))
+}
+comp_abs <- transfer(pk_abs)
+comp_cen <- transfer(pk_cen)
+cat("Compartment labels mapped from", length(pk_gr), "labelled peaks\n")
+
+# Bin-NATIVE sensitivity label, quantile-based so it IS scale-appropriate: the
+# bottom quintile of each mark's own bin distribution counts as "lost", the
+# middle three fifths as "unchanged". Reported alongside so a reader can see
+# whether the peak-mapped grouping and a bin-intrinsic one agree; not primary,
+# because it is not the published compartment definition.
 h4 <- l2fc[, "H4K20me3"]; k9 <- l2fc[, "H3K9me3"]
 med_h4 <- median(h4, na.rm = TRUE); med_k9 <- median(k9, na.rm = TRUE)
-comp_abs <- assign_comp(h4, k9)
-comp_cen <- assign_comp(h4 - med_h4, k9 - med_k9)
+q4 <- quantile(h4, c(0.2, 0.4, 0.6), na.rm = TRUE)
+q9 <- quantile(k9, c(0.2, 0.4, 0.6), na.rm = TRUE)
+comp_binq <- {
+  out <- rep(NA_character_, length(h4)); ok <- !is.na(h4) & !is.na(k9)
+  out[ok & h4 < q4[1] & k9 < q9[1]]                                  <- "co_loss"
+  out[ok & h4 < q4[1] & k9 >= q9[2] & k9 <= q9[3]]                   <- "H4K20me3_only"
+  out[ok & h4 >= q4[2] & h4 <= q4[3] & k9 >= q9[2] & k9 <= q9[3]]    <- "stable"
+  factor(out, levels = c("stable", "H4K20me3_only", "co_loss"))
+}
 
 annot <- data.table(
   bin_id = bin_ids, chr = as.character(seqnames(bins)),
@@ -252,7 +314,8 @@ annot <- data.table(
   n_contacts_lost = n_lost, n_contacts_gained = n_gained,
   as.data.table(frac_rep), as.data.table(frac_hmm),
   tad_boundary = tad_boundary, n_tss = as.integer(n_tss),
-  compartment_abs = comp_abs, compartment_centred = comp_cen)
+  compartment_abs = comp_abs, compartment_centred = comp_cen,
+  compartment_bin_quintile = comp_binq)
 setkey(annot, bin_id)
 
 # --- 8. Sanity assertions -----------------------------------------------------
