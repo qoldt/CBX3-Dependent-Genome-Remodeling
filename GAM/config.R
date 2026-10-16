@@ -284,6 +284,31 @@ load_hotspots <- function(chroms = gam_autosomes) {
 #   smooth_bins running-mean width in bins (5 = 100 kb)
 #   gap         sub-threshold bins absorbed between hot runs (1 = 20 kb)
 #   min_bins    minimum domain size kept (5 = 100 kb)
+# --- Compartment-calling resolution -------------------------------------------
+# A/B compartments are called at a COARSER resolution than everything else.
+#
+# WHY. The first real GAM_2 run called them at the native 20 kb and the axis was
+# not usable: only 9 of 38 chromosome x genotype combinations reached |rho| > 0.4
+# against the active-chromatin reference, 13 of 38 gave an implausible frac_A
+# (<0.1 or >0.9, e.g. chr3 WT at 0.989), and the PC1-vs-PC2 choice split exactly
+# 19/19 - a coin flip. Axis quality did not track chromosome size (rho = -0.04),
+# so it was not a power problem, and the O-E step was verified correct (raw NPMI
+# does decay with distance, 0.69 at 20 kb to 0.12 at 20 Mb, so it is not being
+# double-corrected).
+#
+# The remaining explanation is resolution. A/B compartments are conventionally
+# called at 100 kb - 1 Mb; at 20 kb the correlation matrix is dominated by
+# TAD-scale local structure rather than the compartment signal, which is a
+# long-range property. Aggregating to 100 kb (5 x 5 blocks of the native matrix)
+# before the eigendecomposition asks the method for what it can actually resolve.
+#
+# This affects ONLY the compartment axis. Insulation, the distance bands and the
+# decay slope stay at 20 kb, where they belong. The resulting PC and A/B call are
+# mapped back onto the 20 kb grid so every downstream join still works on bin_id.
+gam_compartment_binsize <- 100000L
+stopifnot(gam_compartment_binsize %% gam_binsize == 0)
+gam_compartment_factor  <- as.integer(gam_compartment_binsize / gam_binsize)   # 5
+
 gam_hotspot_params <- list(q = 0.90, smooth_bins = 5L, gap = 1L, min_bins = 5L)
 
 # UNADJUSTED variant, carried alongside the smoothed one so that every

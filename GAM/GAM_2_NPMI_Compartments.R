@@ -54,10 +54,17 @@ gam2_chroms <- local({
 stopifnot(all(gam2_chroms %in% gam_npmi_chroms))
 
 # Anything that changes the maths invalidates cached reductions.
-gam2_params <- list(version = 1L, binsize = gam_binsize, sigma = gam_sigma,
+# version is bumped whenever the COMPARTMENT method changes, not just its
+# parameters - a cached reduction carries the PC it was computed with, so a
+# change to eigenvector selection must invalidate it too. v2: compartments
+# called at gam_compartment_binsize with balance-first selection over 4
+# eigenvectors (see select_compartment_pc).
+gam2_params <- list(version = 2L, binsize = gam_binsize, sigma = gam_sigma,
                     ins_kb = gam2_ins_kb, short_max = gam2_short_max_bins,
                     long_min = gam2_long_min_bins, shells = gam2_shell_edges,
-                    K = gam2_K, min_frac = gam2_min_frac, oe = "subtract")
+                    K = gam2_K, min_frac = gam2_min_frac, oe = "subtract",
+                    comp_binsize = gam_compartment_binsize,
+                    comp_select = "balance-first, k=4, frac_A in [0.2,0.8]")
 
 # ---------------------------------------------------------------
 # GAM_1 handoff: WT H3K4me3 per-bin signal, the orientation reference.
@@ -138,7 +145,7 @@ pc1_corr <- function(x) {
     drop(x %*% u - mu * sum(u)) / s / (nv - 1) # Z'(Z w) / (n-1)
   }
   if (requireNamespace("RSpectra", quietly = TRUE)) {
-    e <- RSpectra::eigs_sym(mv, k = 2, n = nv, which = "LA")
+    e <- RSpectra::eigs_sym(mv, k = 4, n = nv, which = "LA")
     # BOTH eigenvectors are returned. Which one carries the A/B compartment is
     # decided downstream by correlation with an active-chromatin reference, NOT
     # by eigenvalue rank: in Hi-C-like data the leading eigenvector frequently
@@ -147,7 +154,7 @@ pc1_corr <- function(x) {
     # compartment signal then sits in the second. Selecting by marker is what
     # cooltools-style pipelines do with GC/gene density; here we have the real
     # marks, which is a stronger anchor.
-    list(vecs = e$vectors[, 1:2, drop = FALSE], vals = e$values[1:2],
+    list(vecs = e$vectors[, 1:4, drop = FALSE], vals = e$values[1:4],
          vec = e$vectors[, 1], val = e$values[1], gap = e$values[1] / e$values[2])
   } else {
     set.seed(1); v <- rnorm(nv); v <- v / sqrt(sum(v^2)); lam <- 0
@@ -176,7 +183,7 @@ pc1_corr <- function(x) {
 #
 # Returns the selected vector already sign-oriented so positive = A = active-high,
 # plus the diagnostics needed to judge the call per chromosome.
-select_compartment_pc <- function(pc, ids, ref) {
+select_compartment_pc <- function(pc, ids, ref, balance = c(0.2, 0.8)) {
   V <- pc$vecs
   rhos <- apply(V, 2, function(v) {
     names(v) <- ids
@@ -184,11 +191,34 @@ select_compartment_pc <- function(pc, ids, ref) {
     if (sum(ok) < 50) return(NA_real_)
     suppressWarnings(stats::cor(v[ok], ref[ids][ok], method = "spearman"))
   })
-  k <- if (all(is.na(rhos))) 1L else which.max(abs(rhos))
+  # Fraction on the A side once oriented - the balance of each candidate.
+  fracs <- vapply(seq_len(ncol(V)), function(k) {
+    v <- V[, k]; sgn <- if (is.finite(rhos[k]) && rhos[k] < 0) -1 else 1
+    mean(v * sgn > 0, na.rm = TRUE)
+  }, 0)
+  # SELECT ON BALANCE FIRST, then correlation. Ranking on |rho| alone picks the
+  # wrong vector: measured across chromosomes, the LEADING eigenvector is
+  # systematically degenerate (frac_A 0.04-0.13 - almost every bin on one side,
+  # i.e. the overall contact-structure component) yet often correlates slightly
+  # better with the active reference than the true compartment vector does. On
+  # chr19 WT, PC1 had |rho| 0.32 at frac_A 0.038 while PC2 had |rho| 0.23 at
+  # frac_A 0.64; on chr11 WT, PC2 reached |rho| 0.53 at frac_A 0.68. A vector
+  # that assigns 96% of a chromosome to one compartment is not an A/B split
+  # whatever it correlates with, so balance is a precondition, not a tiebreak.
+  cand <- which(is.finite(rhos) & fracs > balance[1] & fracs < balance[2])
+  if (!length(cand)) {
+    # No balanced candidate: the axis is not determined for this chromosome.
+    # Returning NA is the honest outcome - better than shipping a degenerate
+    # vector that downstream code would treat as a compartment call.
+    return(list(vec = setNames(rep(NA_real_, length(ids)), ids), which_pc = NA_integer_,
+                rho = NA_real_, rho_all = rhos, frac_all = fracs, sign = NA_real_,
+                frac_A = NA_real_, determined = FALSE))
+  }
+  k <- cand[which.max(abs(rhos[cand]))]
   v <- V[, k]; names(v) <- ids
   sgn <- if (is.finite(rhos[k]) && rhos[k] < 0) -1 else 1
   list(vec = v * sgn, which_pc = k, rho = abs(rhos[k]),
-       rho_all = rhos, sign = sgn,
+       rho_all = rhos, frac_all = fracs, sign = sgn, determined = TRUE,
        # A/B from the SIGN of the selected eigenvector, with no median-centring.
        # Centring was previously needed only because the wrong (all-positive)
        # eigenvector was being used; selecting the right one removes the need and
@@ -318,58 +348,102 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
                      frac_A = NA_real_, which_pc = NA_integer_,
                      rho_pc1 = NA_real_, rho_pc2 = NA_real_)
   if (can_orient && sum(V) > 2 * gam2_K) {
-    pc <- pc1_corr(oe)
-    sel <- select_compartment_pc(pc, ids[V], orient_ref)
-    p <- sel$vec
-    # Median-centre BEFORE scaling. The eigenvector of a correlation matrix is not
-    # mean-zero and on chr19 it sat ~2 SD above 0 (97% of bins "A" at a zero
-    # cut), so sign(PC1) would not be an A/B call. Centring puts 0 at the middle
-    # of the chromosome's own distribution, the same convention for both
-    # genotypes; the cost is that a chromosome-wide A/B imbalance is not
-    # represented (frac_A ~ 0.5 by construction) - fine for the WT-vs-KO question.
-    # NO median-centring. It was only ever needed because the all-positive
-    # leading eigenvector was being used unconditionally; selecting the
-    # compartment eigenvector by the active-mark reference removes the need, and
-    # removing it is what frees frac_A to differ from 0.5 - without which a net
-    # A<->B shift cannot be detected at all (the switch table would be forced
-    # near-symmetric whatever the biology did).
-    p <- p / sqrt(mean(p^2))                        # RMS 1: comparable across chr/genotype
-    # Sign is already set by the selector against the active reference. For the
-    # KO, re-orient against the WT PC of the same chromosome so the delta is a
-    # real change rather than a flip.
-    o <- orient_sign(p, orient_ref)
-    if (!is.finite(o$sign)) stop("cannot orient ", chr, " ", genotype,
-                                 ": <50 bins overlap the reference")
-    p <- p * o$sign
-    if (!is.na(o$rho) && abs(o$rho) < 0.1)
-      warning(chr, " ", genotype, ": |rho| with the orientation reference is only ",
-              round(o$rho, 3), " - sign is weakly determined", call. = FALSE)
-    ck <- orient_sign(p, check_ref)
-    if (!is.na(ck$rho) && ck$rho < 0)
-      warning(chr, " ", genotype, ": oriented PC1 anti-correlates with WT H3K4me3 (rho=",
-              round(ck$rho, 3), ")", call. = FALSE)
-    feat[match(names(p), bin_id), pc1 := p]
-    summ[, `:=`(oriented = TRUE, flip = o$sign < 0, rho_orient = o$rho,
-                rho_h3k4me3 = ck$rho, eig1 = pc$val, eig_gap = pc$gap,
-                frac_A = mean(p > 0),
-                # which eigenvector carried the compartment signal, and how
-                # clearly - if which_pc is often 2, the leading eigenvector is
-                # structure rather than compartments and that belongs in the
-                # methods, not buried.
-                which_pc = sel$which_pc, rho_pc1 = sel$rho_all[1],
-                rho_pc2 = if (length(sel$rho_all) > 1) sel$rho_all[2] else NA_real_)]
+    # --- aggregate to the compartment resolution (see gam_compartment_binsize) --
+    # Block-mean the O-E matrix over f x f blocks of native bins. Compartments
+    # are a long-range property and are not resolvable at 20 kb; this asks the
+    # eigendecomposition for what the data can actually support. NA-aware, so a
+    # coarse bin built from partially unmappable native bins still contributes.
+    f <- gam_compartment_factor
+    nv_idx <- which(V)                      # native indices behind oe's rows
+    grp    <- ((seq_along(nv_idx) - 1L) %/% f) + 1L   # coarse bin per oe row
+    ngrp   <- max(grp)
+    if (ngrp < 10L) stop(chr, " ", genotype, ": only ", ngrp,
+                         " coarse bins - too few to call compartments")
+    A <- matrix(0, nrow = ngrp, ncol = ncol(oe))
+    cnt <- tabulate(grp, ngrp)
+    oe0 <- oe; nna <- !is.na(oe0); oe0[!nna] <- 0
+    A  <- rowsum(oe0, grp, reorder = FALSE)            # sums down rows
+    An <- rowsum(nna * 1,  grp, reorder = FALSE)
+    B  <- t(rowsum(t(A),  grp, reorder = FALSE))       # then across columns
+    Bn <- t(rowsum(t(An), grp, reorder = FALSE))
+    oe_c <- B / pmax(Bn, 1); oe_c[Bn == 0] <- NA
+    rm(A, An, B, Bn, oe0, nna); invisible(gc())
+    # keep only coarse bins with enough support
+    keep_c <- rowSums(is.finite(oe_c)) > 0.5 * ncol(oe_c)
+    if (sum(keep_c) < 10L) stop(chr, " ", genotype, ": too few usable coarse bins")
+    oe_c <- oe_c[keep_c, keep_c, drop = FALSE]
+    oe_c[!is.finite(oe_c)] <- 0
+    # ids for the coarse bins = first native bin of each block; and a map from
+    # each native bin back to its coarse bin (NA where the block was dropped)
+    first_of <- nv_idx[match(seq_len(ngrp), grp)]
+    agg_ids  <- ids[first_of][keep_c]
+    cmap <- rep(NA_integer_, ngrp); cmap[keep_c] <- seq_len(sum(keep_c))
+    agg_of_bin <- cmap[grp]
 
-    # Saddle: equal-count PC1 strata WITHIN the chromosome (rank-based) so it is a
-    # single pass over the matrix. Genome-wide edges would need a second parse of
-    # every matrix. S/C are kept as sums + counts so chromosomes pool exactly.
-    nvv <- sum(V); K <- gam2_K
-    s <- ceiling(rank(p, ties.method = "first") / nvv * K)
-    Z <- matrix(0, nvv, K); Z[cbind(seq_len(nvv), s)] <- 1
-    S <- crossprod(Z, oe %*% Z)
-    nk <- tabulate(s, K)
-    C <- outer(nk, nk) - diag(nk, K)                # remove the diagonal cells
-    if (length(stray_r)) C <- C - matrix(tabulate((s[stray_r] - 1L) * K + s[stray_c], K * K), K)
-    sad <- list(S = S, C = C)
+    pc <- pc1_corr(oe_c)
+    sel <- select_compartment_pc(pc, agg_ids, orient_ref)
+    # Expand the coarse-bin PC back onto the native 20 kb bins: every 20 kb bin
+    # inherits the value of the 100 kb bin containing it. The compartment is a
+    # property of the larger region, so this is an expansion of a coarser call,
+    # not an interpolation - deliberately a step function.
+    # An undetermined axis is a legitimate outcome, not an error: keep the
+    # chromosome's insulation, distance bands and decay slope (none of which
+    # depend on the PC) and leave pc1/compartment NA rather than shipping a
+    # degenerate vector that downstream code would read as a compartment call.
+    if (!isTRUE(sel$determined)) {
+      warning(chr, " ", genotype, ": no balanced compartment eigenvector among the",
+              " top 4 (frac_A ", paste(sprintf("%.2f", sel$frac_all), collapse = "/"),
+              ") - pc1/compartment left NA", call. = FALSE)
+      summ[, `:=`(which_pc = NA_integer_, rho_pc1 = sel$rho_all[1],
+                  rho_pc2 = if (length(sel$rho_all) > 1) sel$rho_all[2] else NA_real_)]
+    } else {
+      p <- sel$vec[agg_of_bin]
+      names(p) <- ids[V]
+      p <- p[is.finite(p)]
+      # NO median-centring. It was only ever needed because the all-positive
+      # leading eigenvector was being used unconditionally; selecting the
+      # compartment eigenvector by the active-mark reference removes the need, and
+      # removing it is what frees frac_A to differ from 0.5 - without which a net
+      # A<->B shift cannot be detected at all (the switch table would be forced
+      # near-symmetric whatever the biology did).
+      p <- p / sqrt(mean(p^2))                        # RMS 1: comparable across chr/genotype
+      # Sign is already set by the selector against the active reference. For the
+      # KO, re-orient against the WT PC of the same chromosome so the delta is a
+      # real change rather than a flip.
+      o <- orient_sign(p, orient_ref)   # p is already back on native bins
+      if (!is.finite(o$sign)) stop("cannot orient ", chr, " ", genotype,
+                                   ": <50 bins overlap the reference")
+      p <- p * o$sign
+      if (!is.na(o$rho) && abs(o$rho) < 0.1)
+        warning(chr, " ", genotype, ": |rho| with the orientation reference is only ",
+                round(o$rho, 3), " - sign is weakly determined", call. = FALSE)
+      ck <- orient_sign(p, check_ref)
+      if (!is.na(ck$rho) && ck$rho < 0)
+        warning(chr, " ", genotype, ": oriented PC1 anti-correlates with WT H3K4me3 (rho=",
+                round(ck$rho, 3), ")", call. = FALSE)
+      feat[match(names(p), bin_id), pc1 := p]
+      summ[, `:=`(oriented = TRUE, flip = o$sign < 0, rho_orient = o$rho,
+                  rho_h3k4me3 = ck$rho, eig1 = pc$val, eig_gap = pc$gap,
+                  frac_A = mean(p > 0),
+                  # which eigenvector carried the compartment signal, and how
+                  # clearly - if which_pc is often 2, the leading eigenvector is
+                  # structure rather than compartments and that belongs in the
+                  # methods, not buried.
+                  which_pc = sel$which_pc, rho_pc1 = sel$rho_all[1],
+                  rho_pc2 = if (length(sel$rho_all) > 1) sel$rho_all[2] else NA_real_)]
+
+      # Saddle: equal-count PC1 strata WITHIN the chromosome (rank-based) so it is a
+      # single pass over the matrix. Genome-wide edges would need a second parse of
+      # every matrix. S/C are kept as sums + counts so chromosomes pool exactly.
+      nvv <- sum(V); K <- gam2_K
+      s <- ceiling(rank(p, ties.method = "first") / nvv * K)
+      Z <- matrix(0, nvv, K); Z[cbind(seq_len(nvv), s)] <- 1
+      S <- crossprod(Z, oe %*% Z)
+      nk <- tabulate(s, K)
+      C <- outer(nk, nk) - diag(nk, K)                # remove the diagonal cells
+      if (length(stray_r)) C <- C - matrix(tabulate((s[stray_r] - 1L) * K + s[stray_c], K * K), K)
+      sad <- list(S = S, C = C)
+    }
   }
   list(feat = feat, curve = curve, saddle = sad, summary = summ)
 }
