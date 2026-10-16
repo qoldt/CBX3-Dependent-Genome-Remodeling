@@ -284,6 +284,27 @@ load_hotspots <- function(chroms = gam_autosomes) {
 #   smooth_bins running-mean width in bins (5 = 100 kb)
 #   gap         sub-threshold bins absorbed between hot runs (1 = 20 kb)
 #   min_bins    minimum domain size kept (5 = 100 kb)
+# --- Large contact-direction blocks -------------------------------------------
+# A SECOND, much coarser scale than gam_hotspot_params. The hotspot domains are
+# 0.1-2 Mb; eyeballing the tracks shows one-directional territory at 10-20 Mb -
+# e.g. chr11 is almost entirely contact-LOSING over 0-20 Mb and almost entirely
+# contact-GAINING over 56-108 Mb. A caller with a 100 kb floor and a q90 cutoff
+# cannot see that: it fragments a 16 Mb block into dozens of small domains and
+# reports them as unrelated.
+#
+# These blocks are called on the signed NET direction,
+#     net = log2((lost + 1) / (gained + 1)),
+# rather than on either density alone, because the feature is the IMBALANCE: a
+# block can be busy in both directions and still be unremarkable. net > 0 means
+# contacts are preferentially lost in the KO, net < 0 gained.
+#
+# Verified NOT to be a coverage artifact before building on it: the correlation
+# between net and the WT-minus-KO count of valid NPMI cells is +0.005 at 4 Mb
+# and +0.025 per bin, i.e. nothing. Blocks are not where data is missing.
+gam_block_smooth_bins <- 101L    # ~2 Mb running mean; blocks are a Mb-scale feature
+gam_block_net_cut     <- 0.5     # |net| above this counts as one-directional (~1.4x)
+gam_block_min_mb      <- 4       # minimum block size to report
+
 # --- Compartment-calling resolution -------------------------------------------
 # A/B compartments are called at a COARSER resolution than everything else.
 #

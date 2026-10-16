@@ -116,14 +116,25 @@ if (nrow(cp)) {
             'visibility=dense itemRgb=On'))
 }
 
+# --- 6. Large one-directional contact blocks (GAM_6) -------------------------
+# The dominant large-scale feature: 10-25 Mb territory that is consistently
+# losing or gaining contacts. Copied from GAM_6's bed so IGV and the tables
+# cannot drift apart. Red = lost in the KO, blue = gained.
+blk_src <- file.path(bed_dir, "gam6_large_blocks.bed")
+if (file.exists(blk_src)) {
+  file.copy(blk_src, file.path(igv_dir, "gam_large_blocks.bed"), overwrite = TRUE)
+  message("  gam_large_blocks.bed  (copied from GAM_6)")
+} else message("  (no large-block bed - run GAM_6_Large_Blocks.R)")
+
 # --- session file ------------------------------------------------------------
 # Relative paths, so the folder can be moved or sent as a unit.
-files <- c("chip_H4K20me3_log2FC.bedgraph", "gam_contacts_lost.bedgraph",
-           "gam_hotspot_domains.bed", "gam_pc1_WT.bedgraph", "chip_compartments.bed")
+files <- c("gam_large_blocks.bed", "chip_H4K20me3_log2FC.bedgraph",
+           "gam_contacts_lost.bedgraph", "gam_hotspot_domains.bed",
+           "gam_pc1_WT.bedgraph", "chip_compartments.bed")
 files <- files[file.exists(file.path(igv_dir, files))]
 writeLines(c(
   '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
-  '<Session genome="mm39" locus="chr11:3000000-8000000" version="8">',
+  '<Session genome="mm39" locus="chr11:1-110000000" version="8">',
   '  <Resources>',
   sprintf('    <Resource path="%s"/>', files),
   '  </Resources>',
@@ -142,14 +153,18 @@ writeLines(c(
   "| Hotspot domains | called remodelled domains, adjusted variant |",
   "| GAM PC1 (WT) | compartment axis; gaps = no usable axis on that chromosome |",
   "| ChIP compartments | stable / H4K20me3_only / co_loss |",
+  "| GAM large blocks | 10-25 Mb one-directional territory (red lost, blue gained) |",
   "",
-  "Default locus is chr11, which has one of the few well-determined",
-  "compartment axes (|rho| 0.48). The PC1 track is NOT reliable genome-wide -",
-  "only 11 of 38 chromosome x genotype axes reach |rho| > 0.4. See",
-  "`../../CLAUDE.md` before drawing conclusions from it.",
+  "Default locus is the whole of chr11, which shows the dominant feature most",
+  "clearly: contacts are lost across essentially all of 0-25 Mb and gained",
+  "across 55-110 Mb. That large-block structure covers 41.6% of the genome.",
   "",
-  "Read together: H4K20me3 falls almost everywhere, while contact loss is",
-  "patchy - the two are uncoupled at this resolution (GAM_3: rho -0.015).",
+  "The PC1 track is NOT reliable genome-wide - only 11 of 38 chromosome x",
+  "genotype axes reach |rho| > 0.4. See `../../CLAUDE.md` before using it.",
+  "",
+  "Read together: H4K20me3 falls almost everywhere, while contact direction is",
+  "organised into very large blocks - the two are uncoupled at bin level",
+  "(GAM_3: rho -0.015). Zoom out to see the blocks; zoom in and they dissolve.",
   "Regenerate with `cd GAM && Rscript export_igv.R`."),
   file.path(igv_dir, "README.md"))
 
