@@ -97,6 +97,7 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                             marks = mark_levels,     # all five, in the project order
                             maxdist = gam12_maxdist, hot_cut = gam12_hot_cut,
                             smooth_map = TRUE, show_raw = TRUE,
+                            fig_width = 11, side_allow = 2.6,
                             diff_mode = c("deltaz", "raw")) {
   diff_mode <- match.arg(diff_mode)
 
@@ -125,7 +126,7 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                            name = "NPMI", guide = guide_colourbar(barheight = 3)) +
       scale_y_continuous(expand = c(0, 0), name = "sep (Mb)") +
       scale_x_continuous(expand = c(0, 0)) +
-      coord_cartesian(xlim = c(from, to) / 1e6, expand = FALSE) +
+      coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
       labs(subtitle = ttl) +
       theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
                       plot.subtitle = element_text(size = 9),
@@ -220,7 +221,7 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                  size = 2.3, colour = "grey30", label = "max hotspot distance") } +
     scale_y_continuous(expand = c(0, 0), name = "separation (Mb)") +
     scale_x_continuous(expand = c(0, 0)) +
-    coord_cartesian(xlim = c(from, to) / 1e6, expand = FALSE) +
+    coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
     labs(subtitle = if (identical(diff_mode, "deltaz"))
            "delta-z, cKO - WT  (red = more contact in cKO; note their slides use the opposite sign)"
          else "cKO - WT NPMI  (red = more contact in cKO)") +
@@ -308,7 +309,7 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                       axis.text.x  = if (last) element_text() else element_blank())
   }
   panels <- lapply(seq_along(marks), function(i)
-                   mk_panel(marks[i], FALSE, show_key = (i == 1L)))
+                   mk_panel(marks[i], FALSE, show_key = (i == length(marks))))
 
   # --- gene track -------------------------------------------------------------
   gg <- GENES[as.character(seqnames(GENES)) == chrom &
@@ -342,18 +343,37 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
                     axis.title.y = element_text(size = 8),
                     plot.margin = margin(1, 4, 4, 4))
 
-  # The map's panel height is set from the region's own aspect ratio, so the
-  # triangle is drawn to scale. coord_fixed() would also do that, but patchwork
-  # still reserves the full row height for the panel and leaves a band of
-  # whitespace under a wide region. A floor keeps very wide views legible.
-  map_h <- max(0.85, min(3.2, (maxdist / 2) / (to - from) * 11))
+  # SQUARE DATA POINTS. In a rotated triangle every matrix cell is a 45 degree
+  # diamond, and it is square only when one Mb on x covers the same physical
+  # distance as one Mb on y. coord_fixed(ratio = 1) is the only thing that
+  # guarantees that; any layout that stretches the panel to fill an allocated
+  # height shears the cells.
+  #
+  # coord_fixed alone is not enough inside patchwork: patchwork still reserves
+  # the row height it was given, and the fixed panel then floats in it with a
+  # band of whitespace. So the map rows are given an ABSOLUTE height in inches,
+  # computed from the aspect the fixed coordinate system will adopt:
+  #
+  #     panel height = panel width * (y data range) / (x data range)
+  #
+  # where the y range is maxdist/2 (the triangle apex) and the x range is the
+  # region width. With full contact distance (maxdist = region width) that ratio
+  # is always 0.5, so a full-distance triangle is a true isoceles right triangle
+  # at any scale - which is why the collaborators' full-chromosome maps are
+  # undistorted however wide the region is.
+  panel_w  <- max(2, fig_width - side_allow)      # inches of plotting area
+  map_h_in <- panel_w * ((maxdist / 2) / (to - from))
   tri <- if (show_raw) list(raw_tri(W0, pos, "WT"), raw_tri(K0, pos, "HP1gKO"), p_map)
          else list(p_map)
   # The raw panels are reference, the difference is the point, and the mark
   # panels need real height or their axis titles collapse into each other.
-  tri_h <- if (show_raw) c(map_h * 0.72, map_h * 0.72, map_h) else map_h
-  wrap_plots(c(tri, list(p_hot), panels, list(p_gene)), ncol = 1,
-             heights = c(tri_h, 0.42, rep(0.78, length(panels)), 0.85)) +
+  # Absolute inches for every map row (so coord_fixed is honoured exactly),
+  # relative "null" units for the tracks (so they share what is left).
+  n_tri   <- length(tri)
+  track_h <- c(0.42, rep(0.78, length(panels)), 0.85)
+  heights <- grid::unit(c(rep(map_h_in, n_tri), track_h),
+                        c(rep("in", n_tri), rep("null", length(track_h))))
+  wrap_plots(c(tri, list(p_hot), panels, list(p_gene)), ncol = 1, heights = heights) +
     plot_annotation(
       title = sprintf("%s:%.2f-%.2f Mb", chrom, from / 1e6, to / 1e6),
       theme = theme(plot.caption = element_text(hjust = 0, size = 7),
@@ -363,7 +383,9 @@ gam_region_plot <- function(chrom, from = NULL, to = NULL,
       "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT).\n",
       "Contact map block-averaged and 3x3 smoothed for display; mark tracks running-mean smoothed. ",
       "All statistics elsewhere use unsmoothed values. Mark fill diverges from each mark's genome median (solid line); ",
-      "dotted line is zero where in range."))
+      "dotted line is zero where in range.")) -> out
+  attr(out, "gam_map_in") <- list(n = n_tri, h = map_h_in)
+  out
 }
 
 # --- the collaborators' own example regions, plus our blocks -----------------
@@ -378,8 +400,16 @@ regions <- list(
 for (r in regions) {
   nm <- r[[4]]
   message("Plotting ", nm)
-  p <- tryCatch(gam_region_plot(r[[1]], r[[2]], r[[3]]),
+  FIGW <- 11; SIDE <- 2.6
+  p <- tryCatch(gam_region_plot(r[[1]], r[[2]], r[[3]], fig_width = FIGW, side_allow = SIDE),
                 error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
-  if (!is.null(p)) save_fig(p, nm, subdir = "regions", width = 11, height = 14)
+  if (!is.null(p)) {
+    # Total height = the map rows at their required absolute height, plus a
+    # fixed allowance for the tracks, title and caption. Saving at any other
+    # height would leave the maps correct but the tracks squeezed or stretched.
+    a <- attr(p, "gam_map_in")
+    h <- if (is.null(a)) 14 else a$n * a$h + 6.5
+    save_fig(p, nm, subdir = "regions", width = FIGW, height = h)
+  }
 }
 cat("\nGAM_12 complete. gam_region_plot() is reusable for any region.\n")
