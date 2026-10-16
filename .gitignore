@@ -30,5 +30,21 @@ SINE.mm39.bed
 LTR.mm39.bed
 TAD_boundaries_mm39.bed
 
+# GAM raw data — ~7.7 GB of NPMI matrices, differential contacts and hotspot
+# tracks, delivered from the GAM processing pipeline, never committed. Same rule
+# as the ChIP bigWigs: large, externally produced, not regenerable from this repo.
+GAM/NPMI_matrices/
+GAM/Diff_contacts/
+GAM/Hotspots/
+# GAM analysis outputs — regenerable by run_GAM.R from the data above. The
+# hand-written results/*.md (METHODS etc.) ARE committed, so ignore only the
+# generated subfolders, matching the ChIP/results rule above.
+GAM/results/counts/
+GAM/results/rds/
+GAM/results/tables/
+GAM/results/figures/
+GAM/results/bed/
+GAM/results_*/
+
 # stray base-R plot device output
 Rplots.pdf
