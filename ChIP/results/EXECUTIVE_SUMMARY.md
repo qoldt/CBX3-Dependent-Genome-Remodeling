@@ -9,38 +9,46 @@ Replicates are nested (technical replicates of 2 biological replicates per
 genotype), so the effective n is 2 vs 2. DESeq2 with `sizeFactors = 1` (bigWigs are input-scaled), contrast
 HP1gKO vs WT. Pipeline stages MINUTE_1–6 (see `../README.md`).
 
-## ⚠ 2026-10-16 — repeat results must be re-run (truncated annotation)
+## ⚠ 2026-10-16 — annotation fixed, pipeline re-run, and a stale-numbers warning
 
-**Finding 5 and every repeat-class number below were computed on incomplete
-RepeatMasker annotation.** `data/annotation/LINE.mm39.bed` contained **only chr1 and
-chr2**; `SINE.mm39.bed` stopped at chr12; `LTR.mm39.bed` at chr18. All three were UCSC
-Table Browser exports that had hit an output row cap, ending in `-----` footers. They
-totalled the ~185 MB the README documented, so size checks passed, and they parsed
-cleanly, so nothing flagged them.
+Two separate problems were found and are recorded here because both affect how
+the repeat numbers below should be read.
 
-What this affects:
+**(1) The RepeatMasker annotation was truncated — now fixed, and the conclusions
+held.** `data/annotation/LINE.mm39.bed` contained only chr1 and chr2; `SINE` 
+stopped at chr12, `LTR` at chr18. All three were UCSC Table Browser exports that
+hit an output row cap and ended in `-----` footers. They totalled the documented
+~185 MB and parsed cleanly, so nothing flagged them; LINEs registered as 2.1% of
+the genome instead of ~20%.
 
-- **Young-L1 numbers (L1MdT −0.45, L1MdGf −0.41, L1MdA −0.38) came from 2 of 19
-  autosomes** and are reported above as genome-wide. The complete LINE track has 8.2x
-  more rows.
-- **SINE** (the "shallowest loss ~−0.18" control) was missing chr13–19.
-- **IAP/ERVK** comes from LTR, which lacked only chr19, so those numbers are the least
-  affected — but still incomplete.
-- The **"IAP > young L1 > older ERV/LINE > SINE" ordering** may well survive, since it is
-  a relative comparison over detected copies, but it has not been re-derived.
-- Per-peak `repClass`/`repName` annotation in `rds/annotated_results_*.rds` is wrong
-  outside the covered chromosomes, so MINUTE_1 must be re-run too, not only MINUTE_4.
+Replaced with class subsets derived from UCSC goldenPath `mm39/database/rmsk.txt.gz`
+(the complete 5.32M-row table; bulk download has no row cap), validated against
+known genome composition: **LINE 19.9%, SINE 7.4%, LTR 12.1%**. The full pipeline
+(MINUTE_1–7) was re-run on 2026-10-16.
 
-Fixed on 2026-10-16 by replacing all three with class subsets derived from UCSC
-goldenPath `mm39/database/rmsk.txt.gz` (the complete 5.32M-row table; bulk download has
-no row cap). The new files validate against known genome composition — LINE 19.9%,
-SINE 7.4%, LTR 12.1% — where the old LINE file gave 2.1%. Superseded files are kept as
-`*.bed.truncated-tablebrowser`.
+**The repeat results proved robust to this.** Per-class log2FC changed by ≤0.04
+throughout, and the ordering IAP > young L1 > older L1/ERVL > SINE is unchanged.
+The reason is that MINUTE_4 subsamples `N_MAX = 4000` copies per class, and repeat
+chromatin behaviour is consistent genome-wide — so the chr1/chr2-restricted pool
+was smaller but not biased. L1MdT is the clearest case: available copies rose from
+1,330 to 3,588, while its median H4K20me3 log2FC moved only −0.598 → −0.608.
 
-**Do not quote any repeat number in this document until MINUTE_1 and MINUTE_4 have been
-re-run.** Nothing outside the repeat analyses is affected: the global H4K20me3/H3K9me3
-losses, the compartments, the gene-family results and the KAP1 intersection do not use
-these files.
+**(2) The repeat figures in the prose below are STALE relative to the committed
+tables, and were already stale before (1).** This document was written 2026-07-21;
+the tables were regenerated 2026-07-23 and the text was never updated. The prose
+values look like the pre-rep2-exclusion run.
+
+| Quantity | This document says | `tables/repeat_signal_percopy_summary.tsv` |
+|---|---|---|
+| IAPEz-int H4K20me3 | −0.52 | **−0.708** |
+| IAPLTR1a_Mm H4K20me3 | −0.55 | **−0.728** |
+| B1 SINE (ctrl) H4K20me3 | ~−0.18 | **−0.313** |
+
+**Trust the tables, not finding 5's prose, until that section is rewritten.** The
+qualitative claim it makes (IAP deepest, young L1 next, SINE shallowest, active
+marks flat) is supported by the current tables; only the magnitudes are wrong.
+
+Superseded annotation kept as `*.bed.truncated-tablebrowser`.
 
 ## Headline findings
 

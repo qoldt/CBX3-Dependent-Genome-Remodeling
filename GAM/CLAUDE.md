@@ -83,37 +83,46 @@ inlining it. GAM-only dependency: `R.utils` (for gzipped `fread`).
     `scale_fill_heat0_div`, `heat_col_fun`, `geno_colors`, `repeat_palette`,
     `theme_m`). No raw hex. Save with `save_fig(plot, name, subdir=)`.
 
-## OPEN ISSUE — the A/B compartment call is not yet trustworthy
+## A/B compartments: how the axis is defined (resolved in code, unverified on data)
 
-**Do not report an absolute A/B assignment, or a net A→B compartment shift, from
-the current GAM_2 code.** Two coupled problems, both unresolved:
+GAM_2 does **not** take the leading eigenvector as the compartment axis, and does
+**not** median-centre it. Both of those were wrong in the first draft and the
+reasoning is worth keeping, because the failure was invisible:
 
-1. **PC1 is median-centred per chromosome per genotype**, so `frac_A ≈ 0.5` by
-   construction and a chromosome-wide A/B imbalance cannot be represented. That
-   in turn constrains GAM_4's switch table to near-symmetric A→B and B→A counts
-   whatever the biology does. GAM_2's chr19 smoke test shows the signature
-   exactly: A→B 609 vs B→A 612. The code comment calls this "fine for the
-   WT-vs-KO question" — that is the one claim in this stage that is wrong, since
-   the WT-vs-KO question in GAM_4 *is* the net shift.
-2. **The leading eigenvector may not be the compartment eigenvector.** GAM_2
-   computes two (`eigs_sym(k = 2)`) but always takes the first, and the raw PC1
-   on chr19 sat ~2 SD above zero with 97% of bins on one side — the signature of
-   a coverage/mean component rather than an A/B split. Standard practice is to
-   select the eigenvector that best tracks an independent A/B marker, which here
-   would be the H3K4me3 reference already loaded for orientation.
+- Taking the top eigenvector unconditionally gave, on chr19, a vector with 97% of
+  bins on one side of zero. That is not an A/B split; it is the overall contact
+  structure. In Hi-C-like data the compartment signal sits in PC1 **or** PC2
+  depending on the chromosome, which is why cooltools-style pipelines select by
+  correlation with GC or gene density.
+- Median-centring the result forced `frac_A = 0.5` per chromosome per genotype,
+  which in turn forced GAM_4's switch table to near-symmetric A→B / B→A counts
+  **whatever the biology did** (chr19 draft: 609 vs 612). It masked the first
+  problem and made the net-shift question unanswerable by construction.
 
-Centring was a reasonable response to (2), but it masks (2) rather than fixing
-it, and it costs (1).
+What it does instead: `select_compartment_pc()` computes two eigenvectors and
+picks whichever correlates better (|Spearman|) with an **active-chromatin
+reference**, then orients the sign by the same reference. The reference is the
+mean of the per-bin z-scores of **WT H3K4me3 and WT H3K36me3**.
 
-**What IS usable now:** PC1 as a within-chromosome *ranking*, the WT-vs-KO PC1
-*delta* at matched rank, insulation, the distance bands and the decay slope.
-**What is not:** `frac_A`, `compartment_<g>`, `compartment_switch`, and any
-claim of the form "the KO moves territory from A to B".
+Why those two marks:
+- They are complementary at this resolution. H3K4me3 is punctate at promoters and
+  thin across a 20 kb bin; H3K36me3 is broad over transcribed gene bodies and
+  better matched to the bin size. Their average is steadier than either alone.
+- They are the marks that **do not change** in the KO (per-bin median log2FC
+  +0.000 and −0.052, against −0.497 for H4K20me3). The A/B axis is therefore the
+  same ruler in both genotypes. Anchoring on H3K9me3/H4K20me3 would be circular —
+  the axis would move with the effect under study.
 
-**To resolve, on the first real run:** record each eigenvector's correlation with
-WT H3K4me3 per chromosome and see whether PC1 or PC2 tracks it; then set the A/B
-boundary from that marker rather than from PC1's own median. Until then treat
-GAM_4's compartment-switch section as diagnostic output, not a result.
+With the right eigenvector selected, no re-centring is needed and `frac_A` is free
+to differ from 0.5, which is what makes a net A↔B shift detectable.
+
+**Still to confirm on the first real run** (the numbers are in
+`tables/npmi_compartment_orientation.tsv`): how often `which_pc == 2` — if that is
+common, say so in the methods rather than leaving it implicit; that `rho_pc1` vs
+`rho_pc2` separate cleanly, since a near-tie means the axis is poorly determined
+for that chromosome; and that WT and KO PC correlate strongly genome-wide, because
+a wholesale reorganisation is a much bigger claim than this design can support.
+Until those are checked, treat `compartment_switch` as diagnostic.
 
 ## The `.rds` handoffs (schemas)
 

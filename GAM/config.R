@@ -34,7 +34,7 @@ source("../shared/setup.R")
 # fresh clone still runs but silently takes the slower, less accurate path -
 # which is exactly the kind of difference that should not depend on what happens
 # to be installed.
-minute_add_deps(cran = c("R.utils", "RSpectra", "hexbin"))
+minute_add_deps(cran = c("R.utils", "RSpectra", "hexbin", "patchwork"))
 minute_ensure_deps()
 source("../shared/common.R")
 
@@ -251,6 +251,117 @@ load_hotspots <- function(chroms = gam_autosomes) {
   out[is.na(n_contacts_gained), n_contacts_gained := 0L]
   setorder(out, chr, start)
   out[]
+}
+
+# --- Hotspot DOMAINS: the second analysis level -----------------------------
+# The hotspot counts are a dense, SMOOTH track, not a sparse hit list, so there
+# are two legitimate units and they answer different questions:
+#
+#   per-bin count  - the continuous covariate. Highest resolution, no threshold
+#                    chosen, right for correlation/coupling (GAM_3). Neighbouring
+#                    bins are NOT independent (measured autocorrelation r = 0.59
+#                    at 20 kb, 0.40 at 100 kb, 0.26 at 500 kb), so any CI over
+#                    bins must resample chromosomes, not bins.
+#   domain         - the independent unit. Right for enrichment/overlap tests and
+#                    for "how much territory remodels", because counting adjacent
+#                    bins as independent observations pseudo-replicates - the same
+#                    reason chromHMM_size_weighted() permutes region labels rather
+#                    than base pairs.
+#
+# WHY SMOOTH BEFORE THRESHOLDING. Thresholding the raw track fragments it: at the
+# 90th percentile the median run is 1 bin and only 22% of hotspot bins fall in
+# domains >= 100 kb, because a single bin dipping below the cutoff splits a real
+# domain in two. Absorbing sub-threshold gaps fixes some of that (gap<=2 -> 62%)
+# but chains through long quiet stretches if pushed (gap<=3 produces a 3.6 Mb
+# "domain"), and the gap size is arbitrary. A 100 kb (5-bin) running mean first
+# gives median 4 bins and 80% of hotspot bins in >= 100 kb domains without that
+# pathology. 100 kb is chosen to match the autocorrelation structure: still
+# r ~ 0.40, so averaging over it is justified, whereas a 500 kb window (r ~ 0.26)
+# would fuse genuinely separate domains.
+#
+# Defaults are deliberately explicit so a sensitivity run is a parameter change:
+#   q           quantile of the smoothed track that counts as "hot"
+#   smooth_bins running-mean width in bins (5 = 100 kb)
+#   gap         sub-threshold bins absorbed between hot runs (1 = 20 kb)
+#   min_bins    minimum domain size kept (5 = 100 kb)
+gam_hotspot_params <- list(q = 0.90, smooth_bins = 5L, gap = 1L, min_bins = 5L)
+
+# UNADJUSTED variant, carried alongside the smoothed one so that every
+# domain-level result can be reported both ways. This is threshold-and-nothing-
+# else: no smoothing, strict adjacency, no size floor. It is the conservative
+# reading - it makes no assumption that a sub-threshold bin inside a run belongs
+# to the domain - at the cost of fragmenting real domains into singletons (at
+# q90, median run length 1 bin, 78% of hotspot bins in runs under 100 kb).
+#
+# Keeping both is the same instinct as reporting enrichments per-region AND
+# size-weighted on the ChIP side: where the two agree the conclusion does not
+# rest on the smoothing choice, and where they disagree that disagreement is
+# itself the finding and belongs in the write-up.
+#
+# Note the truly unadjusted view is the per-bin count itself, which the pipeline
+# always retains as n_contacts_lost / n_contacts_gained and uses as the primary
+# continuous covariate. This variant is about DOMAIN construction only.
+gam_hotspot_params_raw <- list(q = 0.90, smooth_bins = 1L, gap = 0L, min_bins = 1L)
+
+# Returns a list: $bin (per-bin domain_id + smoothed value + hot flag, in input
+# order) and $domains (one row per kept domain). Input must be sorted by chr,start.
+gam_hotspot_domains <- function(counts, chr, start, end,
+                                q           = gam_hotspot_params$q,
+                                smooth_bins = gam_hotspot_params$smooth_bins,
+                                gap         = gam_hotspot_params$gap,
+                                min_bins    = gam_hotspot_params$min_bins) {
+  dt <- data.table::data.table(i = seq_along(counts), chr = as.character(chr),
+                               start = start, end = end, n = as.numeric(counts))
+  # Running mean WITHIN each chromosome - smoothing across a chromosome boundary
+  # would invent signal where there is a discontinuity.
+  dt[, sm := {
+    if (smooth_bins <= 1L) n else {
+      v <- as.numeric(stats::filter(n, rep(1 / smooth_bins, smooth_bins), sides = 2))
+      ifelse(is.na(v), n, v)      # edges keep their raw value
+    }
+  }, by = chr]
+  cut_at <- stats::quantile(dt$sm, q, na.rm = TRUE)
+  dt[, hot := sm >= cut_at]
+
+  # Absorb short sub-threshold gaps, then label contiguous runs per chromosome.
+  dt[, dom := {
+    h <- hot
+    if (gap > 0L && length(h) > 2L) {
+      r <- rle(h); L <- r$lengths; V <- r$values; k <- 2L
+      while (k < length(V)) {
+        if (!V[k] && L[k] <= gap && V[k - 1L] && V[k + 1L]) {
+          L[k - 1L] <- L[k - 1L] + L[k] + L[k + 1L]
+          V <- V[-c(k, k + 1L)]; L <- L[-c(k, k + 1L)]
+        } else k <- k + 1L
+      }
+      h <- rep(V, L)
+    }
+    rr <- rle(h)
+    id <- rep(NA_integer_, length(h))
+    ends <- cumsum(rr$lengths); begs <- ends - rr$lengths + 1L
+    w <- which(rr$values)
+    if (length(w)) for (j in seq_along(w)) id[begs[w[j]]:ends[w[j]]] <- j
+    id
+  }, by = chr]
+  dt[!is.na(dom), dom_key := paste0(chr, ":", dom)]
+
+  # NOTE the name: this must NOT be called `dom`, because dt already has a `dom`
+  # COLUMN and data.table evaluates the filter below inside dt's scope - the
+  # column would shadow this table and `dom$dom_key` would hit an integer vector.
+  domtab <- dt[!is.na(dom), .(chr = chr[1], start = min(start), end = max(end),
+                              n_bins = .N, mean_count = mean(n), max_count = max(n),
+                              sum_count = sum(n)), by = dom_key]
+  domtab <- domtab[n_bins >= min_bins]
+  domtab[, width_kb := (end - start) / 1000]
+  # Drop membership for domains that failed the size filter, so the per-bin
+  # domain_id and the $domains table can never disagree.
+  keep_keys <- domtab$dom_key
+  dt[!dom_key %in% keep_keys, dom_key := NA_character_]
+  data.table::setorder(dt, i)
+  list(bin = dt[, .(domain_id = dom_key, smoothed = sm, hot)],
+       domains = domtab[order(chr, start)],
+       params = list(q = q, cutoff = cut_at, smooth_bins = smooth_bins,
+                     gap = gap, min_bins = min_bins))
 }
 
 # --- Loader: differential contact PAIRS for one chromosome/direction --------

@@ -308,6 +308,36 @@ comp_binq <- {
   factor(out, levels = c("stable", "H4K20me3_only", "co_loss"))
 }
 
+# --- 6b. Hotspot DOMAINS, both adjusted and unadjusted -----------------------
+# The per-bin counts above stay the primary continuous covariate. These add the
+# second, independent-unit view. Two parameterisations are emitted so every
+# domain-level claim downstream can be checked against the no-adjustment reading
+# (see gam_hotspot_params / gam_hotspot_params_raw in config.R for the rationale).
+# gam_hotspot_domains() groups by chromosome internally, so the property it needs
+# is that starts increase WITHIN each chromosome - not a global sort. Asserting a
+# global order would be wrong here anyway: gam_bins() returns natural seqlevel
+# order (chr1, chr2, ... chr19) while order() on the character seqnames gives
+# lexicographic order (chr1, chr10, chr11, ...), so the two legitimately differ.
+stopifnot(!any(data.table(c = as.character(seqnames(bins)), s = start(bins))[
+  , any(diff(s) <= 0), by = c]$V1))
+dom_out <- list()
+for (dir in c("lost", "gained")) {
+  cnt <- if (dir == "lost") n_lost else n_gained
+  for (variant in c("adj", "raw")) {
+    pr <- if (variant == "adj") gam_hotspot_params else gam_hotspot_params_raw
+    d  <- gam_hotspot_domains(cnt, as.character(seqnames(bins)),
+                              start(bins) - 1L, end(bins),
+                              q = pr$q, smooth_bins = pr$smooth_bins,
+                              gap = pr$gap, min_bins = pr$min_bins)
+    dom_out[[paste0(dir, "_", variant)]] <- d
+    cat(sprintf("Hotspot domains %-6s %-3s: %5d domains, median %.0f bins, %.1f%% of genome\n",
+        dir, variant, nrow(d$domains), median(c(d$domains$n_bins, 0)),
+        100 * sum(d$domains$end - d$domains$start) / sum(end(bins) - (start(bins) - 1L))))
+  }
+}
+for (k in names(dom_out))
+  fwrite(dom_out[[k]]$domains, file.path(tables_dir, paste0("hotspot_domains_", k, ".tsv")), sep = "\t")
+
 annot <- data.table(
   bin_id = bin_ids, chr = as.character(seqnames(bins)),
   start = start(bins) - 1L, end = end(bins),   # 0-based half-open, as the GAM files
@@ -315,7 +345,14 @@ annot <- data.table(
   as.data.table(frac_rep), as.data.table(frac_hmm),
   tad_boundary = tad_boundary, n_tss = as.integer(n_tss),
   compartment_abs = comp_abs, compartment_centred = comp_cen,
-  compartment_bin_quintile = comp_binq)
+  compartment_bin_quintile = comp_binq,
+  # domain membership: NA where the bin is not in a called domain
+  dom_lost_adj    = dom_out$lost_adj$bin$domain_id,
+  dom_lost_raw    = dom_out$lost_raw$bin$domain_id,
+  dom_gained_adj  = dom_out$gained_adj$bin$domain_id,
+  dom_gained_raw  = dom_out$gained_raw$bin$domain_id,
+  smoothed_lost   = dom_out$lost_adj$bin$smoothed,
+  smoothed_gained = dom_out$gained_adj$bin$smoothed)
 setkey(annot, bin_id)
 
 # --- 8. Sanity assertions -----------------------------------------------------

@@ -70,19 +70,38 @@ if (!file.exists(gam1_rds))
        "\nRun it first:   cd GAM && Rscript GAM_1_Bins_and_Signal.R", call. = FALSE)
 gam1 <- readRDS(gam1_rds)
 stopifnot(all(c("signal", "stats") %in% names(gam1)))
+# ACTIVE-CHROMATIN REFERENCE: mean of the per-bin z-scores of WT H3K4me3 and WT
+# H3K36me3. This both SELECTS which eigenvector is the compartment axis and
+# orients its sign (see select_compartment_pc() for the full rationale).
+#
+# Two marks, not one: H3K4me3 is punctate at promoters and thin across a 20 kb
+# bin; H3K36me3 is broad over transcribed gene bodies and better matched to this
+# resolution. Averaging their z-scores gives a steadier A-compartment anchor.
+#
+# Both are UNCHANGED in the KO (per-bin median log2FC +0.000 and -0.052, against
+# -0.497 for H4K20me3), so the A/B axis is the same ruler in both genotypes.
+# Anchoring on H3K9me3/H4K20me3 would be circular - the axis would move with the
+# effect under study.
 h3k4_wt <- local({
-  cols <- grep("^H3K4me3_WT", colnames(gam1$signal))   # sample_id = <mark>_<geno>_rep<n>
-  if (length(cols)) {
-    message("Orienting PC1 on ", length(cols), " WT H3K4me3 sample(s) from $signal")
-    rowMeans(gam1$signal[, cols, drop = FALSE], na.rm = TRUE)
-  } else {
-    # Same mark, but pooled over genotypes: still an H3K4me3 reference, unlike
-    # gene density. Loud, because WT-only is what was asked for.
-    warning("no H3K4me3_WT columns in $signal; using $stats baseMean for H3K4me3",
-            " (pooled over genotypes)", call. = FALSE)
-    st <- gam1$stats[gam1$stats$mark == "H3K4me3", ]
-    setNames(st$baseMean, st$bin_id)
+  zs <- function(v) { s <- stats::sd(v, na.rm = TRUE)
+                      if (!is.finite(s) || s < 1e-12) return(rep(0, length(v)))
+                      (v - mean(v, na.rm = TRUE)) / s }
+  parts <- list(); used <- character(0)
+  for (mk in c("H3K4me3", "H3K36me3")) {
+    cols <- grep(paste0("^", mk, "_WT"), colnames(gam1$signal))
+    if (length(cols)) {
+      parts[[mk]] <- zs(rowMeans(gam1$signal[, cols, drop = FALSE], na.rm = TRUE))
+      used <- c(used, paste0(mk, " (", length(cols), " WT libs)"))
+    }
   }
+  if (!length(parts)) {
+    warning("no WT H3K4me3/H3K36me3 columns in $signal; falling back to pooled",
+            " H3K4me3 baseMean - the A/B call will be weaker", call. = FALSE)
+    st <- gam1$stats[gam1$stats$mark == "H3K4me3", ]
+    return(setNames(st$baseMean, st$bin_id))
+  }
+  message("Active-chromatin reference from: ", paste(used, collapse = " + "))
+  setNames(Reduce(`+`, parts) / length(parts), rownames(gam1$signal))
 })
 rm(gam1); invisible(gc())
 
@@ -120,7 +139,16 @@ pc1_corr <- function(x) {
   }
   if (requireNamespace("RSpectra", quietly = TRUE)) {
     e <- RSpectra::eigs_sym(mv, k = 2, n = nv, which = "LA")
-    list(vec = e$vectors[, 1], val = e$values[1], gap = e$values[1] / e$values[2])
+    # BOTH eigenvectors are returned. Which one carries the A/B compartment is
+    # decided downstream by correlation with an active-chromatin reference, NOT
+    # by eigenvalue rank: in Hi-C-like data the leading eigenvector frequently
+    # captures overall contact structure rather than compartments (on chr19 it
+    # put 97% of bins on one side of zero, which is not an A/B split), and the
+    # compartment signal then sits in the second. Selecting by marker is what
+    # cooltools-style pipelines do with GC/gene density; here we have the real
+    # marks, which is a stronger anchor.
+    list(vecs = e$vectors[, 1:2, drop = FALSE], vals = e$values[1:2],
+         vec = e$vectors[, 1], val = e$values[1], gap = e$values[1] / e$values[2])
   } else {
     set.seed(1); v <- rnorm(nv); v <- v / sqrt(sum(v^2)); lam <- 0
     for (it in 1:2000) {
@@ -128,8 +156,45 @@ pc1_corr <- function(x) {
       if (abs(lam_new - lam) < 1e-10 * abs(lam_new) && it > 5) { v <- w; lam <- lam_new; break }
       v <- w; lam <- lam_new
     }
-    list(vec = v, val = lam, gap = NA_real_)
+    list(vecs = matrix(v, ncol = 1), vals = lam, vec = v, val = lam, gap = NA_real_)
   }
+}
+
+# Choose WHICH eigenvector is the compartment axis, and orient it.
+#
+# Reference = active chromatin, built from WT H3K4me3 AND H3K36me3 (mean of their
+# per-bin z-scores). Two marks rather than one because they mark active chromatin
+# differently and complementarily: H3K4me3 is punctate at promoters, which is a
+# thin signal across a 20 kb bin, while H3K36me3 is broad over transcribed gene
+# bodies and therefore better matched to this bin size. Their average is a more
+# stable A-compartment anchor than either alone.
+#
+# Critically, these are the two marks that DO NOT change in the KO (per-bin median
+# log2FC +0.000 and -0.052, against -0.497 for H4K20me3). Anchoring on them means
+# the A/B axis is the same ruler in both genotypes. Anchoring on H3K9me3/H4K20me3
+# would be circular: the axis would move with the very effect being measured.
+#
+# Returns the selected vector already sign-oriented so positive = A = active-high,
+# plus the diagnostics needed to judge the call per chromosome.
+select_compartment_pc <- function(pc, ids, ref) {
+  V <- pc$vecs
+  rhos <- apply(V, 2, function(v) {
+    names(v) <- ids
+    ok <- is.finite(v) & is.finite(ref[ids])
+    if (sum(ok) < 50) return(NA_real_)
+    suppressWarnings(stats::cor(v[ok], ref[ids][ok], method = "spearman"))
+  })
+  k <- if (all(is.na(rhos))) 1L else which.max(abs(rhos))
+  v <- V[, k]; names(v) <- ids
+  sgn <- if (is.finite(rhos[k]) && rhos[k] < 0) -1 else 1
+  list(vec = v * sgn, which_pc = k, rho = abs(rhos[k]),
+       rho_all = rhos, sign = sgn,
+       # A/B from the SIGN of the selected eigenvector, with no median-centring.
+       # Centring was previously needed only because the wrong (all-positive)
+       # eigenvector was being used; selecting the right one removes the need and
+       # frees frac_A to differ from 0.5, which is what makes a net A<->B shift
+       # detectable at all.
+       frac_A = mean(v * sgn > 0, na.rm = TRUE))
 }
 
 # PC1 sign: Spearman against a reference over bins finite in both. Rank-based so
@@ -250,20 +315,28 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
   summ <- data.table(chr = chr, genotype = genotype, n_bins = n, n_mappable = sum(V),
                      oriented = FALSE, flip = NA, rho_orient = NA_real_,
                      rho_h3k4me3 = NA_real_, eig1 = NA_real_, eig_gap = NA_real_,
-                     frac_A = NA_real_)
+                     frac_A = NA_real_, which_pc = NA_integer_,
+                     rho_pc1 = NA_real_, rho_pc2 = NA_real_)
   if (can_orient && sum(V) > 2 * gam2_K) {
     pc <- pc1_corr(oe)
-    p <- setNames(pc$vec, ids[V])
+    sel <- select_compartment_pc(pc, ids[V], orient_ref)
+    p <- sel$vec
     # Median-centre BEFORE scaling. The eigenvector of a correlation matrix is not
     # mean-zero and on chr19 it sat ~2 SD above 0 (97% of bins "A" at a zero
     # cut), so sign(PC1) would not be an A/B call. Centring puts 0 at the middle
     # of the chromosome's own distribution, the same convention for both
     # genotypes; the cost is that a chromosome-wide A/B imbalance is not
     # represented (frac_A ~ 0.5 by construction) - fine for the WT-vs-KO question.
-    p <- p - stats::median(p)
+    # NO median-centring. It was only ever needed because the all-positive
+    # leading eigenvector was being used unconditionally; selecting the
+    # compartment eigenvector by the active-mark reference removes the need, and
+    # removing it is what frees frac_A to differ from 0.5 - without which a net
+    # A<->B shift cannot be detected at all (the switch table would be forced
+    # near-symmetric whatever the biology did).
     p <- p / sqrt(mean(p^2))                        # RMS 1: comparable across chr/genotype
-    # Sign by the reference for THIS genotype (WT: H3K4me3; HP1gKO: the WT PC1
-    # of the same chromosome, so the delta is a real change and not a flip).
+    # Sign is already set by the selector against the active reference. For the
+    # KO, re-orient against the WT PC of the same chromosome so the delta is a
+    # real change rather than a flip.
     o <- orient_sign(p, orient_ref)
     if (!is.finite(o$sign)) stop("cannot orient ", chr, " ", genotype,
                                  ": <50 bins overlap the reference")
@@ -278,7 +351,13 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
     feat[match(names(p), bin_id), pc1 := p]
     summ[, `:=`(oriented = TRUE, flip = o$sign < 0, rho_orient = o$rho,
                 rho_h3k4me3 = ck$rho, eig1 = pc$val, eig_gap = pc$gap,
-                frac_A = mean(p > 0))]
+                frac_A = mean(p > 0),
+                # which eigenvector carried the compartment signal, and how
+                # clearly - if which_pc is often 2, the leading eigenvector is
+                # structure rather than compartments and that belongs in the
+                # methods, not buried.
+                which_pc = sel$which_pc, rho_pc1 = sel$rho_all[1],
+                rho_pc2 = if (length(sel$rho_all) > 1) sel$rho_all[2] else NA_real_)]
 
     # Saddle: equal-count PC1 strata WITHIN the chromosome (rank-based) so it is a
     # single pass over the matrix. Genome-wide edges would need a second parse of
