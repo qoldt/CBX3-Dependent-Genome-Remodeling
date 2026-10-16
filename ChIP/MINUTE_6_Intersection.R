@@ -26,24 +26,9 @@ if (length(kap1_tracks) == 0) {
           " - skipping (see README 'KAP1 intersection' to prepare them).")
 } else {
 
-  # --- Size-matched permutation: is `query` overlap higher than a random set of
-  # regions drawn from `universe` with the SAME width distribution as `query`? ---
-  size_perm <- function(obs, query_w, uni_w, uni_ov, nbins = 20, nperm = 2000, seed = 42) {
-    brks <- unique(quantile(uni_w, seq(0, 1, length.out = nbins + 1)))
-    ub   <- cut(uni_w,   brks, include.lowest = TRUE)
-    qb   <- cut(query_w, brks, include.lowest = TRUE)
-    need <- table(qb); bins <- split(seq_along(uni_w), ub)
-    set.seed(seed); perm <- numeric(nperm)
-    for (i in seq_len(nperm)) {
-      smp <- unlist(lapply(names(need), function(b)
-        if (!is.na(b) && need[[b]] > 0 && length(bins[[b]]) > 0)
-          sample(bins[[b]], need[[b]], replace = TRUE)))
-      perm[i] <- mean(uni_ov[smp])
-    }
-    data.frame(obs_frac = obs, exp_frac = mean(perm), fold = obs / mean(perm),
-               z = (obs - mean(perm)) / sd(perm),
-               perm_p = (sum(perm >= obs) + 1) / (nperm + 1))
-  }
+  # size_perm() - the size-matched permutation overlap test - now lives in
+  # shared/common.R (sourced by config.R), because the GAM compartment and
+  # HUSH-target stages need exactly the same null. Behaviour is unchanged.
 
   ar  <- readRDS(annotated_rds)
   # (1) differential-loss groups; universe = all measured merged-set peaks

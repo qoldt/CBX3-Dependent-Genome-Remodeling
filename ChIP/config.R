@@ -1,9 +1,12 @@
 # ================================================================
 # MINUTE pipeline - shared configuration & parameters
 # ----------------------------------------------------------------
-# Sourced by MINUTE_1, MINUTE_2, MINUTE_3 and by run_MINUTE.R.
-# SINGLE SOURCE OF TRUTH for parameters - edit values here only;
+# Sourced by every MINUTE stage and by run_MINUTE.R.
+# SINGLE SOURCE OF TRUTH for ChIP parameters - edit values here only;
 # the stage scripts must not redefine them.
+#
+# Cross-assay pieces (colour palettes, figure savers, hyper_row, size_perm,
+# seqname flips, mm39 binning) live in ../shared/common.R, sourced below.
 #
 # Run the pipeline FROM the ChIP/ directory (the folder holding
 # this file); all repo-relative paths below assume that:
@@ -44,18 +47,6 @@ for (d in c(counts_dir, rds_dir, tables_dir, fig_dir, bed_dir)) {
   if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
 }
 
-# --- Figure savers: write BOTH png (quick view) and pdf (vector for papers), ---
-# --- organised into per-analysis subfolders under results/figures/<subdir>.  ---
-# save_fig(): for ggplot objects.  save_base_fig(): for base-graphics / draw()
-# renderers (e.g. ComplexHeatmap) - pass a zero-arg function that draws.
-save_fig <- function(plot, name, subdir = "", width = 8, height = 6, dpi = 300) {
-  d <- if (nzchar(subdir)) file.path(fig_dir, subdir) else fig_dir
-  if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
-  ggplot2::ggsave(file.path(d, paste0(name, ".png")), plot, width = width, height = height, dpi = dpi)
-  ggplot2::ggsave(file.path(d, paste0(name, ".pdf")), plot, width = width, height = height)
-  message("Saved: ", file.path(subdir, paste0(name, ".{png,pdf}")))
-  invisible(file.path(d, name))
-}
 save_base_fig <- function(draw_fn, name, subdir = "", width = 10, height = 12, dpi = 300) {
   d <- if (nzchar(subdir)) file.path(fig_dir, subdir) else fig_dir
   if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
@@ -76,8 +67,14 @@ annotated_rds <- file.path(rds_dir, "annotated_results_H3K9me3_H4K20me3_2000bp_m
 # is missing, so a fresh clone works on the first `Rscript run_MINUTE.R`.
 # Set MINUTE_AUTO_INSTALL=0 to turn the auto-install off (missing packages then
 # raise an error listing them, and `Rscript setup.R` installs them on demand).
-source("setup.R")
+source("setup.R")        # shim -> ../shared/setup.R (manifest + installer)
 minute_ensure_deps()
+
+# Cross-assay helpers: core library attachments, colour palettes + scales,
+# save_fig()/save_base_fig(), ht_raster_device, hyper_row(), size_perm(),
+# seqname flips (to_ucsc/to_ncbi), mm39_bins(), GAM bin-id parsing.
+# SINGLE SOURCE OF TRUTH for figure colours - stage scripts must not write hex.
+source("../shared/common.R")
 
 # wigglescout <= 0.20 was sensitive to its future/furrr stack and needed pins
 # (furrr 0.2.3 / future 1.23.0 / globals 0.14.0), restarting R afterwards so newer
@@ -86,116 +83,21 @@ minute_ensure_deps()
 # fails with "values must be length 1, but FUN(X[[i]]) result is length N", the
 # pins have drifted (or a stray future::plan() is set) - reinstall those versions
 # / run future::plan("sequential"); do NOT edit the R scripts.
+# ChIP-SPECIFIC libraries. The core set (GenomicRanges, GenomeInfoDb,
+# rtracklayer, data.table, ggplot2, circlize, ltc) is attached by
+# shared/common.R above - do not re-attach it here.
 suppressPackageStartupMessages({
   library(ChIPseeker)
   library(AnnotationDbi)
   library(TxDb.Mmusculus.UCSC.mm39.knownGene)
   library(org.Mm.eg.db)
-  library(GenomicRanges)
-  # GenomeInfoDb: seqlevelsStyle()<- / seqlevels(). GenomicRanges re-exported these
-  # up to Bioc 3.22 but no longer does (3.23+), so load it explicitly - the
-  # NCBI<->UCSC seqname flips throughout the pipeline depend on it.
-  library(GenomeInfoDb)
-  library(rtracklayer)
   library(wigglescout)
   library(parallel)
-  library(data.table)
   library(DESeq2)
   library(dplyr)
-  library(ggplot2)
   library(ggrepel)
   library(ComplexHeatmap)
-  library(circlize)
-  library(ltc)
 })
-
-# --- Heatmap rasterisation backend -------------------------------------------
-# ComplexHeatmap rasterises any heatmap body over 2000 rows: it renders the body
-# to a temporary image, reads it back, and embeds it as a single raster in the
-# figure. That is a FIGURE-SIZE optimisation, not data I/O - the alternative is
-# ~half a million vector rectangles in the PDF - but it does put an image device
-# on the pipeline's critical path.
-#
-# Its default device is grDevices::png(), and it forces type = "cairo" whenever
-# capabilities("cairo") is TRUE. On macOS without XQuartz that check LIES: R is
-# built with cairo support, so the flag is TRUE, but cairo.so cannot load (it
-# links to /opt/X11/lib). The device then fails to write the temp image with only
-# a warning, and the read-back dies with:
-#   Error in ... (temp_image) : unable to open ...heatmap_body_....png
-# ragg's agg_png is self-contained (no X11/cairo), and ComplexHeatmap does not
-# force a type on it. Pass this to every Heatmap() the pipeline draws.
-ht_raster_device <- if (requireNamespace("ragg", quietly = TRUE)) "agg_png" else "png"
-
-# --- Colour palettes: SINGLE SOURCE OF TRUTH for figure colours ---------------
-# Everything comes from the `ltc` package (install.packages("ltc")):
-#   discrete / categorical -> "gaby"      (5 colours)
-#   continuous / heatmaps  -> "heatmap0"  (9 colours, dark blue -> cream -> dark red)
-# Stage scripts must use the helpers below, not raw hex codes. Greys are kept for
-# "neutral / background / not-a-category" levels on purpose - they are meant to
-# recede, so they are deliberately NOT drawn from the palette.
-
-# gaby, in palette order: pale yellow, salmon, pale blue, blue, plum
-gaby_cols <- unname(ltc("gaby"))
-
-# gaby has only 5 colours. INTERPOLATING past that is not viable: gaby_pal(7)
-# put 5' UTR (#F4BE99) next to Distal Intergenic (#D8B1A3) on the genomic_region
-# change plots, which are indistinguishable in print - and Distal Intergenic is
-# the bulk of the points. So beyond 5 levels we switch palette entirely rather
-# than blend, using ltc's "hat" (10 colours), reordered so the first n are as
-# far apart in hue as possible: blue, red, green, purple, yellow, teal,
-# crimson, orange, green2, black.
-hat_cols <- unname(ltc("hat"))[c(6, 3, 8, 5, 1, 7, 4, 2, 9, 10)]
-
-# The project's categorical palette: gaby <=5 levels, hat 6-10, interpolated
-# hat beyond that (>10 categories is a labelling problem, not a colour one).
-disc_pal <- function(n) {
-  if (n <= length(gaby_cols))     gaby_cols[seq_len(n)]
-  else if (n <= length(hat_cols)) hat_cols[seq_len(n)]
-  else                            unname(ltc("hat", n, "continuous"))
-}
-scale_fill_disc   <- function(...) discrete_scale(aesthetics = "fill",   palette = disc_pal, ...)
-scale_colour_disc <- function(...) discrete_scale(aesthetics = "colour", palette = disc_pal, ...)
-
-# heatmap0, in palette order (index 5 = "#E9D8A6" is the pale midpoint)
-heat_cols <- unname(ltc("heatmap0"))
-heat_low  <- heat_cols[2]   # teal-blue
-heat_mid  <- heat_cols[5]   # cream
-heat_high <- heat_cols[8]   # dark red
-# Sequential (0 -> max): the full ramp.
-scale_fill_heat0   <- function(...) scale_fill_gradientn(colours = heat_cols, ...)
-scale_colour_heat0 <- function(...) scale_colour_gradientn(colours = heat_cols, ...)
-# Diverging (log2FC, z-score): the ramp's own ends around its cream midpoint.
-scale_fill_heat0_div   <- function(midpoint = 0, ...) scale_fill_gradient2(
-  low = heat_low, mid = heat_mid, high = heat_high, midpoint = midpoint, ...)
-scale_colour_heat0_div <- function(midpoint = 0, ...) scale_colour_gradient2(
-  low = heat_low, mid = heat_mid, high = heat_high, midpoint = midpoint, ...)
-# ComplexHeatmap / circlize: pass the break points, get a matching colorRamp2.
-#   symmetric z-score : heat_col_fun(seq(-2, 2, length.out = length(heat_cols)))
-#   sequential        : heat_col_fun(c(0.3, 1, 6))
-heat_col_fun <- function(breaks) circlize::colorRamp2(
-  breaks, grDevices::colorRampPalette(heat_cols)(length(breaks)))
-
-# --- Shared plotting constants (used across stages) ---
-geno_colors <- c(WT = gaby_cols[4], HP1gKO = gaby_cols[5])
-theme_m     <- theme_minimal(base_size = 12) + theme(panel.grid.minor = element_blank())
-mark_levels <- c("H3K4me3", "H3K36me3", "H3K9me2", "H3K9me3", "H4K20me3")
-
-# Repeat classes (shared by MINUTE_2's heatmap annotation + scatter plots and
-# MINUTE_3's composition bars).
-# USES "hat", NOT gaby, deliberately. All four repeat classes are abundant on
-# the change plots and need strong mutual contrast, and gaby cannot supply four
-# such colours: two of its five entries are pale (#fceaab, #a8c4cc) and vanish
-# against white, and its two blues are adjacent in hue. Earlier attempts here
-# put LINE/LTR on the two adjacent blues (the two classes carrying the result -
-# young L1 and IAP - became the hardest pair to distinguish), then put the
-# abundant "complex" class on pale yellow, where it was invisible.
-# hat's first four are blue / red / green / purple - all strong, all distinct.
-# LINE and LTR take blue and red, the most separated pair.
-repeat_palette <- c(LINE = hat_cols[1],    # blue
-                    LTR  = hat_cols[2],    # red
-                    SINE = hat_cols[3],    # green
-                    complex = hat_cols[4], # purple
-                    none = "grey80")
 
 # --- Sample sheet: SINGLE SOURCE OF TRUTH for samples ------------
 # Columns: sample_id, mark, genotype (WT/HP1gKO), replicate, bigwig (filename).
@@ -426,34 +328,6 @@ load_annotation <- function() {
   )
   seqlevelsStyle(ann$tad) <- "UCSC"
   ann
-}
-
-# --- Helper: one hypergeometric enrichment row (OR + direction + p) for a
-#     boolean annotation flag over ALL measured peaks vs the significant subset.
-#     Shared by MINUTE_2 (TAD/ChromHMM) and MINUTE_4 (repeats). ---
-hyper_row <- function(chip, annotation, all_df, sig_df, flag_all) {
-  N <- nrow(all_df); K <- sum(flag_all, na.rm = TRUE); n <- nrow(sig_df)
-  flag_sig <- flag_all[match(sig_df$peak_id, all_df$peak_id)]
-  k <- sum(flag_sig, na.rm = TRUE)
-  if (is.na(N) || N == 0 || is.na(n) || is.na(K) || K < 0) {
-    pval <- expected <- enrich <- NA_real_
-  } else {
-    expected <- if (N > 0) n * (K / N) else NA_real_
-    pval <- if (n > 0 && K > 0 && N > K) phyper(k - 1, K, N - K, n, lower.tail = FALSE) else NA_real_
-    enrich <- if (!is.na(expected) && expected > 0) k / expected else NA_real_
-  }
-  a <- k; b <- n - k; c <- K - k; d <- N - K - b
-  if (any(c(a, b, c, d) <= 0)) { a <- a + 0.5; b <- b + 0.5; c <- c + 0.5; d <- d + 0.5 }
-  or_val <- (a * d) / (b * c); if (!is.finite(or_val)) or_val <- NA_real_
-  if (!is.null(sig_df$log2FoldChange) && k > 0) {
-    l2fc_med <- stats::median(sig_df$log2FoldChange[which(flag_sig)], na.rm = TRUE)
-    direction <- if (is.finite(l2fc_med) && l2fc_med > 0) "enriched" else "depleted"
-  } else { l2fc_med <- NA_real_; direction <- NA_character_ }
-  data.frame(ChIP = chip, annotation = annotation, N_total = N, K_in_annotation = K,
-             n_signif = n, k_signif_in_annotation = k, expected_overlap = expected,
-             enrichment = enrich, odds_ratio = or_val,
-             l2fc_median_sig_in_annotation = l2fc_med, direction = direction,
-             p_value = pval, stringsAsFactors = FALSE)
 }
 
 # --- Gene families silenced by H3K9me3 / HUSH (CBX3-dependent) ---
