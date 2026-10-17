@@ -72,6 +72,14 @@ asset_dir <- file.path(results_dir, "GAM_REPORT_artifact_files")
 embed_chip_fig <- function(rel, caption = NULL)
   embed_fig(rel, caption, root = file.path(chip_results_dir, "figures"))
 
+# The body is built ONCE and then written out in both modes, so the image source
+# cannot be decided here - deciding it here is what left GAM_REPORT.html full of
+# broken <img src="figures/..."> links whenever the script was run with
+# --artifact, because the artifact's relative paths were baked into the local
+# copy too. Instead each figure is registered and a token is emitted, and
+# resolve_figs() below swaps the token for whichever source that output wants.
+FIGREG <- new.env(parent = emptyenv()); FIGREG$items <- list()
+
 embed_fig <- function(rel, caption = NULL, root = fig_dir) {
   f <- file.path(root, rel)
   if (!file.exists(f)) {
@@ -85,21 +93,48 @@ embed_fig <- function(rel, caption = NULL, root = fig_dir) {
                                    stdout = FALSE, stderr = FALSE))
     if (ok == 0 && file.exists(small)) src <- small
   }
-  tag <- if (ARTIFACT) {
-    pub <- file.path("figures", gsub("[/]", "_", rel))
-    dest <- file.path(asset_dir, pub)
-    dir.create(dirname(dest), recursive = TRUE, showWarnings = FALSE)
-    file.copy(src, dest, overwrite = TRUE)
-    ASSETS$files <- c(ASSETS$files, pub)
-    # loading="lazy" matters here: the artifact is read on a phone, and without it
-    # every figure in the report is fetched before the first one renders.
-    sprintf('<img src="%s" loading="lazy" decoding="async">', pub)
-  } else {
-    sprintf('<img src="data:image/png;base64,%s">', base64enc::base64encode(src))
-  }
+  pub <- file.path("figures", gsub("[/]", "_", rel))
+  # One registry entry per published name, so the same figure used twice is
+  # encoded once. A clash between two different sources under one published name
+  # is a real bug (the second would silently overwrite the first), so stop.
+  prev <- FIGREG$items[[pub]]
+  if (!is.null(prev) && !identical(prev, src))
+    stop("two different figures map to the same published name: ", pub,
+         "\n  ", prev, "\n  ", src, call. = FALSE)
+  FIGREG$items[[pub]] <- src
+  # loading="lazy" matters here: the artifact is read on a phone, and without it
+  # every figure in the report is fetched before the first one renders.
+  tag <- sprintf('<img src="@@FIG:%s@@" loading="lazy" decoding="async">', pub)
   paste0("<figure>", tag,
          if (!is.null(caption)) paste0("<figcaption>", caption, "</figcaption>") else "",
          "</figure>")
+}
+
+# Swap every @@FIG:<pub>@@ token for a real source.
+#   mode "embed"    - base64 data: URI, so the local HTML is one portable file.
+#   mode "external" - copy the PNG into asset_dir and reference it relatively,
+#                     which is what the Artifact host publishes alongside the page.
+resolve_figs <- function(html, mode) {
+  pubs <- names(FIGREG$items)
+  if (!length(pubs)) return(html)
+  reps <- vapply(pubs, function(pub) {
+    src <- FIGREG$items[[pub]]
+    if (mode == "external") {
+      dest <- file.path(asset_dir, pub)
+      dir.create(dirname(dest), recursive = TRUE, showWarnings = FALSE)
+      file.copy(src, dest, overwrite = TRUE)
+      ASSETS$files <- unique(c(ASSETS$files, pub))
+      pub
+    } else {
+      paste0("data:image/png;base64,", base64enc::base64encode(src))
+    }
+  }, character(1))
+  # fixed = TRUE: published names contain "+", "." and other regex metacharacters.
+  for (i in seq_along(pubs))
+    html <- gsub(paste0("@@FIG:", pubs[i], "@@"), reps[i], html, fixed = TRUE)
+  left <- gregexpr("@@FIG:", html, fixed = TRUE)[[1]]
+  if (left[1] != -1) stop(length(left), " figure token(s) left unresolved", call. = FALSE)
+  html
 }
 
 tbl <- function(path, caption = NULL, digits = 3, max_rows = 40L, cols = NULL) {
@@ -985,7 +1020,7 @@ body_html <- paste0("<main>",
 html <- paste0("<!doctype html><html><head><meta charset='utf-8'>",
   "<meta name='viewport' content='width=device-width,initial-scale=1'>",
   "<title>GAM working report</title><style>", theme_css(FALSE), css, "</style></head><body>",
-  body_html, "</body></html>")
+  resolve_figs(body_html, "embed"), "</body></html>")
 
 writeLines(html, OUT)
 msg("wrote %s (%.1f MB)", OUT, file.size(OUT) / 1e6)
@@ -998,7 +1033,8 @@ if (ARTIFACT) {
   # :root is left to the host as well - it pads it with the phone's safe-area
   # insets, which is what keeps the page clear of the status bar.
   art <- paste0("<title>GAM Working Report</title>\n<style>",
-                theme_css(TRUE), css, "</style>\n", body_html)
+                theme_css(TRUE), css, "</style>\n",
+                resolve_figs(body_html, "external"))
   writeLines(art, OUT_ART)
   mb <- file.size(OUT_ART) / 1e6
   msg("wrote %s (%.1f MB)", OUT_ART, mb)
