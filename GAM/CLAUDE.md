@@ -282,6 +282,36 @@ resting entirely on `pc1_delta`. `pc1_delta` is still computed and still in the
 table, labelled "not a sound comparison", so the two can be contrasted - it just
 no longer decides a verdict. The short-range-loss half was never affected.
 
+## "Protocadherin decompacts" is a matched-background claim, NOT a ranking
+
+`gam5_decompaction_verdict.tsv` says Protocadherin DECOMPACTS. That is a
+statement about its own chromatin stratum - the null matches on ChromHMM state,
+repeat-content quartile and detection-coverage tertile - and it is routinely
+misread as "Pcdh changes most", including in earlier write-ups here. It does not.
+
+`gam5_target_genomewide_context.tsv` (GAM_6 section 4b) exists to stop that
+misreading and should be quoted beside the verdict. For Protocadherin, against
+same-width contiguous windows anywhere in the genome:
+
+| | Protocadherin |
+|---|---|
+| windows losing MORE short-range contact | **43.7%** |
+| windows more A-ward | 15.1% |
+| windows beating it on BOTH criteria | **5.9%** |
+
+So it is mid-pack for contact loss and in the top sixth for the A-shift, with
+roughly one window in seventeen beating it outright. Both readings are true;
+they answer different questions. MELTRON agrees with the narrow one - the Pcdh
+cluster scores BELOW its own size-matched null (D 0.224 vs 0.260, p = 0.66).
+
+**Gotcha that produced a wrong version of this table once:** `target_sets` holds
+ROW INDICES into `d` in its current order (row i == bins[i]). `setorder(d, ...)`
+inside an analysis block silently repoints every target set at different bins,
+and `d` is used by the sections below. Always scan on a copy. The symptom was a
+reported Pcdh mean of -0.019 for a quantity whose value over its actual bins is
++0.802; the two are now cross-checked against the matched-background table's
+`observed` column, which is computed independently in the same stage.
+
 ## MELTRON (GAM_2c): use the KS statistic D, not the published melting score
 
 `GAM_2c_Meltron.R` ports the Pombo lab's MELTRON / MELTRONIC (Winick-Ng et al.

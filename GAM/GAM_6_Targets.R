@@ -340,6 +340,77 @@ local({
                     fifelse(loses_short_range, "loses short-range contacts, no A shift",
                     fifelse(shifts_toward_A, "shifts toward A, no short-range loss", "no decompaction signal")))]
   }
+  # ================================================================
+  # 4b. GENOME-WIDE CONTEXT - what the matched-background test does NOT say
+  # ================================================================
+  # The verdict above is against bins MATCHED on chromatin state, repeat content
+  # and detection coverage. That answers "is this set unusual for its stratum",
+  # which is the right question for a target set and the wrong one for anybody
+  # looking at a region plot. On a region plot you are comparing a locus against
+  # everywhere else you could have pointed at, matched on nothing - and a set can
+  # clear the matched test comfortably while being ordinary on that scale.
+  #
+  # So both numbers are produced, and the verdict table is not allowed to be read
+  # alone. For each set: its percentile among CONTIGUOUS windows of the same bin
+  # count anywhere in the genome, and the share of such windows that beat it on
+  # BOTH verdict criteria at once.
+  ctx <- local({
+    vmet <- c("npmi_short_delta", axis_metric)
+    if (!all(vmet %in% names(d))) return(NULL)
+    # WORK ON A COPY, AND NEVER REORDER `d`. target_sets hold ROW INDICES into
+    # d's current order (row i == bins[i]), so sorting d in place silently
+    # repoints every target set at the wrong bins - and d is still used by the
+    # sections below this one. The first version of this block did exactly that
+    # and reported Protocadherin's mean shared_delta as -0.019 when the value
+    # over its actual bins is +0.802.
+    ds <- copy(d)[, .(chr, start, m1 = get(vmet[1]), m2 = get(vmet[2]))]
+    setorder(ds, chr, start)
+    # running mean over k consecutive bins, NA-aware, per chromosome
+    runmean <- function(x, k) {
+      cs <- cumsum(ifelse(is.finite(x), x, 0)); cn <- cumsum(is.finite(x))
+      s <- c(cs[k], diff(cs, k)); n <- c(cn[k], diff(cn, k))
+      ifelse(n >= k / 2, s / n, NA_real_)
+    }
+    rbindlist(lapply(names(target_sets), function(nm) {
+      idx <- target_sets[[nm]]; k <- length(idx)
+      # A set wider than any chromosome has no contiguous window to compare
+      # against - that is the repeat families, which are scattered genome-wide
+      # and are not a locus anyone points at on a region plot anyway.
+      if (k < 3L || k > ds[, .N, by = chr][, max(N)]) return(NULL)
+      obs <- vapply(vmet, function(v) mean(d[[v]][idx], na.rm = TRUE), 0)
+      W <- ds[, { if (.N < k) list() else
+                  .(a = runmean(m1, k), b = runmean(m2, k)) }, by = chr]
+      if (!all(c("a", "b") %in% names(W))) return(NULL)
+      W <- W[is.finite(a) & is.finite(b)]
+      if (!nrow(W)) return(NULL)
+      # decompaction = short-range LOSS (lower a) and shift toward A (higher b)
+      # Every column is phrased as "what share of the genome is MORE extreme in
+      # the decompaction direction", so a small number always means exceptional
+      # and there is no sign convention to remember.
+      data.table(set = nm, n_bins = k, width_kb = k * gam_binsize / 1000,
+                 n_windows = nrow(W),
+                 obs_short = obs[[1]],
+                 pct_genome_losing_more = 100 * mean(W$a <= obs[[1]]),
+                 obs_axis  = obs[[2]],
+                 pct_genome_more_A_ward = 100 * mean(W$b >= obs[[2]]),
+                 pct_genome_beating_both =
+                   100 * mean(W$a <= obs[[1]] & W$b >= obs[[2]]))
+    }))
+  })
+  if (!is.null(ctx) && nrow(ctx)) {
+    fwrite(ctx, file.path(tables_dir, "gam5_target_genomewide_context.tsv"), sep = "\t")
+    cat("\n=== GENOME-WIDE CONTEXT (the matched test above does NOT say 'most') ===\n")
+    cat("Share of same-width contiguous windows ANYWHERE in the genome that are more\n",
+        "extreme than this set, in the decompaction direction. Small = exceptional.\n\n", sep = "")
+    print(ctx[, .(set, width_kb,
+                  losing_more_pct = round(pct_genome_losing_more, 1),
+                  more_A_ward_pct = round(pct_genome_more_A_ward, 1),
+                  beating_both_pct = round(pct_genome_beating_both, 2))],
+          row.names = FALSE)
+    cat("\nA set can clear the matched-background test and still be ordinary here:",
+        "the two\nask different questions. Quote both.\n")
+  }
+
   fwrite(hl, file.path(tables_dir, "gam5_decompaction_verdict.tsv"), sep = "\t")
   cat("\n=== HEADLINE: do the derepressed clusters decompact? (vs matched background) ===\n")
   print(hl, row.names = FALSE)
