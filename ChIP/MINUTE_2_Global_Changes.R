@@ -260,6 +260,35 @@ png(file.path(hm_dir, paste0(hm_base, ".png")), width = 10, height = 16, units =
 draw(ht_drawn); dev.off()
 message("Saved: heatmap/", hm_base, ".{png,pdf}")
 
+# --- LANDSCAPE VARIANT, for 16:9 slides --------------------------------------
+# Same figure, wider device, legends moved underneath. The portrait files above
+# are what the pipeline and the report reference by name, so this writes its own
+# <base>_landscape pair and leaves them alone.
+#
+# NOT A TRANSPOSE, deliberately. The matrix is ~11.3k peaks x 50 libraries;
+# transposed, 11k columns across 16 inches is several columns per pixel, and
+# `column_split` by mark would have to become `row_split`. It would also break
+# the cluster extraction immediately below, which reads row_order() off the
+# object drawn here - set.seed(42) above exists to keep that stable. Re-drawing
+# the ALREADY LAID OUT ht_drawn is the safe move: identical clustering, only the
+# device and the legend placement differ.
+#
+# Legend placement is NOT re-specified here. Re-drawing an already-laid-out
+# HeatmapList re-uses the layout it was drawn with, so passing
+# heatmap_legend_side = "bottom" to this second draw() has no effect - verified,
+# the legends stay right. That turns out to be the better outcome anyway: at 16
+# inches wide the right margin seats all eight legends (Z-score, ChIP, Genotype,
+# Replicate, Family, Region, Repeat, TAD_Boundary, PeakSize) without crowding,
+# which it could not do at 10 inches. If a bottom-legend version is ever wanted
+# it needs a fresh draw(ht, ...), and that would re-run the k-means - so it must
+# not reuse ht_drawn, and the cluster extraction below must keep using this one.
+hm_land <- paste0(hm_base, "_landscape")
+pdf(file.path(hm_dir, paste0(hm_land, ".pdf")), width = 16, height = 9)
+draw(ht_drawn); dev.off()
+png(file.path(hm_dir, paste0(hm_land, ".png")), width = 16, height = 9, units = "in", res = 200)
+draw(ht_drawn); dev.off()
+message("Saved: heatmap/", hm_land, ".{png,pdf}  (16:9 for slides)")
+
 
 # ---------------------------
 # 5. Extract k-means clusters and export significant-region BED files

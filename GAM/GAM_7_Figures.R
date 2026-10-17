@@ -228,7 +228,15 @@ local({
                               maxdist = gam12_maxdist, hot_cut = gam12_hot_cut,
                               smooth_map = TRUE, show_raw = TRUE,
                               fig_width = 11, side_allow = 2.6,
-                              diff_mode = c("deltaz", "raw")) {
+                              diff_mode = c("deltaz", "raw"),
+                              # SLIDE MODE. The full figure is ~1.09:1 - essentially
+                              # square - because three map rows, five mark tracks and
+                              # a ten-line caption stack up to ~10.1 in at 11 in wide.
+                              # A 16:9 slide at that width is 6.19 in, so this is a
+                              # re-layout, not a resize: one map row instead of three,
+                              # two marks instead of five, and the caption reduced to a
+                              # single line (on a slide it belongs in the speaker notes).
+                              slide = FALSE) {
     diff_mode <- match.arg(diff_mode)
 
     reg <- A[chr == chrom]
@@ -889,7 +897,9 @@ local({
                       plot.title = element_text(face = "bold", size = 13),
                       legend.spacing.y = grid::unit(12, "pt"),
                       legend.box.spacing = grid::unit(10, "pt")),
-        caption = paste0(
+        caption = if (slide) sprintf(
+          "GAM %s, HP1g cKO vs WT, 20 kb. Map: delta-z (cKO - WT), red = more contact in cKO. Tracks: mean coverage per genotype, blue = less in cKO. NPMI cells measured here: %.0f%%.",
+          chrom, 100 * npmi_cov) else paste0(
         if (npmi_cov < gam12_cov_warn)
           sprintf("DATA COVERAGE WARNING: only %.0f%% of NPMI cells in this region are measured. White areas of the contact maps are MISSING DATA, not absent contact.\n", 100 * npmi_cov)
         else sprintf("NPMI cells measured in this region: %.0f%%. ", 100 * npmi_cov),
@@ -918,8 +928,9 @@ local({
         "CTCF: ENCODE ENCSR877MSN conservative IDR peaks, BULK hippocampus (not sorted CA1), lifted mm10->mm39; one tick per peak.")) &
       theme(legend.justification = "top") -> out
     # Exact figure height: every row plus the title/caption/axis furniture.
+    chrome <- if (slide) 0.55 else gam12_h_chrome
     attr(out, "gam_map_in") <- list(n = n_tri, h = map_h_in,
-                                    total = n_tri * map_h_in + sum(track_h) + gam12_h_chrome)
+                                    total = n_tri * map_h_in + sum(track_h) + chrome)
     out
   }
 
@@ -994,6 +1005,13 @@ local({
   # Each region loads NPMI matrices, so rendering the whole list to check one
   # layout change is an hour of I/O. Comma-separated, matched against the region
   # name; unset means all of them.
+  # GAM7_SLIDE=1 renders a 16:9 subset for presentations, into *_slide files.
+  SLIDE <- identical(Sys.getenv("GAM7_SLIDE", "0"), "1")
+  if (SLIDE) {
+    slide_regions <- c("chr11_1-25Mb_lostblock", "chr16_full", "chr3_30-85Mb", "chr18_Pcdh")
+    regions <- Filter(function(r) r[[4]] %in% slide_regions, regions)
+    message("GAM7_SLIDE: rendering ", length(regions), " regions at 16:9")
+  }
   only <- Sys.getenv("GAM7_REGIONS", "")
   if (nzchar(only)) {
     want <- trimws(strsplit(only, ",")[[1]])
@@ -1001,10 +1019,30 @@ local({
     message("GAM7_REGIONS set: rendering ", length(regions), " of the region list")
   }
   for (r in regions) {
-    for (mode in c("full", "band")) {
+    # Slide mode renders the FULL extent only. The band variant exists to make a
+    # tall triangle compact, which slide mode achieves by dropping map rows
+    # instead; and chr18_Pcdh has no band at all (the md >= 0.9 * span guard
+    # skips it at 1.8 Mb), so insisting on bands would silently drop it.
+    for (mode in if (SLIDE) "full" else c("full", "band")) {
       nm <- if (mode == "band") paste0(r[[4]], "_band") else r[[4]]
       if (gam12_dz_significant_only) nm <- paste0(nm, "_sigonly")
+      if (SLIDE) nm <- paste0(nm, "_slide")
       md <- NULL
+      if (SLIDE) {
+        # Solve the band distance FROM the 16:9 constraint instead of picking one.
+        # A full triangle's map row is half the panel width tall (5.4 in here),
+        # which alone busts the budget. Total height is
+        #   1 map row + tracks + chrome, and we want it to equal width * 9/16.
+        # So: map_h = target - tracks - chrome, then invert band_maxdist()'s
+        # geometry, md = 2 * (map_h / panel_w) * span.
+        lim   <- region_span(r[[1]], r[[2]], r[[3]])
+        span  <- lim[2] - lim[1]
+        trk   <- 0.75 + gam12_h_hotcall + gam12_h_ctcf + gam12_h_lad +
+                 2 * gam12_h_mark + gam12_h_gene
+        pw    <- max(2, 13.33 - SIDE)
+        map_h <- max(1.2, 13.33 * 9 / 16 - trk - 0.55)
+        md    <- min(2 * (map_h / pw) * span, span)
+      }
       if (mode == "band") {
         lim <- region_span(r[[1]], r[[2]], r[[3]])
         md  <- band_maxdist(lim[1], lim[2], max(2, FIGW - SIDE))
@@ -1018,13 +1056,22 @@ local({
       }
       message("Plotting ", nm,
               if (is.null(md)) "" else sprintf(" (band %.1f Mb)", md / 1e6))
-      p <- tryCatch(gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
-                                    fig_width = FIGW, side_allow = SIDE),
-                    error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
+      p <- tryCatch(
+             if (SLIDE)
+               gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
+                               fig_width = 13.33, side_allow = SIDE,
+                               show_raw = FALSE,
+                               marks = c("H3K9me3", "H4K20me3"),
+                               slide = TRUE)
+             else
+               gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
+                               fig_width = FIGW, side_allow = SIDE),
+             error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
       if (!is.null(p)) {
         a <- attr(p, "gam_map_in")
         h <- if (is.null(a)) 14 else a$total
-        save_fig(p, nm, subdir = "regions", width = FIGW, height = h)
+        save_fig(p, nm, subdir = "regions",
+                 width = if (SLIDE) 13.33 else FIGW, height = h)
       }
     }
   }
