@@ -516,17 +516,23 @@ local({
       d[, a := pmax(0.10, pmin(1, bm / bm_ref))]
       d[!is.finite(a), a := 0.10]
       rng <- range(c(d$v, 0, gm), na.rm = TRUE)
+      # SYMMETRIC ABOUT ZERO. A panel whose axis ran from just above 0 down to
+      # -1 put zero hard against the top edge and read as though the track had
+      # been cropped - and it made two marks with different ranges impossible to
+      # compare by eye, because each had its own off-centre baseline. Forcing
+      # +/- the same limit puts zero at the vertical centre of every mark panel,
+      # so height above or below the middle means the same thing in all of them.
+      # The median line then sits wherever it falls, which is the information: a
+      # mark whose dotted line is well below centre lost signal genome-wide.
+      rng <- c(-1, 1) * max(abs(rng), na.rm = TRUE)
       # MINIMUM SPAN. Without this the y axis fits whatever the region happens to
       # contain, so a mark with almost no dynamic range here (H3K36me3 varies by
       # ~0.15 over the Pcdh cluster) gets its noise stretched to the full panel
       # height and reads as dramatic structure. Floor the span and tiny deviations
       # look tiny, which is what they are. Marks with real signal are unaffected
       # because their own range already exceeds the floor.
-      if (diff(rng) < gam12_mark_minspan) {
-        mid <- (rng[1] + rng[2]) / 2
-        rng <- c(mid - gam12_mark_minspan / 2, mid + gam12_mark_minspan / 2)
-        rng <- range(c(rng, 0, gm))   # never clip zero or the median out of view
-      }
+      if (diff(rng) < gam12_mark_minspan)
+        rng <- c(-1, 1) * max(gam12_mark_minspan / 2, abs(gm))  # stays symmetric
       # SMOOTH SILHOUETTE. The 100 kb aggregation is what controls the noise, but
       # drawn as rects it reads as steps. Resample the aggregated values onto a
       # fine grid so the outline is a continuous bigwig-style profile while the
@@ -579,10 +585,13 @@ local({
                                    ymin = rng[1], ymax = rng[2], alpha = 1 - a),
                   fill = "white", na.rm = TRUE) +
         scale_alpha_identity() +
-        # after the wash, so the reference lines stay crisp
-        geom_hline(yintercept = gm, linewidth = .35, colour = "grey30") +
-        { if (rng[1] < 0 && rng[2] > 0)
-            geom_hline(yintercept = 0, linewidth = .3, colour = "grey65", linetype = 3) } +
+        # after the wash, so the reference lines stay crisp. ZERO is the solid
+        # black line - it is the fixed, shared reference and the centre of the
+        # axis. The mark's genome-wide MEDIAN is the dotted line, and it is also
+        # where the fill changes colour, so the two conventions agree: dotted =
+        # the typical bin for this mark, solid = no change at all.
+        geom_hline(yintercept = 0, linewidth = .4, colour = "black") +
+        geom_hline(yintercept = gm, linewidth = .4, colour = "grey25", linetype = 3) +
         scale_fill_manual(values = c(below = "#c0392b", above = "#2166ac"),
                           breaks = c("below", "above"),
                           labels = c("below mark's genome median", "above it"),
@@ -733,7 +742,9 @@ local({
         "noise-dominated (sd 0.14-0.16 for the broad marks, up to 0.57 for H3K4me3). All statistics elsewhere use unsmoothed values.\n",
         "MARK FILL REFERENCE = that mark's GENOME-WIDE MEDIAN per-bin log2FC (solid grey line; its value is printed in the axis label). ",
         "Red is below that median, blue above it - so for a mark with a negative median, blue is still a loss, just a smaller one than ",
-        "typical. Zero is the dotted line where it falls in range. Median rather than mean because per-bin log2FC is a ratio of small ",
+        "typical. Each mark panel is scaled SYMMETRICALLY about zero, so zero is the solid black line at the vertical centre of ",
+        "every panel and the mark's median is the dotted line; how far the dotted line sits from the centre is that mark's ",
+        "genome-wide shift. Median rather than mean because per-bin log2FC is a ratio of small ",
         "counts with a heavy tail, which drags a mean but not a median. The fill shows direction only; read the y axis for magnitude.\n",
         "MARK OPACITY = that bin's baseMean divided by the 90th percentile of the same mark's baseMean genome-wide, capped at 1 and ",
         "floored at 0.10. Solid = as much signal as the mark's well-covered bins; faint = little signal in either genotype, so the ratio ",
@@ -816,6 +827,17 @@ local({
     list("chr2",  83.9e6, 91.5e6,  "chr2_Olfr")         # 224 Olfr genes, 84.91-90.48
   )
   FIGW <- 11; SIDE <- 2.6
+  # Spot-render one region without re-rendering all of them:
+  #   GAM7_REGIONS=chr18_Pcdh Rscript GAM_7_Figures.R
+  # Each region loads NPMI matrices, so rendering the whole list to check one
+  # layout change is an hour of I/O. Comma-separated, matched against the region
+  # name; unset means all of them.
+  only <- Sys.getenv("GAM7_REGIONS", "")
+  if (nzchar(only)) {
+    want <- trimws(strsplit(only, ",")[[1]])
+    regions <- Filter(function(r) r[[4]] %in% want, regions)
+    message("GAM7_REGIONS set: rendering ", length(regions), " of the region list")
+  }
   for (r in regions) {
     for (mode in c("full", "band")) {
       nm <- if (mode == "band") paste0(r[[4]], "_band") else r[[4]]
