@@ -129,7 +129,15 @@ GAM_2_NPMI_Compartments.R         NPMI -> PC1 compartments, insulation, decay
 
 GAM_1, GAM_2, GAM_5 and GAM_7 are sustained all-core jobs; GAM_3, GAM_4 and GAM_6
 need mainly the two `.rds`
-files and can be re-run independently. The two `.rds` schemas are summarised in
+files and can be re-run independently.
+
+**Annotation preparation** (run once, not pipeline stages):
+`prepare_LAD_annotation.R` fetches the constitutive cLAD/ciLAD sets and lifts
+them to mm39; `prepare_CTCF_annotation.R` does the same for ENCODE CTCF peaks
+(ENCSR877MSN bulk hippocampus, ENCSR644VYX bulk cortex — **bulk tissue, not
+sorted CA1**, see the script header). Both write into `ChIP/data/annotation/`,
+which is git-ignored, so the scripts are the committed artifact rather than the
+BEDs. The two `.rds` schemas are summarised in
 [`CLAUDE.md`](CLAUDE.md). PC1 is oriented per chromosome so that A (positive) is
 the H3K4me3-high side, which is why GAM_2 depends on GAM_1.
 

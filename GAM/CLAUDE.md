@@ -24,6 +24,8 @@ GAM_2_NPMI_Compartments.R     NPMI -> PC1/compartments/insulation/decay         
 utilities (not pipeline stages, run on their own):
   QC_Hotspot_Domains.R        hotspot domain parameter sweep, for the collaborating lab
   prepare_LAD_annotation.R    fetch + liftOver the constitutive LAD sets to mm39
+  prepare_CTCF_annotation.R   fetch + liftOver ENCODE CTCF peaks to mm39 (BULK
+                              hippocampus + cortex, NOT sorted CA1 - see its header)
   export_igv.R                refresh the minimal IGV session
   make_report.R               assemble results/GAM_REPORT.html from whatever has run
   run_overnight.sh            run the batch under the thermal guard, checking outputs
@@ -231,6 +233,21 @@ switching is what axis noise looks like.
 **Cache gotcha:** `gam2_params$version` must be bumped whenever the compartment
 METHOD changes, not only its parameters - a cached per-chromosome reduction
 carries the PC it was computed with. Currently version 2.
+
+## GAM_5 sections A and B use a domain definition section C disproves
+
+`GAM_5_Heterochromatin.R` section C builds heterochromatin domains properly
+(gap-merged, size-swept) and shows that the definition sections A and B use -
+single unmerged fragments above a width cut, from a 126,197-fragment peak set of
+mean width 3.5 kb - is wrong. A and B were left on the old definition
+deliberately, so the change is made and reported on its own rather than silently
+restating earlier numbers; the file header says so.
+
+**Consequence for reading the outputs:** `gam10_*` tables come from the old
+definition, `gam13_*` from the merged one, and the report presents results
+against all three definitions wherever they exist. Do not quote a `gam10_*`
+domain-level number as if it were the current definition. This is the largest
+outstanding inconsistency in the GAM tree.
 
 ## The `.rds` handoffs (schemas)
 
