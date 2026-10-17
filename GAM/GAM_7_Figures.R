@@ -95,6 +95,9 @@ local({
   # for H4K20me3, 0.54 H3K9me3, 0.30 H3K9me2, 0.12 H3K36me3, 0.04 H3K4me3), and
   # it does not need re-answering in every region. Set TRUE to bring them back.
   gam12_mark_bands <- FALSE
+
+  # Marks that must be drawn on ONE shared y-axis. Each element is a group.
+  gam12_mark_scale_groups <- list(c("H3K9me2", "H3K9me3"))
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
   gam12_h_chrome <- 2.30
@@ -117,7 +120,16 @@ local({
   # H3K9me2 to exactly zero and pulls H4K20me3 from -0.497 to -0.212, because a
   # shrinkage prior assumes most effects are null - the same assumption as
   # median-of-ratios normalisation, which sizeFactors = 1 exists here to avoid.
-  gam12_mark_binsize <- 100000
+  # ...all of which applied to the log2FC tracks. THE MARK TRACKS NOW DRAW
+  # COVERAGE, which is not a ratio of small counts and is not noise-dominated, so
+  # the 100 kb aggregation that fixed the ratio is pure over-smoothing here: on a
+  # 1.8 Mb region it left 18 points to draw a curve through, and the result read
+  # as a signature rather than a track.
+  #
+  # The display bin is therefore chosen from the region width to hit roughly
+  # gam12_mark_target_bins points, floored at the native 20 kb - fine regions get
+  # native resolution, whole chromosomes still get aggregated enough to draw.
+  gam12_mark_target_bins <- 400L
   gam12_mark_npoints <- 1200   # columns the mark track is resampled onto
   gam12_cov_warn     <- 0.75   # below this fraction of finite NPMI cells, warn on the figure
 
@@ -342,9 +354,8 @@ local({
       scale_y_continuous(expand = c(0, 0), name = "Genomic\ndistance\n(Mb)") +
       scale_x_continuous(expand = c(0, 0)) +
       coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
-      labs(subtitle = if (identical(diff_mode, "deltaz"))
-             "delta-z, cKO - WT  (red = more contact in cKO; note their slides use the opposite sign)"
-           else "cKO - WT NPMI  (red = more contact in cKO)") +
+      labs(subtitle = if (identical(diff_mode, "deltaz")) "delta-z, cKO - WT"
+           else "cKO - WT NPMI") +
       theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
                       axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
                                                   size = 7, lineheight = 0.95),
@@ -557,7 +568,7 @@ local({
       # Aggregate to the display bin. Plain means: coverage is additive, and
       # unlike the log2FC version there is no near-empty-denominator problem to
       # weight away.
-      fac <- max(1L, round(gam12_mark_binsize / gam_binsize))
+      fac <- max(1L, round(((to - from) / gam12_mark_target_bins) / gam_binsize))
       d[, grp := ((seq_len(.N) - 1L) %/% fac) + 1L]
       d <- d[, .(x0 = min(start) / 1e6, x1 = max(end) / 1e6,
                  wt = mean(wt, na.rm = TRUE), ko = mean(ko, na.rm = TRUE),
@@ -571,8 +582,12 @@ local({
         itp <- function(y) { ok <- is.finite(y)
           if (sum(ok) < 2) return(rep(NA_real_, length(fx)))
           stats::approx(mid[ok], y[ok], xout = fx, rule = 1)$y }
-        ppb  <- length(fx) / max(1, nrow(d))
-        smw2 <- max(3L, as.integer(round(ppb / 2)))
+        # A light touch only. The old window was half a display bin, which at 18
+        # display bins per region meant averaging over ~33 of 1200 columns; with
+        # the display bin now set from the region width there are enough points
+        # that interpolation leaves no corners to round, and anything more than a
+        # 3-column mean removes real structure rather than drawing artefacts.
+        smw2 <- 3L
         roll <- function(y) { g <- is.finite(y)
           num <- as.numeric(stats::filter(ifelse(g, y, 0), rep(1, smw2), sides = 2))
           den <- as.numeric(stats::filter(g * 1, rep(1, smw2), sides = 2))
@@ -582,8 +597,25 @@ local({
                    wt_lo = roll(itp(d$wt_lo)), wt_hi = roll(itp(d$wt_hi)),
                    ko_lo = roll(itp(d$ko_lo)), ko_hi = roll(itp(d$ko_hi)))
       })
-      ymax <- max(if (gam12_mark_bands) c(fine$wt_hi, fine$ko_hi, fine$wt, fine$ko)
-                  else c(fine$wt, fine$ko), na.rm = TRUE)
+      # SHARED Y-SCALE WITHIN A GROUP. H3K9me2 and H3K9me3 are the same kind of
+      # mark at different depths, and the whole point of looking at them together
+      # is which one moves more - which a per-mark axis destroys by zooming each
+      # to fill its own panel. They now share one scale, so the comparison
+      # between them is a comparison of the drawing. Marks outside a group keep
+      # their own axis, because H3K4me3 is punctate and ten times higher than
+      # H3K9me2 and one scale across all five would flatten the broad marks.
+      grp_marks <- if (mk %in% gam12_mark_scale_groups[[1]]) gam12_mark_scale_groups[[1]] else mk
+      # The max has to come from the AGGREGATED values, not the raw 20 kb bins:
+      # what is drawn is a 100 kb mean, and a raw per-bin maximum is several
+      # times higher, which would set an axis the curve never reaches and squash
+      # it into the floor (H3K4me3 went to 40 against a drawn maximum of ~8).
+      ymax <- max(unlist(lapply(grp_marks, function(m) {
+        cc <- paste0("sig_", m, "_", c("WT", "HP1gKO"))
+        if (!all(cc %in% names(reg))) return(NA_real_)
+        g <- ((seq_len(nrow(reg)) - 1L) %/% fac) + 1L
+        c(tapply(reg[[cc[1]]], g, mean, na.rm = TRUE),
+          tapply(reg[[cc[2]]], g, mean, na.rm = TRUE))
+      })), na.rm = TRUE)
       if (!is.finite(ymax) || ymax <= 0) ymax <- 1
       rng <- c(0, ymax * 1.04)
 
@@ -595,6 +627,13 @@ local({
         { if (gam12_mark_bands)
             geom_ribbon(aes(x = x, ymin = ko_lo, ymax = ko_hi), fill = geno_colors[["HP1gKO"]],
                         alpha = .20, na.rm = TRUE) } +
+        # Grey body from zero to the LOWER of the two means: the signal that is
+        # present in both genotypes, drawn the way a browser draws a coverage
+        # track. The coloured gap then sits on top of it, so the figure reads as
+        # "this much signal, and this much of a difference" rather than as two
+        # free-floating lines.
+        geom_ribbon(aes(x = x, ymin = 0, ymax = pmin(wt, ko)),
+                    fill = "grey72", colour = NA, na.rm = TRUE) +
         # the gap between the means, coloured by direction. Two ribbons each
         # clipped at the other mean, for the same reason the old panels used two:
         # one ribbon with a mapped fill joins its own points straight across
@@ -761,7 +800,8 @@ local({
         "MARK TRACKS, how they are built: per-bin log2FC(cKO/WT) at 20 kb is aggregated to 100 kb display bins, each 20 kb bin ",
         "weighted by its baseMean, then resampled to a smooth outline. Aggregation is necessary because per-bin log2FC at 20 kb is ",
         "noise-dominated (sd 0.14-0.16 for the broad marks, up to 0.57 for H3K4me3). All statistics elsewhere use unsmoothed values.\n",
-        "MARK TRACKS ARE COVERAGE, NOT A RATIO. Each panel overlays the two genotypes: the solid lines are the mean per-bin coverage ",
+        "MARK TRACKS ARE COVERAGE, NOT A RATIO, drawn at a display bin chosen from the region width (~400 bins across it, floored at the ",
+        "native 20 kb). Each panel overlays the two genotypes: the solid lines are the mean per-bin coverage ",
         "across that genotype's libraries (6 WT, 4 cKO - cKO rep2 excluded at QC). The shaded gap between them is the effect, coloured ",
         "red where the cKO is higher and blue where it is lower - the same convention as the contact maps above. Read it as: height is ",
         "how much signal is there, and the gap is the size of the change. Whether a gap beats the spread between replicates is answered ",
