@@ -86,6 +86,15 @@ local({
   gam12_h_mark   <- 0.70
   gam12_h_gene   <- 0.80
   gam12_h_ctcf   <- 0.26   # CTCF strip, same height as the LAD ribbon
+
+  # REPLICATE BANDS ON THE MARK TRACKS. Off by default: with five marks stacked,
+  # two bands plus two mean lines per panel is twenty elements and the figure
+  # reads as a thicket. The bands answer a real question - is the gap between the
+  # genotypes wider than the spread between libraries - but that question is
+  # answered once, genome-wide, in the report's ChIP section (gap/spread is 0.84
+  # for H4K20me3, 0.54 H3K9me3, 0.30 H3K9me2, 0.12 H3K36me3, 0.04 H3K4me3), and
+  # it does not need re-answering in every region. Set TRUE to bring them back.
+  gam12_mark_bands <- FALSE
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
   gam12_h_chrome <- 2.30
@@ -573,16 +582,19 @@ local({
                    wt_lo = roll(itp(d$wt_lo)), wt_hi = roll(itp(d$wt_hi)),
                    ko_lo = roll(itp(d$ko_lo)), ko_hi = roll(itp(d$ko_hi)))
       })
-      ymax <- max(c(fine$wt_hi, fine$ko_hi, fine$wt, fine$ko), na.rm = TRUE)
+      ymax <- max(if (gam12_mark_bands) c(fine$wt_hi, fine$ko_hi, fine$wt, fine$ko)
+                  else c(fine$wt, fine$ko), na.rm = TRUE)
       if (!is.finite(ymax) || ymax <= 0) ymax <- 1
       rng <- c(0, ymax * 1.04)
 
       ggplot(fine) +
         # replicate-range bands first, so the means read on top of them
-        geom_ribbon(aes(x = x, ymin = wt_lo, ymax = wt_hi), fill = geno_colors[["WT"]],
-                    alpha = .20, na.rm = TRUE) +
-        geom_ribbon(aes(x = x, ymin = ko_lo, ymax = ko_hi), fill = geno_colors[["HP1gKO"]],
-                    alpha = .20, na.rm = TRUE) +
+        { if (gam12_mark_bands)
+            geom_ribbon(aes(x = x, ymin = wt_lo, ymax = wt_hi), fill = geno_colors[["WT"]],
+                        alpha = .20, na.rm = TRUE) } +
+        { if (gam12_mark_bands)
+            geom_ribbon(aes(x = x, ymin = ko_lo, ymax = ko_hi), fill = geno_colors[["HP1gKO"]],
+                        alpha = .20, na.rm = TRUE) } +
         # the gap between the means, coloured by direction. Two ribbons each
         # clipped at the other mean, for the same reason the old panels used two:
         # one ribbon with a mapped fill joins its own points straight across
@@ -750,10 +762,11 @@ local({
         "weighted by its baseMean, then resampled to a smooth outline. Aggregation is necessary because per-bin log2FC at 20 kb is ",
         "noise-dominated (sd 0.14-0.16 for the broad marks, up to 0.57 for H3K4me3). All statistics elsewhere use unsmoothed values.\n",
         "MARK TRACKS ARE COVERAGE, NOT A RATIO. Each panel overlays the two genotypes: the solid lines are the mean per-bin coverage ",
-        "across that genotype's libraries (6 WT, 4 cKO - cKO rep2 excluded at QC), and the pale band behind each is the min-max range ",
-        "across those libraries. The shaded gap between the two means is the effect, coloured red where the cKO is higher and blue where ",
-        "it is lower - the same convention as the contact maps above. Read it as: height is how much signal is there, the gap is the size ",
-        "of the change, and the gap matters only if it is wider than the replicate bands.\n",
+        "across that genotype's libraries (6 WT, 4 cKO - cKO rep2 excluded at QC). The shaded gap between them is the effect, coloured ",
+        "red where the cKO is higher and blue where it is lower - the same convention as the contact maps above. Read it as: height is ",
+        "how much signal is there, and the gap is the size of the change. Whether a gap beats the spread between replicates is answered ",
+        "genome-wide in the ChIP section rather than per region (gap/spread: H4K20me3 0.84, H3K9me3 0.54, H3K9me2 0.30, H3K36me3 0.12, ",
+        "H3K4me3 0.04).\n",
         "This replaced a log2 fold-change panel, which drew a ratio on a per-mark symmetric axis so every mark filled its panel equally ",
         "whatever the size of its effect - H3K9me2 (genome-wide median -0.18) read as dramatically as H4K20me3 (-0.50). The genome-wide ",
         "medians are in the ChIP section of the report; this figure is for seeing where signal actually is.\n",
