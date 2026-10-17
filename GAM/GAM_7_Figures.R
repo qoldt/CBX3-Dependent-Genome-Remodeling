@@ -83,7 +83,10 @@ local({
   # collided with each other.
   gam12_h_lad    <- 0.26
   gam12_h_hotcall<- 0.26
-  gam12_h_mark   <- 0.70
+  # 25% shorter than before. Five coverage tracks stacked under three contact
+  # maps made the figure tall enough that the maps shrank to fit the page, and
+  # the coverage shapes are legible at this height.
+  gam12_h_mark   <- 0.525
   gam12_h_gene   <- 0.80
   gam12_h_ctcf   <- 0.26   # CTCF strip, same height as the LAD ribbon
 
@@ -98,6 +101,16 @@ local({
 
   # Marks that must be drawn on ONE shared y-axis. Each element is a group.
   gam12_mark_scale_groups <- list(c("H3K9me2", "H3K9me3"))
+
+  # MASK THE DELTA-Z MAP TO SIGNIFICANT CONTACTS? Off, because at display
+  # resolution it does not do what it looks like it should. The delivered
+  # criterion (|delta-z| > 2 AND max NPMI > 0.1, from the Diff_contacts
+  # filenames) passes 12.7% of measured cell pairs on chr16 and 14.1% on chr18 -
+  # 1.4 million contacts per chromosome. At ~350 display columns a block is
+  # ~14x14 native cells, so almost every block contains significant cells and
+  # the masked map fills in exactly like the unmasked one. It is only sparse at
+  # native resolution, i.e. on regions of a few Mb. Set TRUE to use it there.
+  gam12_dz_significant_only <- FALSE
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
   gam12_h_chrome <- 2.30
@@ -293,7 +306,7 @@ local({
     #   coloured  measured and significant
     #   grey      measured, not significant
     #   white     not measured in one or both genotypes
-    D <- if (identical(diff_mode, "deltaz")) {
+    D <- if (identical(diff_mode, "deltaz") && gam12_dz_significant_only) {
       dz <- matrix(NA_real_, length(ids), length(ids), dimnames = list(ids, ids))
       for (sel in c("selWT", "selcKO")) {
         dc <- tryCatch(load_diff_contacts(chrom, sel,
@@ -310,9 +323,12 @@ local({
         dz[cbind(j[ok], i[ok])] <- -dc$deltaz[ok]
       }
       dz
+    } else if (identical(diff_mode, "deltaz")) {
+      mats$KO$z[ids, ids] - mats$WT$z[ids, ids]
     } else K0 - W0
     # measured = finite raw NPMI in both genotypes; used to separate grey from white
-    MEAS <- if (identical(diff_mode, "deltaz")) is.finite(W0) & is.finite(K0) else NULL
+    MEAS <- if (identical(diff_mode, "deltaz") && gam12_dz_significant_only)
+              is.finite(W0) & is.finite(K0) else NULL
     pos <- as.numeric(sub("-.*", "", sub(".*:", "", ids)))
     rm(mats); gc(FALSE)
 
@@ -348,7 +364,7 @@ local({
       # the direction of change and should read at full strength, and the
       # FRACTION significant is carried as alpha. Sparse blocks fade; blocks with
       # a consistent, dense change are solid.
-      if (identical(diff_mode, "deltaz") && !is.null(MEAS)) {
+      if (gam12_dz_significant_only && !is.null(MEAS)) {
         sg <- rowsum(is.finite(D) * 1, grp); sg <- t(rowsum(t(sg), grp))
         ms <- rowsum(MEAS * 1, grp);         ms <- t(rowsum(t(ms), grp))
         FRAC <- sg / pmax(ms, 1); FRAC[ms == 0] <- NA
@@ -374,7 +390,7 @@ local({
     # box filter suppresses it while preserving domain-scale features. Display
     # only - every statistic elsewhere uses the unsmoothed values. (The Pombo
     # 2026 preprint applies a Gaussian filter for the same reason.)
-    if (smooth_map && nrow(D) > 9 && !identical(diff_mode, "deltaz")) {
+    if (smooth_map && nrow(D) > 9 && !gam12_dz_significant_only) {
       Z <- D; nn <- is.finite(Z); Z[!nn] <- 0
       k <- 1L; mm <- nrow(Z)
       cs <- function(M) { M <- apply(M, 2, cumsum); rbind(0, M) }
@@ -394,7 +410,7 @@ local({
     ij[, d := pos[j] - pos[i]]
     ij <- ij[d <= maxdist]
     ij[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = D[cbind(i, j)])]
-    if (identical(diff_mode, "deltaz")) {
+    if (gam12_dz_significant_only && !is.null(MEAS)) {
       ij[, meas := MEAS[cbind(i, j)]]
       ij <- ij[meas %in% TRUE]            # drop unmeasured: those stay white
       # alpha only where blocks were aggregated; at native resolution every
@@ -414,7 +430,7 @@ local({
       geom_tile(width = tw, height = tw) +
       scale_alpha_identity() +
       scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim),
-                           na.value = if (identical(diff_mode, "deltaz")) "grey88" else "transparent",
+                           na.value = if (gam12_dz_significant_only) "grey88" else "transparent",
                            name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
                            guide = guide_colourbar(barheight = grid::unit(2.8, "cm"))) +
       { if (gam12_hotline / 2 < maxdist / 2)
@@ -427,7 +443,8 @@ local({
       scale_x_continuous(expand = c(0, 0)) +
       coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
       labs(subtitle = if (identical(diff_mode, "deltaz"))
-             sprintf("delta-z, cKO - WT, significant contacts only%s",
+             if (!gam12_dz_significant_only) "delta-z, cKO - WT"
+             else sprintf("delta-z, cKO - WT, significant contacts only%s",
                      if (fac > 1L) "  (colour = mean delta-z of the significant cells; faded = few of them)"
                      else "  (grey = measured, not significant)")
            else "cKO - WT NPMI") +
@@ -723,16 +740,21 @@ local({
                           breaks = c("up", "down"),
                           labels = c("more in cKO", "less in cKO"), name = NULL) +
         scale_x_continuous(expand = c(0, 0)) +
-        scale_y_continuous(n.breaks = 3, expand = c(0, 0)) +
+        # two breaks, not three: a 0.525 in panel cannot seat three numbers
+        # without them touching.
+        scale_y_continuous(n.breaks = 2, expand = c(0, 0)) +
         coord_cartesian(xlim = c(from, to) / 1e6, ylim = rng, expand = FALSE) +
         labs(y = sprintf("%s\ncoverage", mk),
              x = if (last) sprintf("%s (Mb)", chrom) else NULL) +
         theme_m + theme(legend.position = if (show_key) "right" else "none",
                         legend.key.size = unit(9, "pt"), legend.text = element_text(size = 7),
-                        plot.margin = margin(1, 4, if (last) 2 else 1, 4),
+                        # 2pt top and bottom instead of 1: at the reduced panel
+                        # height the y-axis numbers of adjacent tracks were
+                        # running into each other.
+                        plot.margin = margin(2, 4, if (last) 3 else 2, 4),
                         axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
                                                     size = 7.5, lineheight = 0.95),
-                        axis.text.y = element_text(size = 6.5),
+                        axis.text.y = element_text(size = 6),
                         axis.title.x = if (last) element_text() else element_blank(),
                         axis.text.x  = if (last) element_text() else element_blank())
     }
