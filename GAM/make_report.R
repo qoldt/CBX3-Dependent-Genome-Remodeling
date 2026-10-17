@@ -526,6 +526,58 @@ parts$regions <- sec("Region plots",
                 paste0(esc(r), " &mdash; significant contacts only (grey = measured but not significant, white = not measured)"))
     )), collapse = ""))
 
+parts$settled <- sec("What this session settled, and what it retracted",
+  p_("Recorded here so nothing in the sections below is read as more or less certain than it is."),
+
+  "<h3>Settled, with a positive result</h3>",
+  "<ul>",
+  "<li><strong>Heterochromatin self-associates at short range on 17 of 19 autosomes</strong>, and it is not mixing",
+  "&mdash; het&ndash;euchromatin is flat then falls. The two exceptions below 1 Mb are chr1 and chr3, at &minus;0.6 to",
+  "&minus;2.2 percentage points, which is noise around zero rather than a reversal.</li>",
+  "<li><strong>Hotspot domains that lose contacts are LAD-associated (fold 1.35), LINE-rich (1.25) and quiescent</strong>,",
+  "depleted of promoters, CTCF and SINEs &mdash; against a circular-shift null that preserves domain spacing. Domains that",
+  "<em>gain</em> contacts are indistinguishable from rotated background on every annotation tested.</li>",
+  "<li><strong>Our own GAM insulation boundaries are externally validated by CTCF</strong> (1.72&times; at &plusmn;5 kb,",
+  "decaying to 1.39&times; at &plusmn;100 kb).</li>",
+  "</ul>",
+
+  "<h3>Settled, with a powered negative</h3>",
+  "<ul>",
+  "<li><strong>Compartment strength does not change.</strong> Measured on two axes external to both contact matrices,",
+  "all 19 autosomes, bootstrapped over chromosomes: active-chromatin axis mean delta &minus;0.00018 (95% CI &minus;0.00213",
+  "to +0.00186, p = 0.62); TSS-density axis +0.00019 (p = 0.74).</li>",
+  "<li><strong>The Pcdh TAD is indistinguishable from other chr18 TADs</strong>, intra and distal, under all three",
+  "partitions (p = 0.75&ndash;0.88).</li>",
+  "<li><strong>Individual domains do not compact</strong> &mdash; every within- versus between-domain",
+  "difference-in-differences interval spans zero, under all three domain definitions.</li>",
+  "</ul>",
+
+  "<div class='warn'><strong>Retracted.</strong>",
+  "<ul>",
+  "<li><strong>&ldquo;Compartments are less defined in the cKO.&rdquo;</strong> The statistic was circular: strength",
+  "measured along an axis derived from the contact matrices fits whichever genotype built the axis. On the same data at",
+  "the same resolution the median cKO/WT ratio is 0.54 from a WT-derived axis, 0.79 from the averaged one and 1.21 from a",
+  "cKO-derived one. The direction of the answer was set by the choice of axis.</li>",
+  "<li><strong>Resolution as the cause of the weak compartment axis.</strong> Tested from 100 kb through 1 Mb; |rho| is",
+  "flat across the whole range. The real defect is that WT and cKO do not select the same eigenvector &mdash; their",
+  "leading subspaces overlap only 0.27&ndash;0.57.</li>",
+  "<li><strong>chr11 as the chromosome that reverses the rule.</strong> chr1 inverts harder at both long bands, and",
+  "chr8, chr10 and chr15 also invert. chr11 is one of five.</li>",
+  "</ul></div>",
+
+  "<div class='warn'><strong>Found, and unresolved.</strong> <code>TAD_boundaries_mm39.bed</code>, used as the external",
+  "TAD partition, shows <strong>no CTCF enrichment at any window size</strong> (1.09&times;, flat from &plusmn;5 kb to",
+  "&plusmn;100 kb) while the same CTCF track is 5.27&times; at transcription start sites and 1.72&times; at our own",
+  "insulation minima. The file is a genuine liftover, not corrupt, but its provenance &mdash; cell type, caller,",
+  "resolution &mdash; is unrecorded. METHODS open question 9.</div>",
+
+  "<h3>The landscape heatmap</h3>",
+  p_("The MINUTE significant-peak heatmap, re-drawn at 16:9 for presentation. Same k-means clustering as the portrait",
+     "original: it re-draws the already-laid-out object rather than building a new one, because the cluster assignment is",
+     "read back off that object to produce the cluster tables and BED exports."),
+  embed_chip_fig("heatmap/2000maxgap_indsignificance_with_TAD_landscape.png",
+                 "11,293 significant peaks &times; 50 libraries, row z-score, five k-means blocks."))
+
 parts$chip <- sec("The ChIP side, in brief",
   p_("The GAM work is read against one headline: HP1&gamma; loss removes H4K20me3 almost everywhere.",
      "This section states that quantitatively, because every architecture claim downstream is conditioned on it.",
@@ -925,7 +977,7 @@ theme_css <- function(for_artifact) {
 }
 
 body_html <- paste0("<main>",
-  parts$head, parts$bottom, parts$chip, parts$hotspots, parts$hotspot_annot, parts$het, parts$hetclass, parts$blocks,
+  parts$head, parts$bottom, parts$settled, parts$chip, parts$hotspots, parts$hotspot_annot, parts$het, parts$hetclass, parts$blocks,
   parts$targets, parts$pcdh, parts$chrom, parts$regions, parts$compartments,
   parts$coupling, parts$methods, parts$caveats, parts$glossary,
   "</main>")
