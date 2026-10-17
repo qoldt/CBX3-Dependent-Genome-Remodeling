@@ -131,7 +131,7 @@ GAM_2_NPMI_Compartments.R         NPMI -> PC1 compartments, insulation, decay
 | **GAM_4** `Large_Scale` | GAM_1 + GAM_2 rds | the 10-25 Mb one-directional blocks (41.6% of the genome) and the block x block contact budget. Writes `gam6_*`, `gam8_*` |
 | **GAM_5** `Heterochromatin` | GAM_1 + GAM_2 rds, NPMI | heterochromatin domains built three ways, intra vs inter contacts, mark-change strata, domain size, and the constitutive-LAD cross. Writes `gam10_*`, `gam11_*`, `gam13_*` |
 | **GAM_6** `Targets` | GAM_1 + GAM_2 rds, GAM_4 tables | HUSH/CBX3 target families and repeats against matched background, protocadherin at native resolution, and the Pcdh TAD against every other chr18 TAD under two TAD partitions. Writes `gam5_*`, `gam9_*`, `gam14_*` |
-| **GAM_7** `Figures` | GAM_1 + GAM_2 rds, NPMI | region plots (contact map, differential contacts, hotspot calls, LADs, five marks, genes) and per-chromosome characterisation. Writes `regions/`, `chromosomes/`, `gam15_*` |
+| **GAM_7** `Figures` | GAM_1 + GAM_2 rds, NPMI, `meltron_is.rds` (slide mode) | region plots (contact map, differential contacts, hotspot calls, CTCF, LADs, five marks, genes) and per-chromosome characterisation. `GAM7_SLIDE=1` adds a 16:9 variant that drops the raw maps and adds the WT / cKO / difference insulation-score strips. Writes `regions/`, `chromosomes/`, `gam15_*` |
 
 GAM_1, GAM_2, GAM_2b, GAM_2c, GAM_5 and GAM_7 are sustained all-core jobs (they
 re-read the NPMI matrices); GAM_3, GAM_4 and GAM_6 need mainly the `.rds` files

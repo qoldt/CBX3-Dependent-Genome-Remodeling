@@ -90,6 +90,48 @@ local({
   gam12_h_gene   <- 0.80
   gam12_h_ctcf   <- 0.26   # CTCF strip, same height as the LAD ribbon
 
+  # INSULATION-SCORE MAP STRIPS - the Pombo lab's own display of melting.
+  # One strip per genotype plus their difference, drawn directly under the
+  # difference contact map: x is position, y is the insulation SQUARE SIZE, fill
+  # is the insulation score (GAM_2c). It is the only view that shows at WHICH
+  # SPATIAL SCALE a region changes - a single collapsed melting score cannot
+  # distinguish a change confined to 240 kb squares from one present at every
+  # size, and those are different events.
+  #
+  # The strips and the map above them are the same quantity at two different
+  # readings: the map is one cell pair at a time, each strip row is the mean over
+  # a whole square crossing that position. So they SHOULD agree, and a strip that
+  # contradicts the map above it is a bug, not a finding.
+  # PANEL height only. Each plot's plot.margin occupies its OWN gtable rows, so
+  # the 5 pt the strips need above and below their square-size tick labels is
+  # counted in the chrome below, not here.
+  #
+  # 0.33 rather than the 0.42 these were first drawn at, because on a 16:9 slide
+  # the three strips and the contact map share one fixed height and the trade is
+  # 3:1 against the map - every 0.1 in of strip costs 0.3 in of map. At 0.42 the
+  # map fell below its 1.2 in floor and the figure stopped being 16:9 at all.
+  # 0.33 leaves 11 rows at ~9 px each at 300 dpi, which is dense but still reads
+  # as a heatmap, and keeps the map at 1.23 in.
+  gam12_h_ismap  <- 0.33
+  gam12_ismap_cols <- 350L # display columns, matched to the contact map's ~350
+  # FIXED symmetric limits, not per-region quantiles, for the same reason
+  # gam12_dz_lim is fixed: a data-driven limit rescales every panel to its own
+  # extremes and makes regions incomparable.
+  #
+  # The two limits are deliberately NOT the same percentile. A per-genotype
+  # strip carries a large REGIONAL offset - the score is centred on the
+  # chromosome mean, so a region sitting well below its chromosome runs hard
+  # negative at every square size. At the genome-wide 99th percentile of |IS|
+  # (0.145), 19.6% of the chr18 Pcdh region saturates and both strips go solid
+  # blue over their flanks, which is exactly the information the display exists
+  # to show. 0.20 is just above the genome-wide 99.9th (0.180) and saturates
+  # 0.6% there, 0.0% on the other three slide regions.
+  # The DIFFERENCE has no such offset (it is one genotype minus the other at the
+  # same position), so it keeps the 99th percentile of |IS(cKO) - IS(WT)|
+  # (0.104, rounded to 0.10) and uses the full colour range.
+  gam12_is_lim   <- 0.20
+  gam12_is_dlim  <- 0.10
+
   # REPLICATE BANDS ON THE MARK TRACKS. Off by default: with five marks stacked,
   # two bands plus two mean lines per panel is twenty elements and the figure
   # reads as a thicket. The bands answer a real question - is the gap between the
@@ -135,6 +177,27 @@ local({
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
   gam12_h_chrome <- 2.30
+  # SLIDE CHROME, MEASURED NOT GUESSED. Every panel row in this figure is an
+  # absolute height, so a figure saved shorter than its content does not shrink
+  # to fit - it overflows the canvas and the outer rows are silently cut off.
+  # At the old 0.55 the title and the caption were being lost on every slide
+  # figure and nothing reported it.
+  #
+  # The real number comes from laying the figure out and adding up the rows that
+  # are NOT panels:
+  #   gt <- patchwork:::plot_table(p, "auto")
+  #   sum(grid::convertHeight(gt$heights, "in", valueOnly = TRUE)) - sum(panels)
+  # which for the slide panel set (one map, three insulation strips, the count
+  # panel, three ribbons, two marks, genes) is 1.90 in.
+  #
+  # MEASURE IT ON patchworkGrob, NOT plot_table. plot_table returns the INNER
+  # table - the panels and their own per-panel titles, axes and margins - and
+  # leaves out the patchwork annotation that wraps it: the figure title (0.24),
+  # the figure caption (0.17) and the outer margins (0.15). Measuring the inner
+  # table gave 1.35, the figure was saved 0.55 in too short, and the title and
+  # caption were pushed off the canvas with nothing reporting it. That is the
+  # bug the slide figures shipped with before this.
+  gam12_h_chrome_slide <- 1.90
 
   # MINIMUM Y SPAN of a mark panel, in log2FC. Without a floor the axis fits
   # whatever the region happens to contain, so a mark with almost no dynamic range
@@ -166,6 +229,27 @@ local({
   gam12_mark_target_bins <- 400L
   gam12_mark_npoints <- 1200   # columns the mark track is resampled onto
   gam12_cov_warn     <- 0.75   # below this fraction of finite NPMI cells, warn on the figure
+
+  # Insulation-score maps from GAM_2c, loaded ONCE and cached per chromosome.
+  # The file is 19 MB and covers all 19 autosomes at 20 kb viewpoints x 11 square
+  # sizes; reading it per region would dominate the render. Returns NULL when
+  # GAM_2c has not been run, so the region figures still render without it.
+  gam12_is_env <- new.env(parent = emptyenv())
+  load_meltron_is <- function(chrom) {
+    if (!is.null(gam12_is_env$miss)) return(NULL)
+    if (is.null(gam12_is_env$all)) {
+      f <- file.path(rds_dir, "meltron_is.rds")
+      if (!file.exists(f)) {
+        message("  insulation maps: ", f, " not found - run GAM_2c; strips omitted")
+        gam12_is_env$miss <- TRUE
+        return(NULL)
+      }
+      o <- readRDS(f)
+      gam12_is_env$all   <- o$is
+      gam12_is_env$sizes <- sort(unique(o$is$is_size))
+    }
+    gam12_is_env$all[chr == chrom]
+  }
 
   # Gene models for the annotation track, loaded once.
   GENES <- local({
@@ -255,7 +339,13 @@ local({
                               # re-layout, not a resize: one map row instead of three,
                               # two marks instead of five, and the caption reduced to a
                               # single line (on a slide it belongs in the speaker notes).
-                              slide = FALSE) {
+                              slide = FALSE,
+                              # INSULATION-SCORE MAP STRIPS under the difference
+                              # map (WT, cKO, cKO - WT). On by default in slide
+                              # mode, where the point of the figure is the change
+                              # itself; off in the report figures, which already
+                              # carry three contact maps and ten tracks.
+                              ismap = slide) {
     diff_mode <- match.arg(diff_mode)
 
     reg <- A[chr == chrom]
@@ -899,6 +989,80 @@ local({
     tri <- if (show_raw) list(raw_tri(W0, pos, "WT", npmi_cap),
                               raw_tri(K0, pos, "HP1gKO", npmi_cap), p_map)
            else list(p_map)
+
+    # --- insulation-score map strips --------------------------------------------
+    # Block-averaged to the SAME display column count as the contact map above, so
+    # a feature sits at the same x in both. Averaging rather than subsampling for
+    # the reason given at the map: taking every k-th viewpoint aliases a smooth
+    # field into stripes. The grid is then completed over position x square size
+    # so that viewpoints with no full square (within one square size of a
+    # chromosome end) read as grey missing data instead of as a white gap.
+    ismap_panels <- local({
+      if (!ismap) return(NULL)
+      isd <- load_meltron_is(chrom)
+      if (is.null(isd) || !nrow(isd)) return(NULL)
+      isd <- isd[viewpoint >= from & viewpoint < to]
+      if (!nrow(isd)) {
+        message("  insulation maps: no viewpoints in this region - strips omitted")
+        return(NULL)
+      }
+      vps  <- sort(unique(isd$viewpoint))
+      ifac <- max(1L, round(length(vps) / gam12_ismap_cols))
+      idb  <- ifac * gam_binsize
+      # Group by GENOMIC COORDINATE, not by rank among the viewpoints present, so
+      # a gap in coverage does not shift everything after it.
+      isd[, g := as.integer((viewpoint - from) %/% idb)]
+      agg <- isd[, .(IS_WT = mean(IS_WT, na.rm = TRUE),
+                     IS_KO = mean(IS_HP1gKO, na.rm = TRUE)),
+                 by = .(g, is_size)]
+      agg <- agg[CJ(g = 0L:as.integer((to - from - 1) %/% idb),
+                    is_size = gam12_is_env$sizes), on = .(g, is_size)]
+      agg[, `:=`(x = (from + (g + 0.5) * idb) / 1e6,
+                 d = IS_KO - IS_WT)]
+      agg[!is.finite(IS_WT), IS_WT := NA_real_]
+      agg[!is.finite(IS_KO), IS_KO := NA_real_]
+      agg[!is.finite(d),     d     := NA_real_]
+
+      sz   <- gam12_is_env$sizes
+      hgt  <- if (length(sz) > 1) min(diff(sz)) / 1000 else 80
+      strip <- function(col, ylab, lim, leg) {
+        ggplot(agg, aes(x, is_size / 1000,
+                        fill = pmax(-lim, pmin(lim, get(col))))) +
+          geom_tile(width = idb / 1e6, height = hgt) +
+          # COMPACT COLOURBAR. The strips add two more collected legends to a
+          # right-hand column that already held three, and at the default bar
+          # height the stack is taller than a 16:9 canvas - the bottom legend
+          # (LADs) was being cut off. Shortening only these two keeps all five.
+          scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim),
+                               na.value = "grey92", name = leg,
+                               guide = guide_colourbar(
+                                 barheight = grid::unit(0.85, "in"),
+                                 barwidth  = grid::unit(0.15, "in"))) +
+          scale_x_continuous(expand = c(0, 0)) +
+          scale_y_continuous(expand = c(0, 0),
+                             breaks = range(sz) / 1000) +
+          coord_cartesian(xlim = c(from, to) / 1e6) +
+          labs(y = ylab) +
+          # 5 pt of top/bottom margin, not 1: with expand = c(0, 0) the two
+          # square-size breaks sit exactly ON the panel edge, and at 1 pt the
+          # top one was drawn half into the contact map above it.
+          theme_m + theme(axis.title.x = element_blank(),
+                          axis.text.x = element_blank(),
+                          axis.text.y = element_text(size = 5),
+                          axis.ticks.y = element_line(linewidth = 0.2,
+                                                      colour = "grey60"),
+                          panel.grid = element_blank(),
+                          plot.margin = margin(5, 4, 5, 4)) + ylab_h
+      }
+      # WT and cKO share one limit and one legend title, so patchwork's
+      # guides = "collect" draws ONE key for them - which is also the only way
+      # the two strips can be read against each other.
+      # The y tick labels are bare numbers at size 5, so the unit is named once
+      # in the top strip's left-hand label rather than on every axis.
+      list(strip("IS_WT", "insulation, WT\n(square size, kb)", gam12_is_lim,  "insulation\nscore"),
+           strip("IS_KO", "insulation\ncKO",                   gam12_is_lim,  "insulation\nscore"),
+           strip("d",     "insulation\ncKO - WT",              gam12_is_dlim, "IS(cKO)\n- IS(WT)"))
+    })
     # The raw panels are reference, the difference is the point, and the mark
     # panels need real height or their axis titles collapse into each other.
     # Absolute inches for every map row (so coord_fixed is honoured exactly),
@@ -940,13 +1104,16 @@ local({
     }
     ctcf_h  <- if (is.null(p_ctcf)) numeric(0) else gam12_h_ctcf
     lad_h   <- if (is.null(p_lad)) numeric(0) else gam12_h_lad
-    track_h <- c(hot_h, ctcf_h, lad_h, rep(gam12_h_mark, length(panels)), gam12_h_gene)
+    ismap_h <- if (is.null(ismap_panels)) numeric(0)
+               else rep(gam12_h_ismap, length(ismap_panels))
+    track_h <- c(ismap_h, hot_h, ctcf_h, lad_h,
+                 rep(gam12_h_mark, length(panels)), gam12_h_gene)
     heights <- grid::unit(c(rep(map_h_in, n_tri), track_h), "in")
     # guides = "collect" is essential here, not cosmetic. Without it every panel
     # keeps its own legend, and patchwork centres each one on ITS OWN ROW - so the
     # LAD legend (two keys) was being centred on a 0.22 in row and spilled over
     # the legends above and below it. Collected and top-justified, they stack.
-    wrap_plots(c(tri, hot_panels,
+    wrap_plots(c(tri, ismap_panels, hot_panels,
                  if (is.null(p_ctcf)) NULL else list(p_ctcf),
                  if (is.null(p_lad))  NULL else list(p_lad),
                  panels, list(p_gene)), ncol = 1, heights = heights) +
@@ -955,11 +1122,21 @@ local({
         title = sprintf("%s:%.2f-%.2f Mb", chrom, from / 1e6, to / 1e6),
         theme = theme(plot.caption = element_text(hjust = 0, size = 7),
                       plot.title = element_text(face = "bold", size = 13),
-                      legend.spacing.y = grid::unit(12, "pt"),
+                      legend.spacing.y = grid::unit(if (slide) 6 else 12, "pt"),
                       legend.box.spacing = grid::unit(10, "pt")),
         caption = if (slide) sprintf(
-          "GAM %s, HP1g cKO vs WT, 20 kb. Map: delta-z (cKO - WT), red = more contact in cKO. Tracks: mean coverage per genotype, blue = less in cKO. NPMI cells measured here: %.0f%%.",
-          chrom, 100 * npmi_cov) else paste0(
+          # ONE LINE, AND IT MUST FIT. ggplot draws plot.caption as a single
+          # line and never wraps it, so a caption longer than the canvas is
+          # silently cut off mid-word - which is what the longer version with
+          # the insulation sentence spelled out separately did. The colour
+          # convention is the same for the map and the strips (red = more
+          # contact in the cKO), so one clause covers both.
+          "GAM %s, HP1g cKO vs WT, 20 kb. Map: delta-z (cKO - WT)%s. Red = more contact in the cKO%s, blue = less. Mark tracks: mean coverage per genotype. NPMI cells measured here: %.0f%%.",
+          chrom,
+          if (is.null(ismap_panels)) "" else
+            "; strips: insulation score by square size (240-1040 kb)",
+          if (is.null(ismap_panels)) "" else " (condensing)",
+          100 * npmi_cov) else paste0(
         if (npmi_cov < gam12_cov_warn)
           sprintf("DATA COVERAGE WARNING: only %.0f%% of NPMI cells in this region are measured. White areas of the contact maps are MISSING DATA, not absent contact.\n", 100 * npmi_cov)
         else sprintf("NPMI cells measured in this region: %.0f%%. ", 100 * npmi_cov),
@@ -989,10 +1166,17 @@ local({
         "net = gained - lost, same sign convention as the difference map. Those are COUNTS, every bin has one. ",
         "Hotspot is the separate CALL on that count: bins at or above the collaborators' 50-75 per-window cutoff. ",
         "LADs: constitutive cLAD/ciLAD, Peric-Hupkes 2010 (GSE17051), lifted mm9->mm39. ",
-        "CTCF: ENCODE ENCSR877MSN conservative IDR peaks, BULK hippocampus (not sorted CA1), lifted mm10->mm39; one tick per peak.")) &
+        "CTCF: ENCODE ENCSR877MSN conservative IDR peaks, BULK hippocampus (not sorted CA1), lifted mm10->mm39; one tick per peak.",
+        if (is.null(ismap_panels)) "" else paste0(
+        "\nINSULATION STRIPS (GAM_2c, the Pombo display). Each row is the mean NPMI in the square [v-s, v) x (v, v+s] crossing position v, ",
+        "at square sizes s from 240 to 1040 kb, with the chromosome mean at that size subtracted. Red = the cKO has MORE contact density ",
+        "across that position at that scale (condensing), blue = less (melting) - the same sign convention as the difference map above. ",
+        "A vertical band of one colour is a change present at every scale; one confined to the bottom rows is local reorganisation only. ",
+        "The strips are block-averaged to the same display columns as the map, and grey is missing data (no full square fits there)."
+        ))) &
       theme(legend.justification = "top") -> out
     # Exact figure height: every row plus the title/caption/axis furniture.
-    chrome <- if (slide) 0.55 else gam12_h_chrome
+    chrome <- if (slide) gam12_h_chrome_slide else gam12_h_chrome
     attr(out, "gam_map_in") <- list(n = n_tri, h = map_h_in,
                                     total = n_tri * map_h_in + sum(track_h) + chrome)
     out
@@ -1101,10 +1285,14 @@ local({
         # geometry, md = 2 * (map_h / panel_w) * span.
         lim   <- region_span(r[[1]], r[[2]], r[[3]])
         span  <- lim[2] - lim[1]
-        trk   <- 0.75 + gam12_h_hotcall + gam12_h_ctcf + gam12_h_lad +
-                 2 * gam12_h_mark + gam12_h_gene
+        # 3 x gam12_h_ismap: slide mode draws the WT / cKO / difference
+        # insulation strips, and they come out of the same height budget as
+        # everything else - which is precisely why the map ends up clipped to a
+        # band rather than a full triangle.
+        trk   <- 0.75 + 3 * gam12_h_ismap + gam12_h_hotcall + gam12_h_ctcf +
+                 gam12_h_lad + 2 * gam12_h_mark + gam12_h_gene
         pw    <- max(2, 13.33 - SIDE)
-        map_h <- max(1.2, 13.33 * 9 / 16 - trk - 0.55)
+        map_h <- max(1.2, 13.33 * 9 / 16 - trk - gam12_h_chrome_slide)
         md    <- min(2 * (map_h / pw) * span, span)
       }
       if (mode == "band") {
@@ -1126,7 +1314,7 @@ local({
                                fig_width = 13.33, side_allow = SIDE,
                                show_raw = FALSE,
                                marks = c("H3K9me3", "H4K20me3"),
-                               slide = TRUE)
+                               slide = TRUE, ismap = TRUE)
              else
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
                                fig_width = FIGW, side_allow = SIDE),

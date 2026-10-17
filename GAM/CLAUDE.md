@@ -358,6 +358,47 @@ predicts - lost D 0.171 / 0.129 against null medians 0.032 / 0.031, gained 0.198
 that never touches the differential-contact calls they were built from. The
 derepressed gene families, protocadherin included, sit BELOW their own nulls.
 
+## Region plots: three variants, and the slide one carries the Pombo strips
+
+`GAM_7_Figures.R` section A renders each region as `<name>` (full triangle) and
+`<name>_band` (distance capped so the panel is 0.95 in tall). `GAM7_SLIDE=1`
+renders a third, `<name>_slide`, for four regions at exactly 13.33 x 7.5 in.
+
+**Slide mode is a re-layout, not a resize.** A full region figure is ~1.09:1 and
+cannot be squashed into 16:9, so slide mode drops the two raw NPMI maps, cuts the
+marks to H3K9me3 + H4K20me3, shortens the caption to one line, and then solves
+the contact map's distance cap FROM the height left over. The map is therefore
+clipped to a band by construction, and how thin that band is depends on what
+else is in the stack.
+
+**It also carries the insulation-score map strips** (`ismap = TRUE`, default on
+in slide mode and off elsewhere): WT, cKO and their difference, read from
+`meltron_is.rds`, drawn directly under the difference map - the Pombo lab's own
+display, x = position, y = insulation square size. The strips and the map above
+them are the same quantity at two readings, so they should agree; a strip that
+contradicts the map above it is a bug, not a finding. Limits are FIXED
+(`gam12_is_lim` 0.20, `gam12_is_dlim` 0.10) so regions stay comparable, and the
+two differ because a per-genotype score carries a regional offset that the
+difference does not.
+
+**Every row height in these figures is absolute, including the chrome.** That is
+deliberate - mixing `"in"` map rows with `"null"` track rows made the layout
+non-deterministic - but it means a figure saved shorter than its content does
+NOT shrink to fit: it overflows the canvas and the outer rows are cut off
+silently. Two consequences:
+
+1. `gam12_h_chrome_slide` must be **measured**, on `patchwork:::patchworkGrob(p)`
+   and not on `plot_table(p)`. `plot_table` returns the inner table only and
+   omits the figure title, the figure caption and the outer margins - 0.55 in of
+   them. Measuring the wrong one is why every slide figure shipped without its
+   title and caption until 2026-10-17.
+2. The caption is **one line and ggplot never wraps it**. Keep the slide caption
+   under ~250 characters or it is cut off mid-word.
+
+Adding the three strips costs 3 x `gam12_h_ismap` out of a fixed total, and the
+trade against the map is 3:1 - every 0.1 in of strip costs 0.3 in of map, which
+is why the strips are 0.33 in rather than the 0.42 they were first drawn at.
+
 ## GAM_5 sections A and B use a domain definition section C disproves
 
 `GAM_5_Heterochromatin.R` section C builds heterochromatin domains properly
