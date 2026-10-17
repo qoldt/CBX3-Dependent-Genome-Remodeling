@@ -126,11 +126,23 @@ local({
   # blue over their flanks, which is exactly the information the display exists
   # to show. 0.20 is just above the genome-wide 99.9th (0.180) and saturates
   # 0.6% there, 0.0% on the other three slide regions.
-  # The DIFFERENCE has no such offset (it is one genotype minus the other at the
-  # same position), so it keeps the 99th percentile of |IS(cKO) - IS(WT)|
-  # (0.104, rounded to 0.10) and uses the full colour range.
+  # THE DIFFERENCE STRIP IS ON THE SAME SCALE, AND THIS IS NOT NEGOTIABLE.
+  # It was drawn at 0.10 first, on the reasoning that the difference has no
+  # regional offset and so deserves its own tighter range. That made the panel
+  # lie. Three strips stacked under one another are read BY COMPARISON, and at
+  # half the limit a change of +0.034 - a sixth of the per-genotype range - came
+  # out as a 34% red band under two panels that were both solid blue. Measured
+  # at chr18:38.10 Mb: IS_WT -0.161, IS_cKO -0.127, difference +0.034. Nothing
+  # was wrong with the number; the reader was simply given two rulers and no
+  # warning. Genome-wide, 4.8% of the cells where BOTH genotypes are below -0.05
+  # were drawn more than two-thirds saturated in the difference; on one shared
+  # limit that is 0.0%.
+  #
+  # The difference is not washed out by sharing the scale: |IS(cKO) - IS(WT)|
+  # reaches 52% of the bar at its genome-wide 99th percentile, and 29-51% within
+  # each of the four slide regions. It is drawn smaller because it IS smaller.
   gam12_is_lim   <- 0.20
-  gam12_is_dlim  <- 0.10
+  gam12_is_dlim  <- gam12_is_lim
 
   # REPLICATE BANDS ON THE MARK TRACKS. Off by default: with five marks stacked,
   # two bands plus two mean lines per panel is twenty elements and the figure

@@ -376,10 +376,18 @@ in slide mode and off elsewhere): WT, cKO and their difference, read from
 `meltron_is.rds`, drawn directly under the difference map - the Pombo lab's own
 display, x = position, y = insulation square size. The strips and the map above
 them are the same quantity at two readings, so they should agree; a strip that
-contradicts the map above it is a bug, not a finding. Limits are FIXED
-(`gam12_is_lim` 0.20, `gam12_is_dlim` 0.10) so regions stay comparable, and the
-two differ because a per-genotype score carries a regional offset that the
-difference does not.
+contradicts the map above it is a bug, not a finding.
+
+**All three strips share one fixed limit (`gam12_is_lim` 0.20), and the
+difference must never get its own.** Drawn at 0.10 first, on the reasoning that
+the difference has no regional offset and deserves a tighter range, the panel
+lied: at chr18:38.10 Mb, IS_WT -0.161 and IS_cKO -0.127 are both solid blue on
+the strip scale while their +0.034 difference came out a third of the way to
+saturated red. Stacked panels are read by comparison, and two rulers in one
+stack is a display bug however right each number is. Genome-wide, 4.8% of cells
+with BOTH genotypes below -0.05 were drawn over two-thirds saturated in the
+difference; on the shared limit that is 0.0%, and the difference still reaches
+52% of the bar at its own 99th percentile.
 
 **Every row height in these figures is absolute, including the chrome.** That is
 deliberate - mixing `"in"` map rows with `"null"` track rows made the layout
