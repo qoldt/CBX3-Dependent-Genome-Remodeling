@@ -371,15 +371,35 @@ the contact map's distance cap FROM the height left over. The map is therefore
 clipped to a band by construction, and how thin that band is depends on what
 else is in the stack.
 
-**It also carries the insulation-score map strips** (`ismap = TRUE`, default on
-in slide mode and off elsewhere): WT, cKO and their difference, read from
-`meltron_is.rds`, drawn directly under the difference map - the Pombo lab's own
-display, x = position, y = insulation square size. The strips and the map above
+**It also carries an insulation-score map strip** (`ismap`: `"none"`, `"diff"`
+or `"all"`; `"diff"` on slides, `"none"` elsewhere), read from `meltron_is.rds`
+and drawn directly under the difference map - the Pombo lab's own display,
+x = position, **y = the insulation SQUARE SIZE**, 240 to 1040 kb.
+
+The score at position `v` and size `s` is the mean NPMI over `[v-s, v) x (v, v+s]`
+- every contact CROSSING `v` out to `s` on each side - minus that chromosome's
+mean at the same `s`. High = the two sides talk across `v` = not insulated. Three
+properties follow and all three matter:
+
+1. **It does not depend on the region you plot.** Values are computed once per
+   chromosome and the figure subsets them; only the display bin changes with the
+   crop (20 kb at Pcdh, 280 kb on chr16).
+2. **It is centred PER GENOTYPE PER CHROMOSOME**, so `IS_cKO - IS_WT` has each
+   genotype's own chromosome mean already removed. **A uniform genome-wide shift
+   in contact density is invisible to it by construction** - which matters here,
+   because the headline effect IS broad (`gam10_class_change.tsv`: -1.7% to -5.0%
+   eu-eu, +4.2% het-het). The strip answers "where within this chromosome did
+   contact move", never "did this chromosome gain or lose contact". Same choice
+   MELTRONIC makes, so it is not a deviation - but it is a limit.
+3. **The rows are nested, not independent.** The 1040 kb square contains the
+   240 kb square. PC1 holds 86.4% of the variance across the 11 sizes and
+   rho(240, 1040) = 0.53, so an 11-row strip carries about 1.1 numbers. That is
+   why the default is ONE strip. The strips and the map above
 them are the same quantity at two readings, so they should agree; a strip that
 contradicts the map above it is a bug, not a finding.
 
-**All three strips share one fixed limit (`gam12_is_lim` 0.20), and the
-difference must never get its own.** Drawn at 0.10 first, on the reasoning that
+**Every strip shares one fixed limit (`gam12_is_lim` 0.20), and the difference
+must never get its own.** Drawn at 0.10 first, on the reasoning that
 the difference has no regional offset and deserves a tighter range, the panel
 lied: at chr18:38.10 Mb, IS_WT -0.161 and IS_cKO -0.127 are both solid blue on
 the strip scale while their +0.034 difference came out a third of the way to
@@ -403,9 +423,41 @@ silently. Two consequences:
 2. The caption is **one line and ggplot never wraps it**. Keep the slide caption
    under ~250 characters or it is cut off mid-word.
 
-Adding the three strips costs 3 x `gam12_h_ismap` out of a fixed total, and the
-trade against the map is 3:1 - every 0.1 in of strip costs 0.3 in of map, which
-is why the strips are 0.33 in rather than the 0.42 they were first drawn at.
+Each strip costs `gam12_h_ismap` of panel plus 0.1389 of chrome (its own 10 pt
+of margin rows) out of a fixed total, so it comes straight off the contact map.
+One strip instead of three gives the map 2.04 in instead of 1.20 - a band of
+0.69 Mb instead of 0.40 at Pcdh, and 9.1 Mb instead of 5.5 on chr11.
+`gam12_h_chrome_slide(n)` takes the strip count for exactly this reason; `"all"`
+mode no longer fits 16:9 and letterboxes to 7.83 in, which is expected.
+
+## Two different things are called "hotspot". Say which one you mean.
+
+| | **hotspot bins** | **hotspot domains** |
+|---|---|---|
+| definition | delivered per-bin count >= `gam12_hot_cut` | q90 of a 5-bin smoothed track, gap-merged, >=5 bins |
+| cutoff from | the collaborators' proposed 50-75 | ours, swept in `QC_Hotspot_Domains.R` |
+| where it appears | the ribbon on the region figures | `hotspot_domains_*.tsv`, every `gam4_*` enrichment, the MELTRON region tests |
+| size | 17,527 bins (14.2% of the genome) | 979 lost + 958 gained domains |
+
+**They agree at a Jaccard of 0.39 (lost) and 0.40 (gained)** - so roughly 60% of
+the bins in one are not in the other. It is not the height of the cut: q90 lands
+at a raw count of ~44 lost / ~42 gained, close to 50. It is the smoothing and the
+5-bin size floor. Anyone reading "hotspot" on a region figure will assume those
+red blocks are the domains behind the LAD/LINE enrichments, and most are not, so
+the ribbon is labelled **"hotspot bins"** and its legend carries the per-bin
+count. Keep that distinction in any new figure or write-up.
+
+**The ribbon is drawn at 50, the permissive end of the proposed range, on
+purpose.** >=50 calls 14.2% of the genome, >=60 calls 8.4%, >=75 calls 3.9% - the
+top of the range would drop 73% of the called bins. The ribbon is a density
+display answering "where is this busy", so the permissive end is the honest one;
+anything needing a conservative call should use the domains.
+
+**The contact map's own significance is not ours to choose.** `|delta-z| > 2` and
+NPMI > 0.1 are baked into the delivered filenames (`..._z2_npmi0.1.bg2.gz`), and
+`gam_z` / `gam_npmi` in `config.R` exist only so the path builders resolve to the
+right files. Changing them resolves to different files on disk; it recomputes
+nothing.
 
 ## GAM_5 sections A and B use a domain definition section C disproves
 
