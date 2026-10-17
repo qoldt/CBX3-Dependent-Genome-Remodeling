@@ -110,7 +110,9 @@ local({
   # ~14x14 native cells, so almost every block contains significant cells and
   # the masked map fills in exactly like the unmasked one. It is only sparse at
   # native resolution, i.e. on regions of a few Mb. Set TRUE to use it there.
-  gam12_dz_significant_only <- FALSE
+  # GAM7_DZ_SIG=1 renders the masked variant instead, into *_sigonly files so
+  # both sets can sit side by side.
+  gam12_dz_significant_only <- identical(Sys.getenv("GAM7_DZ_SIG", "0"), "1")
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
   gam12_h_chrome <- 2.30
@@ -1001,6 +1003,7 @@ local({
   for (r in regions) {
     for (mode in c("full", "band")) {
       nm <- if (mode == "band") paste0(r[[4]], "_band") else r[[4]]
+      if (gam12_dz_significant_only) nm <- paste0(nm, "_sigonly")
       md <- NULL
       if (mode == "band") {
         lim <- region_span(r[[1]], r[[2]], r[[3]])
