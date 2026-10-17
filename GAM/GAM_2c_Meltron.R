@@ -51,39 +51,60 @@
 #     the repo without a regrid, and a finer viewpoint spacing is strictly more
 #     information. The square sizes are unchanged and are multiples of both.
 #
-# THE P-VALUE IS NOT A CALIBRATED P-VALUE, AND IS NOT TREATED AS ONE
-# ------------------------------------------------------------------
-# The KS test assumes the pooled IS values are independent. They are emphatically
-# not: adjacent viewpoints share most of their square, and the 11 square sizes at
-# one viewpoint are nested inside each other. The published pipeline does this
-# anyway and so does this one, so that the scores stay comparable - but a melting
-# score here is a REscaled effect size, not evidence at that significance. This
-# matters more for us than for the original: we have 2 biological replicates per
-# genotype already merged, with no within-genotype variance to test against
-# (CLAUDE.md gotcha 5 forbids exactly this kind of claim).
+# TWO SCORES PER INTERVAL, NOT ONE SIGNED NUMBER
+# ----------------------------------------------
+# MELTRONIC emits melting_score AND condensation_score per interval, from two
+# one-sided KS tests Bonferroni-corrected separately, and this follows it. The
+# two tests are NOT complementary: where the two insulation distributions cross
+# - one shifted in its lower tail, the other in its upper - both reject, and the
+# interval genuinely carries both scores. Collapsing them into one signed value
+# hides that case instead of resolving it. `net_score` is derived for display
+# and is explicitly secondary.
+#
+# On this data the two never fire together at the published cutoff (0.0% of
+# intervals), so the single-axis view happens to lose nothing here - but that is
+# a result, printed on every run, not an assumption.
+#
+# THE WINDOW IS THE PUBLISHED ONE, AND GETTING IT WRONG BREAKS THE SCORE
+# ---------------------------------------------------------------------
+# MELTRONIC's intervals are 120 kb wide stepping one matrix bin
+# (data/120kb_genomic_intervals.bed in its repo: 120 kb at a 40 kb step, i.e. 3
+# bins at their 40 kb resolution). We match the PHYSICAL width, 6 bins at 20 kb.
+#
+# An earlier version of this stage used a 500 kb / 25-bin window, and that one
+# choice broke everything downstream: it pooled 275 nested, overlapping values
+# into a test that assumes independence, so -log10(p_adj) saturated at the cap
+# and the published |score| > 5 cutoff called 69% of the genome. The conclusion
+# drawn at the time - "the published cutoff does not transfer to this data" -
+# was wrong, and was a statement about the window rather than about the data.
+# With the published window the cutoff calls 26% melting and 26% condensing and
+# is perfectly usable.
+#
+# THE P-VALUE STILL IS NOT A CALIBRATED P-VALUE
+# ---------------------------------------------
+# Even at the right window the KS test assumes the pooled IS values are
+# independent, and they are not: the 11 square sizes at one viewpoint are nested
+# inside each other. The published pipeline does this anyway and so does this
+# one, so the scores stay comparable - but a score here is a rescaled effect
+# size, not evidence at that significance. That matters more for us than for the
+# original: we have 2 biological replicates per genotype already merged, with no
+# within-genotype variance to test against (CLAUDE.md gotcha 5).
 #
 # So two things are reported beside every score:
-#   - the KS statistic D, the actual effect size, which has no independence
-#     assumption in it at all;
+#   - the one-sided KS statistics d_melt and d_cond, the actual effect sizes,
+#     which carry no independence assumption at all;
 #   - for the region sets, an EMPIRICAL p from size-matched random regions drawn
 #     on the same chromosome, which is the number to quote.
 #
 # WHAT THE TRACK SUPPORTS, AND AT WHAT SCALE
 # ------------------------------------------
-# The MAGNITUDE of the change is large almost everywhere (median |D| 0.42) -
-# what a genome-wide effect looks like. The DIRECTION is regionally coherent but
-# not finely so, and this is measured on every run into
-# gam2c_meltron_spatial_coherence.tsv: aggregated to one point per sliding
-# window, the sign changes between about a quarter of adjacent 500 kb windows,
-# the median run of one direction is 3 windows (1.5 Mb) and the longest is 28
-# (14 Mb).
-#
-# That scale is not an accident - it is the scale of the one-directional blocks
-# GAM_4 calls, and those blocks come out melting (lost) and condensing (gained)
-# at the floor of the size-matched null here. So the track carries real
-# multi-megabase structure, while a SINGLE 500 kb window's melting/condensing
-# label is weak evidence. Read regions, not windows; the genome-wide call
-# columns describe the tails of a distribution rather than delineating domains.
+# Measured into gam2c_meltron_spatial_coherence.tsv on every run: aggregated to
+# one point per 120 kb window, the net score changes sign between ~15% of
+# adjacent windows, the median run of one direction is 4 windows (480 kb) and
+# the longest reaches 69 (8 Mb). So melting and condensing regions are discrete
+# multi-megabase blocks rather than a fine-grained alternation - which is the
+# scale of the one-directional blocks GAM_4 calls, and those come out melting
+# (lost) and condensing (gained) at the floor of the size-matched null here.
 #
 # Outputs
 #   results/rds/meltron_is.rds                     IS, both genotypes, all sizes
@@ -107,10 +128,16 @@ gam2c_params <- list(
   # every size is a multiple of both 20 kb and 40 kb.
   is_sizes_bp   = seq(240000L, 1040000L, by = 80000L),
   min_cell_frac = 0.5,      # square dropped below half its expected cells
-  win_bins      = 25L,      # MELTRONIC sliding window, 25 x 20 kb = 500 kb
+  # MELTRONIC's own sliding window is 120 kb wide stepping one matrix bin
+  # (data/120kb_genomic_intervals.bed in the MELTRONIC repo: 120 kb intervals at
+  # a 40 kb step, i.e. 3 bins wide at their 40 kb resolution). We match the
+  # PHYSICAL width, which at 20 kb is 6 bins. An earlier version used 25 bins
+  # (500 kb) and that was the cause of the saturated scores: it pooled 275
+  # values per window into a test assuming independence, where the published
+  # window pools 30.
+  win_bp        = 120000L,
   smooth_bins   = 3L,       # published: smooth the score over 3 adjacent bins
-  call_cut      = 5,        # published |score| cutoff - reported, NOT used (see below)
-  call_frac     = 0.05,     # calls = this tail fraction of |signed KS D| each way
+  call_cut      = 5,        # published |score| cutoff; usable here, see the header
   max_na_frac   = 0.5,      # region skipped above this fraction missing
   n_null        = 500L      # size-matched random regions per region set
 )
@@ -252,48 +279,37 @@ msg("  square means above zero (where log2 would be defined): WT %.1f%%, cKO %.1
 # ---------------------------------------------------------------
 meltron_score <- function(x_wt, x_ko) {
   ok <- is.finite(x_wt) & is.finite(x_ko)
-  if (sum(ok) < 20L) return(list(p = NA_real_, D = NA_real_, D_signed = NA_real_,
-                                 dir = NA_real_, n = sum(ok)))
+  na <- list(p_melt = NA_real_, p_cond = NA_real_, d_melt = NA_real_,
+             d_cond = NA_real_, D = NA_real_, D_signed = NA_real_,
+             dir = NA_real_, n = sum(ok))
+  if (sum(ok) < 10L) return(na)
   a <- x_wt[ok]; b <- x_ko[ok]
   n <- length(a); m <- length(b)
 
   # The TWO ONE-SIDED KS statistics, from a single ordering pass:
-  #   d_plus  = sup(F_WT - F_cKO)  - the cKO's values sit HIGHER  = condensing
-  #   d_minus = sup(F_cKO - F_WT)  - the cKO's values sit LOWER   = melting
+  #   d_cond = sup(F_WT - F_cKO)  - the cKO's values sit HIGHER = condensation
+  #   d_melt = sup(F_cKO - F_WT)  - the cKO's values sit LOWER  = melting
   # Computed directly rather than through two ks.test() calls, because this runs
-  # once per 20 kb bin genome-wide and ks.test() re-sorts and re-allocates each
-  # time. Verified against ks.test() - see the equivalence check below.
+  # once per bin genome-wide. Verified against ks.test() below.
   o   <- order(c(a, b))
   cs  <- cumsum(c(rep(1 / n, n), rep(-1 / m, m))[o])
-  d_plus  <- max(cs, 0)
-  d_minus <- max(-cs, 0)
+  d_cond <- max(cs, 0)
+  d_melt <- max(-cs, 0)
 
-  # THE SIGNED STATISTIC IS THE DIFFERENCE OF THE TWO ONE-SIDED STATISTICS, not
-  # the two-sided maximum with a sign attached. That earlier version flipped sign
-  # between adjacent windows whenever d_plus and d_minus were both large - which
-  # they often are, because two distributions can differ in both tails at once -
-  # and produced a track that alternated melting/condensing every few bins. The
-  # difference is continuous, lies in [-1, 1], and is zero when the two
-  # distributions coincide.
-  d_signed <- d_minus - d_plus
-  D        <- max(d_plus, d_minus)                 # = the two-sided statistic
-  dir      <- if (d_signed >= 0) 1 else -1
-  d_one    <- if (dir > 0) d_minus else d_plus
-
-  # Asymptotic one-sided KS p-value: exp(-2 * ne * d^2), ne = nm/(n+m). This is
-  # exactly what ks.test() computes once n*m >= 10000, which is where we always
-  # are: the smallest thing scored here is a sliding window of 25 viewpoints x
-  # 11 square sizes = 275 values per genotype, so n*m = 75625. Below that
-  # threshold ks.test() switches to the exact distribution and the two diverge,
-  # which is why the check below pins exact = FALSE.
-  # as.numeric() is load-bearing: length() returns an integer, and a region can
-  # pool millions of values, so n * m overflows 32-bit integer arithmetic and
-  # returns NA with a warning. That silently turned every large region's score
-  # into NA while the KS statistic beside it stayed correct.
+  # BOTH SCORES ARE REPORTED, NOT ONE SIGNED NUMBER. This follows MELTRONIC,
+  # which emits melting_score AND condensation_score per interval, and it is not
+  # a formality: the two one-sided tests are NOT complementary. Where the two
+  # empirical distributions cross - one shifted in its lower tail and the other
+  # in its upper - both tests reject, and the interval genuinely has a melting
+  # score and a condensation score at once. Collapsing that to a single signed
+  # value hides the case rather than resolving it.
   ne <- as.numeric(n) * as.numeric(m) / (as.numeric(n) + as.numeric(m))
-  p  <- exp(-2 * ne * d_one^2)
   stopifnot(is.finite(ne))
-  list(p = p, D = D, D_signed = d_signed, dir = dir, n = sum(ok))
+  pm <- exp(-2 * ne * d_melt^2)
+  pc <- exp(-2 * ne * d_cond^2)
+  list(p_melt = pm, p_cond = pc, d_melt = d_melt, d_cond = d_cond,
+       D = max(d_melt, d_cond), D_signed = d_melt - d_cond,
+       dir = if (d_melt >= d_cond) 1 else -1, n = sum(ok))
 }
 
 # EQUIVALENCE CHECK against ks.test(), run once at load. The hand-rolled
@@ -310,10 +326,14 @@ local({
     mine <- meltron_score(aa, bb)
     ref  <- suppressWarnings(stats::ks.test(aa, bb))
     stopifnot(abs(mine$D - unname(ref$statistic)) < 1e-9)
-    alt  <- if (mine$dir > 0) "less" else "greater"
-    refp <- suppressWarnings(stats::ks.test(aa, bb, alternative = alt,
-                                            exact = FALSE)$p.value)
-    stopifnot(abs(mine$p - refp) < 1e-6 * max(1, refp) + 1e-9)
+    for (alt in c("less", "greater")) {
+      refk <- suppressWarnings(stats::ks.test(aa, bb, alternative = alt,
+                                              exact = FALSE))
+      got_d <- if (alt == "less") mine$d_melt else mine$d_cond
+      got_p <- if (alt == "less") mine$p_melt else mine$p_cond
+      stopifnot(abs(got_d - unname(refk$statistic)) < 1e-9)
+      stopifnot(abs(got_p - refk$p.value) < 1e-6 * max(1, refk$p.value) + 1e-9)
+    }
   }
   msg("  KS statistic and one-sided p verified against ks.test() on 30 random cases")
 })
@@ -355,10 +375,11 @@ score_rows <- function(ch, r) {
 # ---------------------------------------------------------------
 # PART B - MELTRONIC: a genome-wide melting track
 # ---------------------------------------------------------------
-msg("MELTRONIC: sliding window of %d bins (%d kb), scored at every bin",
-    gam2c_params$win_bins, gam2c_params$win_bins * gam_binsize / 1000)
+W <- as.integer(gam2c_params$win_bp / gam_binsize)
+stopifnot(W >= 3L)
+msg("MELTRONIC: %d kb sliding window (%d bins), stepping one bin, as published",
+    gam2c_params$win_bp / 1000, W)
 
-W <- gam2c_params$win_bins
 half <- W %/% 2L
 track <- list()
 for (ch in names(WIDE)) {
@@ -366,31 +387,25 @@ for (ch in names(WIDE)) {
   nv <- length(w$vp)
   if (nv < W) next
   centres <- (half + 1L):(nv - half)
-  # n*m for one window, against the threshold where ks.test() would switch to
-  # the exact distribution and our asymptotic p would stop matching it.
-  if (ch == names(WIDE)[1]) {
-    npw <- W * ncol(w$wt)
-    stopifnot(npw * npw >= 10000)
-  }
   res <- vapply(centres, function(i) {
     s <- score_rows(ch, (i - half):(i + half))
-    c(s$p, s$D, s$D_signed, s$dir, s$n)
+    c(s$p_melt, s$p_cond, s$d_melt, s$d_cond, s$n)
   }, numeric(5))
   track[[ch]] <- data.table(chr = ch, viewpoint = w$vp[centres],
-                            p_raw = res[1, ], D = res[2, ], D_signed = res[3, ],
-                            dir = res[4, ], n_val = res[5, ])
+                            p_melt = res[1, ], p_cond = res[2, ],
+                            d_melt = res[3, ], d_cond = res[4, ], n_val = res[5, ])
 }
 TR <- rbindlist(track); rm(track); invisible(gc())
 stopifnot(nrow(TR) > 0)
 
-# Bonferroni across every window scored, as the published pipeline does across
-# every region tested.
-TR[, p_adj := p.adjust(p_raw, method = "bonferroni")]
-TR[, score_raw := dir * pmin(-log10(p_adj), 300)]   # cap: p_adj underflows to 0
-TR[!is.finite(score_raw), score_raw := NA_real_]
+# Bonferroni across every interval scored, SEPARATELY per direction - exactly
+# what MELTRONIC does with its two p-value columns.
+TR[, `:=`(p_melt_adj = p.adjust(p_melt, method = "bonferroni"),
+          p_cond_adj = p.adjust(p_cond, method = "bonferroni"))]
+cap300 <- function(p) pmin(-log10(pmax(p, 1e-300)), 300)
+TR[, `:=`(melting_score = cap300(p_melt_adj), condensation_score = cap300(p_cond_adj))]
 
-# Smooth over 3 adjacent bins, as published - applied to both quantities so the
-# score and the statistic stay directly comparable.
+# Smooth over 3 adjacent bins, as published.
 setorder(TR, chr, viewpoint)
 smooth3 <- function(v, k = gam2c_params$smooth_bins) {
   g   <- is.finite(v)
@@ -398,63 +413,44 @@ smooth3 <- function(v, k = gam2c_params$smooth_bins) {
   den <- as.numeric(stats::filter(g * 1, rep(1, k), sides = 2))
   ifelse(is.finite(den) & den > 0, num / den, NA_real_)
 }
-TR[, melting_score := smooth3(score_raw), by = chr]
-TR[, D_signed := smooth3(D_signed), by = chr]
+TR[, melting_score      := smooth3(melting_score), by = chr]
+TR[, condensation_score := smooth3(condensation_score), by = chr]
+# A single display axis, derived rather than primary. Both components are kept.
+TR[, net_score := melting_score - condensation_score]
 
-# D_signed (computed in meltron_score) is the primary quantity of this track:
-# bounded [-1, 1], the signed distance between the two distributions, carrying
-# no independence assumption. The melting score is kept beside it for
-# comparability with the published work, but it is NOT what the calls are made
-# from, for a reason the data settled rather than theory: see below.
-
-# THE PUBLISHED |score| > 5 CUTOFF DOES NOT TRANSFER TO THIS DATA, AND IS NOT USED.
-# It calls about a third of the genome in the published setting. Here it calls
-# roughly two thirds, because our windows pool many more values (11 square sizes
-# x 25 viewpoints at 20 kb) into a test whose p-value assumes they are
-# independent, so -log10(p_adj) saturates. The number is printed below so the
-# discrepancy is visible rather than buried.
-#
-# Calls are therefore the tails of the genome's OWN signed-D distribution. This
-# is a relative statement - "the most melted 5% of the genome" - and is labelled
-# as such, which is the honest form given that no absolute calibration is
-# available without within-genotype replicates (gotcha 5).
-dcut <- as.numeric(quantile(abs(TR$D_signed), 1 - gam2c_params$call_frac,
-                            na.rm = TRUE))
-TR[, call := fcase(D_signed >=  dcut, "melting",
-                   D_signed <= -dcut, "condensing",
+TR[, `:=`(melts = melting_score > gam2c_params$call_cut,
+          condenses = condensation_score > gam2c_params$call_cut)]
+TR[, call := fcase(melts & condenses, "both",
+                   melts, "melting",
+                   condenses, "condensing",
                    default = "unchanged")]
-TR[!is.finite(D_signed), call := NA_character_]
-pub_frac <- TR[, mean(abs(melting_score) > gam2c_params$call_cut, na.rm = TRUE)]
 TR[, start := viewpoint][, end := viewpoint + gam_binsize]
 TR[, bin_id := sprintf("%s:%d-%d", chr, start, end)]
 
-gsumm <- TR[, .(n = .N,
-                melting = sum(call == "melting", na.rm = TRUE),
-                condensing = sum(call == "condensing", na.rm = TRUE),
-                pct_melting = 100 * mean(call == "melting", na.rm = TRUE),
-                pct_condensing = 100 * mean(call == "condensing", na.rm = TRUE),
-                median_D = median(D, na.rm = TRUE)), by = chr]
-gsumm <- rbind(gsumm, TR[, .(chr = "ALL", n = .N,
-                melting = sum(call == "melting", na.rm = TRUE),
-                condensing = sum(call == "condensing", na.rm = TRUE),
-                pct_melting = 100 * mean(call == "melting", na.rm = TRUE),
-                pct_condensing = 100 * mean(call == "condensing", na.rm = TRUE),
-                median_D = median(D, na.rm = TRUE))])
-# IS THE DIRECTION SPATIALLY COHERENT? Measured, because the track invites being
-# read as a domain caller and the answer decides whether that is legitimate.
-# Aggregated to one point per sliding-window width (so overlapping windows are
-# not counted repeatedly), how often does the sign change between neighbours,
-# and how long are the runs of one sign?
+# CAN A REGION BE BOTH? Yes, and this is the number that says how often. The two
+# one-sided tests are not complementary: where the two empirical distributions
+# cross, both reject. Reported rather than hidden behind a signed value.
+pct_both <- 100 * TR[, mean(call == "both", na.rm = TRUE)]
+
+gcols <- function(d) d[, .(n = .N,
+    melting    = sum(call == "melting",    na.rm = TRUE),
+    condensing = sum(call == "condensing", na.rm = TRUE),
+    both       = sum(call == "both",       na.rm = TRUE),
+    pct_melting    = 100 * mean(call == "melting",    na.rm = TRUE),
+    pct_condensing = 100 * mean(call == "condensing", na.rm = TRUE),
+    pct_both       = 100 * mean(call == "both",       na.rm = TRUE),
+    median_d_melt = median(d_melt, na.rm = TRUE),
+    median_d_cond = median(d_cond, na.rm = TRUE))]
+gsumm <- rbind(TR[, gcols(.SD), by = chr], cbind(chr = "ALL", gcols(TR)))
+
+# Spatial coherence of the NET score, at one point per window width.
 coh <- local({
-  dbin <- as.integer(gam2c_params$win_bins * gam_binsize)
-  a <- TR[is.finite(D_signed)]
+  dbin <- as.integer(gam2c_params$win_bp)
+  a <- TR[is.finite(net_score)]
   a[, grp := (viewpoint %/% dbin)]
-  a <- a[, .(m = mean(D_signed, na.rm = TRUE)), by = .(chr, grp)]
+  a <- a[, .(m = mean(net_score, na.rm = TRUE)), by = .(chr, grp)]
   setorder(a, chr, grp)
   flips <- a[, mean(diff(sign(m)) != 0), by = chr]
-  # as.numeric on both: median() of an odd-length integer run returns an
-  # integer and of an even-length one a double, and data.table rejects a column
-  # whose type changes between groups.
   runs  <- a[, {r <- rle(sign(m))
                 .(med = as.numeric(median(r$lengths)),
                   mx  = as.numeric(max(r$lengths)))}, by = chr]
@@ -464,16 +460,15 @@ coh <- local({
              longest_run_bins = max(runs$mx))
 })
 fwrite(coh, file.path(tables_dir, "gam2c_meltron_spatial_coherence.tsv"), sep = "\t")
-msg("  direction: sign changes between %.0f%% of adjacent %d kb windows; runs median %.0f, max %.0f",
-    coh$pct_sign_change, coh$display_bin_kb, coh$median_run_bins, coh$longest_run_bins)
-msg("  => regionally coherent over megabases; a single window is weak evidence")
-
 fwrite(gsumm, file.path(tables_dir, "gam2c_meltron_genome_summary.tsv"), sep = "\t")
-msg("  calls from the signed-D tails (|D| >= %.3f): %.1f%% melting, %.1f%% condensing",
-    dcut, gsumm[chr == "ALL", pct_melting], gsumm[chr == "ALL", pct_condensing])
-msg("  median KS D = %.3f", gsumm[chr == "ALL", median_D])
-msg("  for reference, the published |score| > %g cutoff would call %.1f%% of bins here",
-    gam2c_params$call_cut, 100 * pub_frac)
+
+msg("  at the published |score| > %g cutoff: %.1f%% melting, %.1f%% condensing, %.1f%% BOTH",
+    gam2c_params$call_cut, gsumm[chr == "ALL", pct_melting],
+    gsumm[chr == "ALL", pct_condensing], pct_both)
+msg("  median KS D: melting %.3f, condensation %.3f",
+    gsumm[chr == "ALL", median_d_melt], gsumm[chr == "ALL", median_d_cond])
+msg("  net score: sign changes between %.0f%% of adjacent %d kb windows; runs median %.0f, max %.0f",
+    coh$pct_sign_change, coh$display_bin_kb, coh$median_run_bins, coh$longest_run_bins)
 
 # ---------------------------------------------------------------
 # PART C - region-level MELTRON, with a size-matched empirical null
@@ -531,8 +526,10 @@ score_pool <- function(pl) {
   b <- unlist(lapply(names(pl), function(ch) as.vector(WIDE[[ch]]$ko[pl[[ch]], , drop = FALSE])))
   meltron_score(a, b)
 }
-to_score <- function(s) if (!is.finite(s$p)) NA_real_ else
-  s$dir * min(-log10(max(s$p, 1e-300)), 300)
+to_score <- function(s) {
+  if (!is.finite(s$p_melt) || !is.finite(s$p_cond)) return(NA_real_)
+  min(-log10(max(s$p_melt, 1e-300)), 300) - min(-log10(max(s$p_cond, 1e-300)), 300)
+}
 
 set.seed(42)
 reg_rows <- list()
@@ -571,6 +568,9 @@ for (nm in names(region_sets)) {
     n_values = obs$n, ks_D = obs$D,
     direction = fifelse(is.na(obs$dir), NA_character_,
                         fifelse(obs$dir > 0, "melting", "condensing")),
+    d_melt = obs$d_melt, d_cond = obs$d_cond,
+    melting_score = min(-log10(max(obs$p_melt, 1e-300)), 300),
+    condensation_score = min(-log10(max(obs$p_cond, 1e-300)), 300),
     meltron_score = obs_score,
     null_median = median(null, na.rm = TRUE),
     null_q95 = as.numeric(quantile(abs(null), 0.95, na.rm = TRUE)),
@@ -603,16 +603,16 @@ msg("  wrote %s", sc_rds)
 # IGV track
 # ---------------------------------------------------------------
 local({
-  d <- TR[is.finite(D_signed), .(chr, start, end, round(D_signed, 4))]
+  d <- TR[is.finite(net_score), .(chr, start, end, round(net_score, 3))]
   p <- file.path(igv_dir, "gam_melting_score.bedgraph")
-  lim <- as.numeric(quantile(d$V4, c(0.01, 0.99), na.rm = TRUE))
-  writeLines(sprintf(paste0('track type=bedGraph name="MELTRON signed KS D" ',
-                            'description="signed KS D; + = melting (density lost in cKO), ',
-                            '- = condensing; %d kb window, %d square sizes" ',
+  lim <- as.numeric(quantile(abs(d$V4), 0.99, na.rm = TRUE))
+  writeLines(sprintf(paste0('track type=bedGraph name="MELTRON net score" ',
+                            'description="melting_score minus condensation_score; ',
+                            '+ = melting, - = condensing; %d kb window, %d square sizes" ',
                             'visibility=full color=178,24,43 altColor=33,102,172 ',
                             'viewLimits=%.2f:%.2f windowingFunction=mean'),
-                     gam2c_params$win_bins * gam_binsize / 1000,
-                     length(gam2c_params$is_sizes_bp), lim[1], lim[2]), p)
+                     gam2c_params$win_bp / 1000,
+                     length(gam2c_params$is_sizes_bp), -lim, lim), p)
   fwrite(d, p, sep = "\t", col.names = FALSE, append = TRUE, quote = FALSE,
          scipen = 999)
   msg("  gam_melting_score.bedgraph (%d rows)", nrow(d))
@@ -624,71 +624,69 @@ local({
 local({
   suppressPackageStartupMessages(library(ggplot2))
 
-  p1 <- ggplot(TR[is.finite(D_signed)], aes(D_signed)) +
-    geom_histogram(bins = 120, fill = "grey60") +
-    geom_vline(xintercept = c(-1, 1) * dcut, linetype = 2, colour = "#b2182b") +
-    labs(x = "signed KS statistic D  (+ melting in cKO, - condensing)",
-         y = "20 kb bins",
-         title = "Genome-wide melting, measured as an effect size",
-         subtitle = sprintf(paste0("Dashed lines are the %.0f%% tails that define a call ",
-                                   "(|D| >= %.3f). Median |D| = %.3f.\nThe published ",
-                                   "|score| > %g cutoff would call %.0f%% of bins here,\n",
-                                   "so it is not used - see the GAM_2c header."),
-                            100 * gam2c_params$call_frac, dcut,
-                            gsumm[chr == "ALL", median_D], gam2c_params$call_cut,
-                            100 * pub_frac)) +
-    theme_m
-  save_fig(p1, "melting_score_distribution", subdir = fig_sub, width = 8, height = 5)
-
-  # D against the score: how much of the score is effect size and how much is
-  # just the number of values pooled.
-  p2 <- ggplot(TR[is.finite(melting_score) & is.finite(D)], aes(D, abs(melting_score))) +
-    geom_point(alpha = 0.05, size = 0.4, colour = "#2166ac") +
-    labs(x = "KS statistic D (effect size, no independence assumption)",
-         y = "|melting score|",
-         title = "Why the calls come from D and not from the score",
-         subtitle = paste0("Where the cloud is vertical, windows with the SAME distance ",
-                           "between distributions get wildly different\nscores - the score is ",
-                           "responding to how many values were pooled, not to the effect.")) +
-    theme_m
-  save_fig(p2, "melting_score_vs_D", subdir = fig_sub, width = 6.5, height = 5.5)
-
+  # 1. BOTH SCORES, MIRRORED. This is the honest rendering and it answers the
+  #    obvious objection directly: an interval can carry a melting score and a
+  #    condensation score at the same time, because the two one-sided tests are
+  #    not complementary. Drawing one signed value would hide exactly that.
+  dbin <- as.integer(gam2c_params$win_bp)
   show <- intersect(c("chr11", "chr16"), unique(TR$chr))
   if (length(show)) {
-    # AGGREGATE FOR DISPLAY, to the window size itself. The track is smooth -
-    # lag-1 autocorrelation 0.9989 between adjacent 20 kb bins - but a
-    # chromosome holds several thousand of them, consecutive windows overlap by
-    # 24 of 25 bins, and nothing finer than the window is resolved anyway.
-    # Drawing every bin therefore renders one measurement thousands of times and
-    # aliases into what looks like noise. One point per window width is the
-    # honest display resolution.
-    dbin <- as.integer(gam2c_params$win_bins * gam_binsize)
-    d3 <- TR[chr %in% show & is.finite(D_signed)]
+    d3 <- TR[chr %in% show & is.finite(melting_score)]
     d3[, grp := (viewpoint %/% dbin) * dbin]
-    d3 <- d3[, .(D_signed = mean(D_signed, na.rm = TRUE)), by = .(chr, grp)]
-    p3 <- ggplot(d3, aes(grp / 1e6, D_signed)) +
-      geom_hline(yintercept = c(-1, 1) * dcut, linetype = 2,
-                 colour = "grey60", linewidth = 0.3) +
-      geom_area(aes(fill = D_signed > 0), colour = NA) +
-      scale_fill_manual(values = c("TRUE" = "#b2182b", "FALSE" = "#2166ac"),
-                        labels = c("TRUE" = "melting", "FALSE" = "condensing"),
+    d3 <- d3[, .(melting = mean(melting_score, na.rm = TRUE),
+                 condensation = -mean(condensation_score, na.rm = TRUE)),
+             by = .(chr, grp)]
+    d3 <- melt(d3, id.vars = c("chr", "grp"), variable.name = "which",
+               value.name = "score")
+    p3 <- ggplot(d3, aes(grp / 1e6, score, fill = which)) +
+      geom_hline(yintercept = c(-1, 1) * gam2c_params$call_cut, linetype = 2,
+                 colour = "grey55", linewidth = 0.3) +
+      geom_area(colour = NA) +
+      scale_fill_manual(values = c(melting = "#b2182b", condensation = "#2166ac"),
                         name = NULL) +
       facet_wrap(~ chr, ncol = 1, scales = "free_x") +
-      labs(x = "position (Mb)", y = "signed KS D",
-           title = "Melting along the chromosome",
-           subtitle = paste0(dbin / 1000, " kb display bins (one per sliding window); ",
-                             "dashed lines are the genome-wide ",
-                             round(100 * gam2c_params$call_frac), "% tails")) +
+      labs(x = "position (Mb)", y = "-log10 p (Bonferroni)",
+           title = "Melting and condensation are two scores, not one signed one",
+           subtitle = paste0(dbin / 1000, " kb window stepping one bin, as MELTRONIC. ",
+                             "Dashed lines are the published |score| > ",
+                             gam2c_params$call_cut, " cutoff.\nAn interval with ",
+                             "both means its two insulation distributions CROSS - ",
+                             "one tail up, the other down.")) +
       theme_m + theme(legend.position = "top")
-    save_fig(p3, "melting_track", subdir = fig_sub, width = 11, height = 5)
+    save_fig(p3, "melting_track", subdir = fig_sub, width = 11, height = 5.5)
   }
+
+  # 2. How often is an interval called in BOTH directions at once?
+  dd <- TR[is.finite(melting_score) & is.finite(condensation_score)]
+  p1 <- ggplot(dd, aes(melting_score, condensation_score)) +
+    geom_hline(yintercept = gam2c_params$call_cut, linetype = 2, colour = "grey55") +
+    geom_vline(xintercept = gam2c_params$call_cut, linetype = 2, colour = "grey55") +
+    geom_point(alpha = 0.05, size = 0.4, colour = "#2166ac") +
+    labs(x = "melting score", y = "condensation score",
+         title = "The two one-sided tests are not complementary",
+         subtitle = sprintf(paste0("Top-right quadrant = called BOTH ways: %.1f%% of ",
+                                   "intervals. Those are places where the two\ninsulation ",
+                                   "distributions cross, so a single signed track would ",
+                                   "misdescribe them."), pct_both)) +
+    theme_m
+  save_fig(p1, "melting_score_distribution", subdir = fig_sub, width = 6.5, height = 5.5)
+
+  # 3. Score against effect size, per direction.
+  d2 <- rbind(dd[, .(D = d_melt, score = melting_score, which = "melting")],
+              dd[, .(D = d_cond, score = condensation_score, which = "condensation")])
+  p2 <- ggplot(d2, aes(D, score)) +
+    geom_point(alpha = 0.05, size = 0.4, colour = "#2166ac") +
+    facet_wrap(~ which) +
+    labs(x = "one-sided KS statistic D (effect size)", y = "-log10 p (Bonferroni)",
+         title = "Score against effect size",
+         subtitle = paste0("With the published ", gam2c_params$win_bp / 1000,
+                           " kb window the score no longer saturates, so the ",
+                           "published cutoff is usable.")) +
+    theme_m
+  save_fig(p2, "melting_score_vs_D", subdir = fig_sub, width = 8, height = 4.5)
 
   if (nrow(REG)) {
     d4 <- REG[is.finite(ks_D)]
-    # ORDERED BY EXCESS OVER ITS OWN NULL, not by raw D. A single multi-Mb
-    # interval reaches a sizeable D by itself, so ranking on D alone puts the
-    # region sets that are indistinguishable from background at the top of the
-    # chart - which is the opposite of what the chart is for.
     d4[, excess := ks_D - null_D_median]
     d4[, set_f := reorder(set, excess)]
     p4 <- ggplot(d4, aes(set_f, ks_D, fill = direction)) +

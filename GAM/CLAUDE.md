@@ -312,50 +312,51 @@ reported Pcdh mean of -0.019 for a quantity whose value over its actual bins is
 +0.802; the two are now cross-checked against the matched-background table's
 `observed` column, which is computed independently in the same stage.
 
-## MELTRON (GAM_2c): use the KS statistic D, not the published melting score
+## MELTRON (GAM_2c): two scores per interval, at the published window
 
 `GAM_2c_Meltron.R` ports the Pombo lab's MELTRON / MELTRONIC (Winick-Ng et al.
-Nature 2021, github.com/pombo-lab/Meltron). Insulation score = mean contact
-value in the square `[v-s, v) x (v, v+s]`, over 11 square sizes 240-1040 kb;
-the two genotypes' pooled IS distributions compared with a one-sided KS test;
-published score = -log10(Bonferroni-corrected p).
+Nature 2021; github.com/pombo-lab/Meltron, github.com/DominikSzabo1/MELTRONIC).
+Insulation score = mean contact value in the square `[v-s, v) x (v, v+s]`, over
+11 square sizes 240-1040 kb; the two genotypes' pooled IS distributions compared
+with one-sided KS tests.
 
-**Two deviations, both forced, both in the file header:**
+**Two scores per interval, never one signed number.** MELTRONIC emits
+`melting_score` AND `condensation_score`, each Bonferroni-corrected separately,
+and this follows it. The two one-sided tests are **not complementary**: where the
+two distributions cross, both reject and an interval genuinely carries both.
+`net_score` is derived for display and is secondary. On our data the two never
+fire together at the published cutoff (**0.0%** of intervals), which is printed
+every run as a result rather than assumed.
 
-1. **IS is additive here, not `log2(square mean) - log2(chromosome mean)`.** The
-   published form needs a positive quantity. **Only ~50% of our insulation
-   squares have a positive mean NPMI**, so the log form is undefined for half
-   the genome. We subtract instead - the same decision, for the same reason, as
-   settled point 8. Sign and ranking stay comparable to published work; the
-   **magnitude does not**.
-2. 20 kb viewpoints rather than 40 kb, so the output joins the rest of the repo
-   without a regrid. Square sizes unchanged.
+**The window is 120 kb stepping one bin, and getting it wrong breaks the score.**
+MELTRONIC's `120kb_genomic_intervals.bed` is 120 kb wide at a 40 kb step - 3 bins
+at their resolution. We match the physical width (6 bins at 20 kb). An earlier
+version here used 500 kb / 25 bins, which pooled 275 nested overlapping values
+into a test assuming independence; `-log10(p_adj)` saturated and the published
+`|score| > 5` cutoff appeared to call 69% of the genome. **The conclusion drawn
+then - "the published cutoff does not transfer" - was wrong**, and was a
+statement about the window, not the data. At the published window the cutoff
+calls 26.0% melting and 26.1% condensing and is used directly.
 
-**The published |score| > 5 cutoff does not transfer and is NOT used.** It calls
-about a third of the genome in the published setting; here it calls roughly two
-thirds, because each window pools 11 square sizes x 25 viewpoints into a test
-that assumes independence - they are nested and overlapping - so
-`-log10(p_adj)` saturates. Calls come from the tails of the genome's own
-**signed KS D** instead, which is a relative statement ("the most melted 5%")
-and is labelled as such. The published figure is printed beside ours so the
-discrepancy stays visible.
+**One deviation remains, and it is forced.** IS is additive here, not
+`log2(square mean) - log2(chromosome mean)`: **only ~51% of our insulation
+squares have a positive mean NPMI**, so the log form is undefined for half the
+genome. We subtract instead - the same decision, for the same reason, as settled
+point 8. Sign and ranking stay comparable to published work; the **magnitude does
+not**. (20 kb viewpoints rather than 40 kb is the other difference, and is only a
+grid choice.)
 
-**The track is regionally coherent over megabases, not at window level.**
-Measured every run into `gam2c_meltron_spatial_coherence.tsv`: aggregated to one
-point per 500 kb sliding window, the direction changes sign between ~25% of
-adjacent windows, the median run of one direction is 3 windows (1.5 Mb) and the
-longest is 28 (14 Mb). That is the scale of GAM_4's one-directional blocks - and
-those blocks come out melting (lost) and condensing (gained) at the floor of the
-null here. So read regions, not single windows.
+**Regional, not fine-grained.** `gam2c_meltron_spatial_coherence.tsv`: the net
+score changes sign between ~15% of adjacent 120 kb windows, median run 480 kb,
+longest 8 Mb. Melting and condensing regions are discrete multi-megabase blocks.
 
-**Quote `p_empirical_D`, not the raw score.** Every region set is also scored
-against size-matched random regions on the same chromosomes, and that null is
-what makes the output interpretable at all: **the raw score saturates at the
-+/-300 cap for all four significant sets**, so it cannot rank or separate them.
-Against the null they separate cleanly. D also shows something the score cannot:
-the gene-family sets sit BELOW their own nulls (e.g. Pcdh 0.224 against a null
-median of 0.260), i.e. less changed than a random region of the same width, which
-a one-sided score reports simply as "not significant".
+**Quote `p_empirical_D`, not the raw score, for region sets.** Every region set
+is scored against size-matched random regions on the same chromosomes. Result:
+hotspot domains and large blocks melt and condense in the direction their name
+predicts - lost D 0.171 / 0.129 against null medians 0.032 / 0.031, gained 0.198
+/ 0.163 against 0.032 / 0.033, all four at the 1/501 floor - by an instrument
+that never touches the differential-contact calls they were built from. The
+derepressed gene families, protocadherin included, sit BELOW their own nulls.
 
 ## GAM_5 sections A and B use a domain definition section C disproves
 
