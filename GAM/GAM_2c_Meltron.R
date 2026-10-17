@@ -709,4 +709,180 @@ local({
   }
 })
 
+# ============================================================================
+# PART D - FIGURES THAT CONNECT MELTING TO THE REST OF THE ANALYSIS
+# ----------------------------------------------------------------------------
+# The three figures above describe the melting score itself. These relate it to
+# everything else the project has measured, which is the only way it earns its
+# place: a melting track nobody can connect to the hotspots, the marks or the
+# domains is a number without a claim attached.
+#
+# They follow the published displays rather than inventing new ones. The Pombo
+# plotting scripts (pombo-lab/Meltron code/) use (a) per-region ECDF panels -
+# the direct picture of what the KS test compares - and (b) ComplexHeatmaps of
+# regions x covariates with melting score as one column among compartment, RNA
+# and ATAC. The insulation-by-square-size heatmap is the third: it is the only
+# view that shows at WHICH SPATIAL SCALE a region changes, which a single
+# collapsed score cannot.
+# ============================================================================
+local({
+  suppressPackageStartupMessages(library(ggplot2))
+
+  # ------------------------------------------------------------------
+  # D1. INSULATION DIFFERENCE BY SQUARE SIZE - the heatmap-style track.
+  # x = position, y = insulation square size, fill = IS(cKO) - IS(WT).
+  # A region that melts at every scale is a block of red across the whole
+  # panel; one that reorganises only locally is red at 240 kb and flat at
+  # 1 Mb. The collapsed score cannot tell those apart.
+  # ------------------------------------------------------------------
+  for (rg in list(list(chr = "chr18", from = 36.0e6, to = 39.0e6, nm = "chr18_Pcdh"),
+                  list(chr = "chr11", from = 3.0e6,  to = 25.0e6, nm = "chr11_lostblock"))) {
+    d <- IS[chr == rg$chr & viewpoint >= rg$from & viewpoint < rg$to]
+    if (!nrow(d)) next
+    d[, diff := IS_HP1gKO - IS_WT]
+    lim <- as.numeric(quantile(abs(d$diff), 0.98, na.rm = TRUE))
+    p <- ggplot(d, aes(viewpoint / 1e6, is_size / 1000,
+                       fill = pmax(-lim, pmin(lim, diff)))) +
+      geom_raster() +
+      scale_fill_gradientn(colours = c("#2166ac", "#f7f7f7", "#b2182b"),
+                           limits = c(-lim, lim), na.value = "grey92",
+                           name = "IS(cKO)\n- IS(WT)") +
+      scale_y_continuous(breaks = gam2c_params$is_sizes_bp / 1000, expand = c(0, 0)) +
+      scale_x_continuous(expand = c(0, 0)) +
+      labs(x = sprintf("%s (Mb)", rg$chr), y = "insulation square size (kb)",
+           title = sprintf("Where, and at what scale, contact density changes - %s", rg$nm),
+           subtitle = paste0("Red = the cKO has MORE local contact density at that scale ",
+                             "(condensing); blue = less (melting).\nA vertical band of one ",
+                             "colour is a change at every scale; a change confined to the ",
+                             "bottom rows is local reorganisation only.")) +
+      theme_m + theme(panel.grid = element_blank())
+    save_fig(p, paste0("is_by_scale_", rg$nm), subdir = fig_sub, width = 10, height = 4.2)
+  }
+
+  # ------------------------------------------------------------------
+  # D2. MELTING AGAINST EVERYTHING ELSE WE HAVE MEASURED.
+  # Per 20 kb bin, the net melting score against the project's own
+  # annotations. This is the figure that says whether melting is telling us
+  # anything the other tracks were not.
+  # ------------------------------------------------------------------
+  g1 <- tryCatch(readRDS(file.path(rds_dir, "gam_bins_annotated.rds")),
+                 error = function(e) NULL)
+  if (!is.null(g1)) {
+    A <- as.data.table(g1$annot)
+    J <- merge(TR[, .(bin_id, chr, net_score, melting_score, condensation_score)],
+               A, by = "bin_id", suffixes = c("", ".a"))
+    ov <- nrow(J) / nrow(TR)
+    msg("  joined melting to annotation on %.1f%% of scored bins", 100 * ov)
+    stopifnot(ov > 0.5)
+
+    J[, hotspot := fcase(dom_lost_adj > 0 & dom_gained_adj > 0, "both",
+                         dom_lost_adj > 0, "lost domain",
+                         dom_gained_adj > 0, "gained domain",
+                         default = "neither")]
+    J[, net_contacts := n_contacts_gained - n_contacts_lost]
+    # H4K20me3 per-bin log2FC, the headline ChIP effect
+    if ("H4K20me3" %in% colnames(g1$l2fc))
+      J[, k20 := g1$l2fc[match(bin_id, rownames(g1$l2fc)), "H4K20me3"]]
+
+    cats <- list()
+    cats$hotspot <- J[hotspot != "both", .(grp = "hotspot domain", lvl = hotspot,
+                                           v = net_score)]
+    if ("compartment_centred" %in% names(J))
+      cats$chip <- J[!is.na(compartment_centred),
+                     .(grp = "ChIP class", lvl = as.character(compartment_centred),
+                       v = net_score)]
+    hm <- grep("^hmm_", names(J), value = TRUE)
+    if (length(hm)) {
+      J[, top_state := sub("^hmm_", "", hm[max.col(as.matrix(.SD), ties.method = "first")]),
+        .SDcols = hm]
+      keep <- J[, .N, by = top_state][N > 2000, top_state]
+      cats$state <- J[top_state %in% keep, .(grp = "ChromHMM state", lvl = top_state,
+                                             v = net_score)]
+    }
+    D2 <- rbindlist(cats)
+    if (nrow(D2)) {
+      D2[, lvl := reorder(lvl, v, median, na.rm = TRUE)]
+      p2 <- ggplot(D2[is.finite(v)], aes(lvl, v)) +
+        geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
+        geom_boxplot(outlier.shape = NA, fill = "grey88", linewidth = 0.3) +
+        facet_wrap(~ grp, scales = "free_x", nrow = 1) +
+        coord_cartesian(ylim = as.numeric(quantile(D2$v, c(0.01, 0.99), na.rm = TRUE))) +
+        labs(x = NULL, y = "net melting score  (+ melting, - condensing)",
+             title = "Melting against the project's own annotations",
+             subtitle = paste0("Per 20 kb bin. If melting carried no information beyond ",
+                               "the existing tracks these would all sit on zero.")) +
+        theme_m + theme(axis.text.x = element_text(angle = 40, hjust = 1, size = 7))
+      save_fig(p2, "melting_vs_annotation", subdir = fig_sub, width = 11, height = 4.6)
+    }
+
+    # Continuous covariates: melting against contact change and against the
+    # mark loss, binned so ~119k points do not become a black rectangle.
+    cv <- list()
+    cv$contacts <- J[is.finite(net_contacts),
+                     .(x = net_contacts, y = net_score, w = "net differential contacts")]
+    if ("k20" %in% names(J))
+      cv$k20 <- J[is.finite(k20), .(x = k20, y = net_score, w = "H4K20me3 log2FC")]
+    CV <- rbindlist(cv)
+    if (nrow(CV)) {
+      CV[, xb := cut(x, breaks = quantile(x, seq(0, 1, 0.05), na.rm = TRUE),
+                     include.lowest = TRUE, labels = FALSE), by = w]
+      SM <- CV[, .(x = median(x, na.rm = TRUE), y = median(y, na.rm = TRUE),
+                   lo = quantile(y, 0.25, na.rm = TRUE),
+                   hi = quantile(y, 0.75, na.rm = TRUE), n = .N), by = .(w, xb)]
+      rho <- CV[, .(r = stats::cor(x, y, method = "spearman",
+                                   use = "pairwise.complete.obs")), by = w]
+      SM <- merge(SM, rho, by = "w")
+      SM[, lab := sprintf("%s  (rho = %.3f)", w, r)]
+      p3 <- ggplot(SM, aes(x, y)) +
+        geom_hline(yintercept = 0, colour = "grey70", linewidth = 0.3) +
+        geom_ribbon(aes(ymin = lo, ymax = hi), fill = "grey85") +
+        geom_line(colour = "#b2182b", linewidth = 0.7) +
+        geom_point(size = 1.2, colour = "#b2182b") +
+        facet_wrap(~ lab, scales = "free_x") +
+        labs(x = NULL, y = "net melting score",
+             title = "Melting against the two quantities the project is built on",
+             subtitle = paste0("Each point is a 5% bin of the x variable; ribbon is the ",
+                               "interquartile range of the melting score in that bin.")) +
+        theme_m
+      save_fig(p3, "melting_vs_covariates", subdir = fig_sub, width = 9, height = 4.4)
+    }
+  }
+
+  # ------------------------------------------------------------------
+  # D3. ECDF PANELS - the published diagnostic, and the direct picture of
+  # what the KS test actually compares. The vertical gap between the two
+  # curves IS the statistic.
+  # ------------------------------------------------------------------
+  if (exists("region_sets") && length(region_sets)) {
+    ec <- rbindlist(lapply(names(region_sets), function(nm) {
+      R <- region_sets[[nm]]
+      pl <- pool_rows(R)
+      a <- unlist(lapply(names(pl), function(ch) as.vector(WIDE[[ch]]$wt[pl[[ch]], , drop = FALSE])))
+      b <- unlist(lapply(names(pl), function(ch) as.vector(WIDE[[ch]]$ko[pl[[ch]], , drop = FALSE])))
+      ok <- is.finite(a) & is.finite(b)
+      if (sum(ok) < 50) return(NULL)
+      rbind(data.table(set = nm, genotype = "WT", v = a[ok]),
+            data.table(set = nm, genotype = "cKO", v = b[ok]))
+    }))
+    if (nrow(ec)) {
+      lab <- REG[, .(set, lab = sprintf("%s\nD = %.3f, emp p = %.3f", set, ks_D,
+                                        p_empirical_D))]
+      ec <- merge(ec, lab, by = "set")
+      p4 <- ggplot(ec, aes(v, colour = genotype)) +
+        stat_ecdf(linewidth = 0.8) +
+        scale_colour_manual(values = c(WT = "#2166ac", cKO = "#b2182b"), name = NULL) +
+        facet_wrap(~ lab, scales = "free_x") +
+        labs(x = "insulation score (all square sizes pooled)",
+             y = "cumulative probability",
+             title = "What the Kolmogorov-Smirnov test actually compares",
+             subtitle = paste0("The largest vertical gap between the two curves IS the ",
+                               "statistic D. cKO curve to the LEFT = less local\ncontact ",
+                               "density = melting. This is the published diagnostic ",
+                               "(Meltron code/plot_ecdf.R).")) +
+        theme_m + theme(legend.position = "top", strip.text = element_text(size = 7))
+      save_fig(p4, "melting_ecdf_region_sets", subdir = fig_sub, width = 10, height = 7)
+    }
+  }
+})
+
 msg("GAM_2c complete.")
