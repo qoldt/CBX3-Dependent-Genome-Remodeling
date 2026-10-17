@@ -65,11 +65,18 @@ local({
   # Row heights in inches. Absolute, so the layout is the same whatever the region.
   gam12_h_hot    <- 0.75
   gam12_h_hotmap <- 0.55
-  gam12_h_hotcall<- 0.50
+  # The hotspot CALL is a categorical ribbon exactly like the LAD ribbon below
+  # it - a presence/absence strip, not a magnitude - so it gets the same height.
+  # Only the differential-contact COUNT track above needs room, because there the
+  # bar height carries the number.
   gam12_h_lad    <- 0.22
+  gam12_h_hotcall<- 0.22
   gam12_h_mark   <- 0.70
   gam12_h_gene   <- 0.80
-  gam12_h_chrome <- 1.70   # title, caption, x axis, inter-panel margins
+  gam12_h_cov    <- 0.26   # the coverage key strip under the mark panels
+  # Caption is ~10 wrapped lines now that the two mark-track references are stated
+  # in full, so this has to cover more than it used to.
+  gam12_h_chrome <- 2.10
 
   # MINIMUM Y SPAN of a mark panel, in log2FC. Without a floor the axis fits
   # whatever the region happens to contain, so a mark with almost no dynamic range
@@ -481,6 +488,19 @@ local({
           v  = if (!any(ok)) NA_real_ else sum(v[ok] * bm[ok]) / sum(bm[ok]),
           bm = if (!any(ok)) 0        else mean(bm[ok]))
       }, by = grp]
+      # TWO SEPARATE REFERENCES, and they are different statistics of different
+      # quantities. Keeping them straight is the whole reading of this track:
+      #   gm     = median of this mark's per-bin log2FC over all autosomal 20 kb
+      #            bins. Sets where the FILL changes colour.
+      #   bm_ref = 90th percentile of this mark's per-bin DESeq2 baseMean.
+      #            Sets the OPACITY, i.e. how much signal there was to take a
+      #            ratio of. Nothing to do with log2FC.
+      # MEDIAN, NOT MEAN, for gm: per-bin log2FC at 20 kb is a ratio of small
+      # integer counts (~1-11 per bin after the x10 scaling), so its distribution
+      # is heavy-tailed - bins with a near-empty denominator throw out extreme
+      # values and drag a mean. The median is unmoved by them. The question the
+      # fill answers is also a quantile question ("is this bin unusual against the
+      # typical bin?"), not a question about a total.
       gm <- median(A[[mk]], na.rm = TRUE)
       # Opacity carries coverage: a display bin at or above the mark's median
       # baseMean is solid, one with nothing in it fades out. This is what stops a
@@ -658,15 +678,42 @@ local({
     # or a band) inflated the tracks to fill the page and the maps came out as
     # slivers. With all rows in inches the figure height is just their sum, and a
     # map row is the same physical size whatever else is in the figure.
+    # COVERAGE KEY. The fade is drawn as a wash of white rects at
+    # alpha = 1 - coverage over the finished ribbon, under scale_alpha_identity,
+    # so ggplot cannot generate a legend for it - a second alpha scale would be
+    # needed and only one is allowed per plot. Drawing the key as its own thin
+    # panel is the way to label it, and it shows the actual gradient rather than
+    # describing it. Same construction as the track wash, so it cannot drift out
+    # of step with what the tracks do.
+    p_cov <- local({
+      xs <- seq(0, 1, length.out = 200)
+      ggplot() +
+        geom_rect(data = data.frame(x = xs),
+                  aes(xmin = x - 1/400, xmax = x + 1/400, ymin = 0, ymax = 1),
+                  fill = "#2166ac", colour = NA) +
+        geom_rect(data = data.frame(x = xs),
+                  aes(xmin = x - 1/400, xmax = x + 1/400, ymin = 0, ymax = 1,
+                      alpha = 1 - pmax(0.10, x)),
+                  fill = "white", colour = NA) +
+        scale_alpha_identity() +
+        scale_x_continuous(breaks = c(0, 0.5, 1),
+                           labels = c("0", "0.5", ">=1 x q90"), expand = c(0, 0)) +
+        coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
+        labs(y = "mark\ncoverage", x = NULL) +
+        theme_m +
+        theme(panel.grid = element_blank(), axis.title.y = element_text(size = 7),
+              axis.text.y = element_blank(), axis.text.x = element_text(size = 6),
+              plot.margin = margin(1, 4, 1, 4))
+    })
     lad_h   <- if (is.null(p_lad)) numeric(0) else gam12_h_lad
-    track_h <- c(hot_h, lad_h, rep(gam12_h_mark, length(panels)), gam12_h_gene)
+    track_h <- c(hot_h, lad_h, rep(gam12_h_mark, length(panels)), gam12_h_cov, gam12_h_gene)
     heights <- grid::unit(c(rep(map_h_in, n_tri), track_h), "in")
     # guides = "collect" is essential here, not cosmetic. Without it every panel
     # keeps its own legend, and patchwork centres each one on ITS OWN ROW - so the
     # LAD legend (two keys) was being centred on a 0.22 in row and spilled over
     # the legends above and below it. Collected and top-justified, they stack.
     wrap_plots(c(tri, hot_panels, if (is.null(p_lad)) NULL else list(p_lad),
-                 panels, list(p_gene)), ncol = 1, heights = heights) +
+                 panels, list(p_cov), list(p_gene)), ncol = 1, heights = heights) +
       plot_layout(guides = "collect") +
       plot_annotation(
         title = sprintf("%s:%.2f-%.2f Mb", chrom, from / 1e6, to / 1e6),
@@ -681,12 +728,17 @@ local({
         "GAM: CA1 pyramidal cells, HP1g WT/cKO, 20 kb, |delta-z|>2, max NPMI>0.1. ",
         "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT).\n",
         "Contact map block-averaged and 3x3 smoothed for display. ",
-        "MARK TRACKS are aggregated to 100 kb for display (coverage-weighted) because per-bin log2FC at 20 kb is noise-dominated ",
-        "(sd 0.14-0.16 for the broad marks, up to 0.57 for H3K4me3); opacity is coverage, so faint means little signal to take a ratio of. ",
-        "All statistics elsewhere use unsmoothed values.\n",
-        "MARK FILL diverges from each mark's GENOME MEDIAN (solid line, value in the axis label), not from zero: ",
-        "blue means above that median, which for a negative median is still a loss. Dotted line is zero where in range. ",
-        "The fill shows direction only, not magnitude - read the y axis before calling anything a change.\n",
+        "MARK TRACKS, how they are built: per-bin log2FC(cKO/WT) at 20 kb is aggregated to 100 kb display bins, each 20 kb bin ",
+        "weighted by its baseMean, then resampled to a smooth outline. Aggregation is necessary because per-bin log2FC at 20 kb is ",
+        "noise-dominated (sd 0.14-0.16 for the broad marks, up to 0.57 for H3K4me3). All statistics elsewhere use unsmoothed values.\n",
+        "MARK FILL REFERENCE = that mark's GENOME-WIDE MEDIAN per-bin log2FC (solid grey line; its value is printed in the axis label). ",
+        "Red is below that median, blue above it - so for a mark with a negative median, blue is still a loss, just a smaller one than ",
+        "typical. Zero is the dotted line where it falls in range. Median rather than mean because per-bin log2FC is a ratio of small ",
+        "counts with a heavy tail, which drags a mean but not a median. The fill shows direction only; read the y axis for magnitude.\n",
+        "MARK OPACITY = that bin's baseMean divided by the 90th percentile of the same mark's baseMean genome-wide, capped at 1 and ",
+        "floored at 0.10. Solid = as much signal as the mark's well-covered bins; faint = little signal in either genotype, so the ratio ",
+        "is unreliable. q90 rather than the median because for a punctate mark the median bin is itself empty (H3K4me3 median baseMean ",
+        "0.12 against q90 3.18), which would render an empty track solid.\n",
         "Diff. contacts = count of significant differential contacts per 20 kb bin within 5 Mb (the dashed line on the map); ",
         "net = gained - lost, same sign convention as the difference map. Those are COUNTS, every bin has one. ",
         "Hotspot is the separate CALL on that count: bins at or above the collaborators' 50-75 per-window cutoff. ",
@@ -795,6 +847,83 @@ local({
       "pass maxdist to set the band height.\n")
 })
 
+
+# ==============================================================================
+# SECTION B0 - all 19 autosomes, by chromatin class and separation
+# ==============================================================================
+# Reads gam10_perchrom_sums.tsv (sums and counts per chromosome x genotype x
+# class x band, written by GAM_5) rather than the NPMI matrices, so this covers
+# every autosome at no I/O cost. The contact-budget figure in section B below
+# loads matrices and is therefore limited to the five FOCUS chromosomes; this one
+# is the all-19 context any single-chromosome claim has to be read against.
+#
+# TWO PANELS, and the second is the one to read. NPMI is a relative measure, so
+# anything that shifts a chromosome's detection frequency between genotypes moves
+# every class on that chromosome in the same direction - a whole-chromosome
+# offset. chr7 (up in all classes at all bands) and chr11 (down in all classes
+# past 1 Mb) are the clearest cases. Such an offset CANCELS in the difference
+# between two classes on the same chromosome, so the het-het minus eu-eu contrast
+# in panel B is offset-invariant and the per-class panel A is not.
+local({
+  fig_sub <- "chromosomes"
+  msg <- function(...) cat(sprintf(...), "\n", sep = "")
+  f <- file.path(tables_dir, "gam10_perchrom_sums.tsv")
+  if (!file.exists(f)) { msg("gam10_perchrom_sums.tsv missing - section B0 skipped"); return(invisible()) }
+  P <- fread(f)
+  BANDS_O <- c("<0.2Mb", "0.2-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
+  CLS_LAB <- c(intra_dom = "het-het, same domain", inter_het = "het-het, different domains",
+               het_eu = "het-euchromatin", eu_eu = "euchromatin-euchromatin")
+  P[, mean_npmi := s / n]
+  W <- dcast(P, chr + cls + band ~ genotype, value.var = c("mean_npmi", "n"))
+  W[, pct := 100 * (mean_npmi_HP1gKO / mean_npmi_WT - 1)]
+  W[, band := factor(band, BANDS_O)]
+  W[, chr  := factor(chr, paste0("chr", 1:19))]
+  W[, cls_lab := factor(CLS_LAB[cls], CLS_LAB)]
+  fwrite(W[order(chr, cls, band)], file.path(tables_dir, "gam15_perchrom_class_band.tsv"), sep = "\t")
+
+  # --- panel A: every class on every autosome --------------------------------
+  pA <- ggplot(W[is.finite(pct)], aes(band, pct, colour = cls_lab, group = cls_lab)) +
+    geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
+    geom_line(linewidth = .5) + geom_point(size = 1.1) +
+    facet_wrap(~ chr, ncol = 5) +
+    scale_colour_manual(values = setNames(disc_pal(4), CLS_LAB), name = NULL) +
+    labs(title = "Change in contact frequency by chromatin class and separation, all 19 autosomes",
+         subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT. Read this panel for the ",
+                           "SHAPE across separations within a chromosome;\nits overall level is ",
+                           "confounded by a per-chromosome offset (chr7 up throughout, chr11 down ",
+                           "throughout) - see panel B."),
+         x = "genomic separation", y = "% change in mean NPMI") +
+    theme_m + theme(legend.position = "top",
+                    axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+  save_fig(pA, "perchrom_class_band_all19", subdir = fig_sub, width = 12, height = 10)
+
+  # --- panel B: the offset-invariant contrast --------------------------------
+  CC <- dcast(W[cls %in% c("inter_het", "eu_eu")], chr + band ~ cls, value.var = "pct")
+  CC[, contrast := inter_het - eu_eu]
+  CC <- CC[is.finite(contrast)]
+  lim <- max(abs(CC$contrast), na.rm = TRUE)
+  npos <- CC[, .(n_pos = sum(contrast > 0), n = .N), by = band][order(band)]
+  pB <- ggplot(CC, aes(band, chr, fill = contrast)) +
+    geom_tile(colour = "white", linewidth = .4) +
+    geom_text(aes(label = sprintf("%+.0f", contrast)), size = 2.7,
+              colour = ifelse(abs(CC$contrast) > 0.6 * lim, "white", "grey15")) +
+    scale_fill_heat0_div(limits = c(-lim, lim), name = "het-het minus\neu-eu (% pts)") +
+    scale_y_discrete(limits = rev(paste0("chr", 1:19))) +
+    labs(title = "Heterochromatin's gain relative to euchromatin, per autosome",
+         subtitle = paste0("het-het (different domains) minus euchromatin-euchromatin, in percentage ",
+                           "points. A whole-chromosome\noffset cancels in this difference, so it is the ",
+                           "interpretable quantity. Positive on ",
+                           paste(sprintf("%d/%d", npos$n_pos, npos$n), collapse = ", "),
+                           " autosomes\nacross the five bands in order."),
+         x = "genomic separation", y = NULL) +
+    theme_m + theme(panel.grid = element_blank())
+  save_fig(pB, "perchrom_class_contrast_all19", subdir = fig_sub, width = 8, height = 7)
+
+  msg("\n=== het-het minus eu-eu, per autosome (percentage points) ===")
+  print(dcast(CC, chr ~ band, value.var = "contrast"))
+  msg("positive on: %s of %d autosomes, by band (%s)",
+      paste(npos$n_pos, collapse = "/"), npos$n[1], paste(npos$band, collapse = ", "))
+})
 
 # ==============================================================================
 # SECTION B - per-chromosome characterisation              (was GAM_15)

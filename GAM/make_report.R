@@ -35,8 +35,12 @@ suppressPackageStartupMessages({ library(data.table); library(base64enc) })
 ARTIFACT <- "--artifact" %in% commandArgs(TRUE)
 OUT      <- file.path(results_dir, "GAM_REPORT.html")
 OUT_ART  <- file.path(results_dir, "GAM_REPORT_artifact.html")
-MAXW <- 1100L           # px, downscale wider images before embedding (keeps the
-                        # single-file HTML small enough to open on a phone)
+# IMAGE WIDTH. The content column is max-width 1180px with 16px padding, so an
+# image is displayed at up to ~1148 CSS px. At 1100 px of actual pixels it was
+# being upscaled on any retina display, which is what made the figures look
+# pixelated in a desktop browser. 1800 px gives roughly 1.6 device pixels per CSS
+# pixel, which is crisp at the common 1.5x-2x ratios without quadrupling bytes.
+MAXW <- 1800L
 msg <- function(...) cat(sprintf(...), "\n", sep = "")
 tmpd <- file.path(tempdir(), "gamreport"); dir.create(tmpd, showWarnings = FALSE)
 
@@ -49,7 +53,19 @@ esc <- function(x) {
 # --- figure embedding ---------------------------------------------------------
 # sips is macOS-only but this repo is explicitly a macOS analysis box (the
 # safe-local-alignment skill exists for that reason). If it is absent the image
-# is embedded at full size rather than skipped.
+# is used at full size rather than skipped.
+#
+# TWO DELIVERY MODES, because the size budgets are different:
+#   local HTML  - base64 data: URI, so the file is self-contained and portable.
+#   --artifact  - the PNG is written beside the page and referenced relatively.
+# Base64 was the reason the artifact had to run at a low image width: embedded
+# data: URIs count against the artifact's 16 MB page limit, and ~40 figures of a
+# retina-resolution plot do not fit. As separate published files that limit is
+# per file instead of per page, so the artifact gets the same resolution as the
+# local copy. ASSETS collects what has to be published alongside the page.
+ASSETS <- new.env(parent = emptyenv()); ASSETS$files <- character(0)
+asset_dir <- file.path(results_dir, "GAM_REPORT_artifact_files")
+
 embed_fig <- function(rel, caption = NULL) {
   f <- file.path(fig_dir, rel)
   if (!file.exists(f)) {
@@ -63,13 +79,23 @@ embed_fig <- function(rel, caption = NULL) {
                                    stdout = FALSE, stderr = FALSE))
     if (ok == 0 && file.exists(small)) src <- small
   }
-  b64 <- base64enc::base64encode(src)
-  paste0('<figure><img src="data:image/png;base64,', b64, '">',
+  tag <- if (ARTIFACT) {
+    pub <- file.path("figures", gsub("[/]", "_", rel))
+    dest <- file.path(asset_dir, pub)
+    dir.create(dirname(dest), recursive = TRUE, showWarnings = FALSE)
+    file.copy(src, dest, overwrite = TRUE)
+    ASSETS$files <- c(ASSETS$files, pub)
+    # loading="lazy" matters here: the artifact is read on a phone, and without it
+    # every figure in the report is fetched before the first one renders.
+    sprintf('<img src="%s" loading="lazy" decoding="async">', pub)
+  } else {
+    sprintf('<img src="data:image/png;base64,%s">', base64enc::base64encode(src))
+  }
+  paste0("<figure>", tag,
          if (!is.null(caption)) paste0("<figcaption>", caption, "</figcaption>") else "",
          "</figure>")
 }
 
-# --- table rendering ----------------------------------------------------------
 tbl <- function(path, caption = NULL, digits = 3, max_rows = 40L, cols = NULL) {
   f <- if (file.exists(path)) path else file.path(tables_dir, path)
   if (!file.exists(f))
@@ -157,8 +183,8 @@ parts$bottom <- sec("Bottom line",
   "A global shift, not a minority-of-sites effect. Everything else here is the architecture question.</p>",
 
   "<h3>2. Heterochromatin becomes more self-associated at short range. It is NOT mixing.</h3>",
-  "<p>This is the central result and the loose phrase &ldquo;heterochromatin gains contacts&rdquo; hides which partners.",
-  "Split by partner class:</p>",
+  "<p>This is the central result. Heterochromatin gains contacts with heterochromatin, and with nothing else.",
+  "By partner class:</p>",
   "<table>",
   "<tr><th>pair type</th><th>&lt;0.2 Mb</th><th>0.2&ndash;1 Mb</th><th>1&ndash;5 Mb</th><th>5&ndash;10 Mb</th><th>&gt;10 Mb</th></tr>",
   "<tr><td>het&ndash;het, same domain</td><td><strong>+4.3%</strong> (1.8, 6.6)</td><td><strong>+5.9%</strong> (1.3, 18.6)</td><td><strong>+4.8%</strong> (3.6, 29.7)</td><td>&mdash;</td><td>&mdash;</td></tr>",
@@ -190,11 +216,10 @@ parts$bottom <- sec("Bottom line",
   "heterochromatin more&rdquo;, not &ldquo;each domain tightens&rdquo;. That null replicates across definitions, which is",
   "what makes it believable rather than a definition artefact.</p>",
 
-  "<h3>4. Whether compartments are better or worse defined: not yet, but closer than the caveat suggests.</h3>",
-  "<p>The standing caveat &ldquo;a usable axis on 11 of 38&rdquo; undersells what is there. Per",
-  "<code>npmi_compartment_orientation.tsv</code>, an oriented compartment axis is recovered on <strong>all 19 autosomes",
-  "in both genotypes</strong> (38 of 38; only chrX and chrY fail). The 11 is the count reaching |rho| &ge; 0.4 against the",
-  "orienting marker. The full picture:</p>",
+  "<h3>4. A compartment axis is recovered on every autosome, but not the same eigenvector in both genotypes.</h3>",
+  "<p>Per <code>npmi_compartment_orientation.tsv</code>, an oriented compartment axis is recovered on <strong>all 19",
+  "autosomes in both genotypes</strong> (38 of 38; only chrX and chrY fail). Its agreement with the orienting",
+  "marker &mdash; the mean of per-bin WT H3K4me3 and H3K36me3 z-scores &mdash; is modest:</p>",
   "<table>",
   "<tr><th>|rho| with orienting marker</th><th>combos (of 38)</th></tr>",
   "<tr><td>&ge; 0.3</td><td>25</td></tr><tr><td>&ge; 0.4</td><td>11</td></tr><tr><td>&ge; 0.5</td><td>3</td></tr>",
@@ -217,45 +242,58 @@ parts$bottom <- sec("Bottom line",
   "separate &ldquo;no relationship&rdquo; from &ldquo;cannot resolve it&rdquo;. The architecture does change; it just does not",
   "change in proportion to how much mark a bin lost.</p>",
 
-  "<h3>6. Chromosomes differ, but mostly by a whole-chromosome offset rather than by mechanism.</h3>",
-  "<p>&ldquo;chr3 and chr7 gain&rdquo; was too vague to be useful. Spelled out (percent change in mean NPMI,",
-  "cKO vs WT, per chromatin class and separation):</p>",
+  "<h3>6. The heterochromatin gain holds on 17 of 19 autosomes at short range, and reverses on several at long range.</h3>",
+  "<p>Per-chromosome numbers are percent change in mean NPMI, cKO vs WT, computed from",
+  "<code>gam10_perchrom_sums.tsv</code> (per-chromosome sums and pair counts) as",
+  "100 &times; (mean<sub>cKO</sub> / mean<sub>WT</sub> &minus; 1) within each chromosome &times; class &times; separation",
+  "cell. No bootstrap: these are the point estimates for single chromosomes, and the CIs quoted elsewhere",
+  "come from resampling chromosomes, which is not available within one.</p>",
+
+  "<div class=\'warn\'><strong>A chromosome&rsquo;s overall direction is not interpretable; the contrast between its",
+  "classes is.</strong> NPMI is a relative measure, so anything that shifts one chromosome&rsquo;s detection",
+  "frequency between genotypes moves every class on it the same way. chr7 is up in all four classes at all five",
+  "separations (+0.8% to +13.8%); chr11 is down in all classes past 1 Mb (&minus;2.9% to &minus;27.8%). A uniform",
+  "shift across every class and band is a whole-chromosome offset, not a class-specific mechanism. The offset",
+  "cancels when two classes on the same chromosome are differenced, so the het&ndash;het minus eu&ndash;eu contrast",
+  "below is the quantity that survives it.</div>",
+
+  "<h4>The offset-invariant contrast, every autosome</h4>",
+  "<p>het&ndash;het (different domains) minus euchromatin&ndash;euchromatin, in percentage points. Positive means",
+  "heterochromatin gained relative to euchromatin on that chromosome at that separation.</p>",
   "<table>",
-  "<tr><th>chr</th><th>class</th><th>0.02&ndash;1 Mb</th><th>1&ndash;5 Mb</th><th>5&ndash;10 Mb</th><th>&gt;10 Mb</th></tr>",
-  "<tr><td rowspan='3'>chr3</td><td>het&ndash;het</td><td>&minus;0.9</td><td>&minus;0.9</td><td><strong>+9.2</strong></td><td>&minus;0.6</td></tr>",
-  "<tr><td>het&ndash;eu</td><td>&minus;0.2</td><td>+0.9</td><td>+4.5</td><td>&minus;0.5</td></tr>",
-  "<tr><td>eu&ndash;eu</td><td>+0.8</td><td>+1.5</td><td>+1.2</td><td><strong>&minus;5.6</strong></td></tr>",
-  "<tr><td rowspan='3'>chr7</td><td>het&ndash;het</td><td>+8.9</td><td>+10.5</td><td>+11.8</td><td>+8.7</td></tr>",
-  "<tr><td>het&ndash;eu</td><td>+3.5</td><td>+6.9</td><td>+7.6</td><td>+13.8</td></tr>",
-  "<tr><td>eu&ndash;eu</td><td>+0.8</td><td>+3.7</td><td>+9.2</td><td>+13.5</td></tr>",
-  "<tr><td rowspan='3'>chr11</td><td>het&ndash;het</td><td>+7.4</td><td>&minus;14.7</td><td><strong>&minus;33.8</strong></td><td>&minus;24.7</td></tr>",
-  "<tr><td>het&ndash;eu</td><td>&minus;2.9</td><td>&minus;10.3</td><td>&minus;17.4</td><td>&minus;25.3</td></tr>",
-  "<tr><td>eu&ndash;eu</td><td>&minus;4.8</td><td>&minus;12.4</td><td>&minus;22.0</td><td>&minus;27.8</td></tr>",
+  "<tr><th>chr</th><th>&lt;0.2 Mb</th><th>0.2&ndash;1 Mb</th><th>1&ndash;5 Mb</th><th>5&ndash;10 Mb</th><th>&gt;10 Mb</th></tr>",
+  "<tr><td>chr1</td><td>&minus;0.6</td><td>&minus;1.6</td><td>&minus;3.4</td><td><strong>&minus;17.0</strong></td><td><strong>&minus;10.0</strong></td></tr><tr><td>chr2</td><td>+2.3</td><td>+7.2</td><td>+2.6</td><td>&minus;0.7</td><td>&minus;2.7</td></tr><tr><td>chr3</td><td>&minus;0.8</td><td>&minus;2.2</td><td>&minus;2.5</td><td>+7.3</td><td>+5.2</td></tr><tr><td>chr4</td><td>+4.3</td><td>+8.7</td><td><strong>+10.2</strong></td><td>+9.7</td><td>&minus;4.5</td></tr><tr><td>chr5</td><td>+4.3</td><td>+7.2</td><td><strong>+12.3</strong></td><td><strong>+14.9</strong></td><td><strong>+17.0</strong></td></tr><tr><td>chr6</td><td>+1.5</td><td>+4.8</td><td>+5.9</td><td>&minus;6.0</td><td><strong>+18.2</strong></td></tr><tr><td>chr7</td><td>+3.0</td><td>+8.3</td><td>+5.0</td><td>+1.7</td><td>&minus;5.3</td></tr><tr><td>chr8</td><td>+1.8</td><td>+0.3</td><td>+2.5</td><td><strong>&minus;15.5</strong></td><td>+1.0</td></tr><tr><td>chr9</td><td>+5.1</td><td><strong>+16.0</strong></td><td>+7.1</td><td>+5.4</td><td><strong>+10.5</strong></td></tr><tr><td>chr10</td><td>+2.3</td><td>+2.5</td><td>&minus;8.2</td><td>&minus;2.2</td><td>&minus;8.8</td></tr><tr><td>chr11</td><td>+7.3</td><td><strong>+13.6</strong></td><td>&minus;2.6</td><td><strong>&minus;11.8</strong></td><td>+3.0</td></tr><tr><td>chr12</td><td>+4.7</td><td>+3.3</td><td>+4.8</td><td><strong>+13.0</strong></td><td>+9.3</td></tr><tr><td>chr13</td><td>+4.1</td><td><strong>+13.5</strong></td><td><strong>+22.1</strong></td><td>+6.6</td><td>&minus;2.5</td></tr><tr><td>chr14</td><td>+3.8</td><td>+8.2</td><td><strong>+14.8</strong></td><td><strong>+23.3</strong></td><td><strong>+23.8</strong></td></tr><tr><td>chr15</td><td>+1.9</td><td>+5.0</td><td>+1.5</td><td><strong>&minus;13.5</strong></td><td>+0.9</td></tr><tr><td>chr16</td><td>+1.2</td><td>+4.8</td><td><strong>+14.8</strong></td><td><strong>+15.8</strong></td><td><strong>+14.6</strong></td></tr><tr><td>chr17</td><td>+4.9</td><td>+9.0</td><td>+9.6</td><td>+6.6</td><td>+5.5</td></tr><tr><td>chr18</td><td>+0.0</td><td>+3.1</td><td>+4.2</td><td>+2.5</td><td>&minus;5.0</td></tr><tr><td>chr19</td><td>+2.4</td><td>+5.4</td><td>+8.9</td><td><strong>+23.1</strong></td><td>+3.0</td></tr>",
+  "<tr><td><strong>positive on</strong></td><td><strong>17/19</strong></td><td><strong>17/19</strong></td><td><strong>15/19</strong></td><td>12/19</td><td>12/19</td></tr>",
   "</table>",
   "<ul>",
-  "<li><strong>chr3 is not a uniform gainer.</strong> Its gain is specific: mid-range, concentrated in het&ndash;het at",
-  "5&ndash;10 Mb (+9.2%). Beyond 10 Mb it <em>loses</em>, eu&ndash;eu by &minus;5.6%. So chr3 looks like the",
-  "genome-wide pattern with the short-range component shifted outward.</li>",
-  "<li><strong>chr7 gains in every class at every separation</strong> (+0.8% to +13.8%), and chr11 loses in every class",
-  "at every separation past 1 Mb (&minus;2.9% to &minus;27.8%). A uniform shift across all three classes and all four",
-  "bands is not what a class-specific mechanism looks like &mdash; it is the signature of a <em>whole-chromosome offset</em>.</li>",
+  "<li><strong>Below 1 Mb the result is near-universal.</strong> Heterochromatin gains relative to euchromatin on",
+  "17 of 19 autosomes in both short bands. The two exceptions are chr1 (&minus;0.6, &minus;1.6) and chr3",
+  "(&minus;0.8, &minus;2.2) &mdash; both small enough to be noise around zero rather than a reversal. This is the",
+  "per-chromosome support for result 2 and it is the strongest pattern in the data.</li>",
+  "<li><strong>Beyond 5 Mb it splits 12 to 7.</strong> The contrast stays strongly positive on chr14 (+23.3, +23.8),",
+  "chr16 (+15.8, +14.6), chr5 (+14.9, +17.0) and chr19 (+23.1), and goes clearly negative on chr1 (&minus;17.0),",
+  "chr8 (&minus;15.5), chr15 (&minus;13.5) and chr11 (&minus;11.8). So the long-range behaviour is",
+  "chromosome-specific in a way the short-range behaviour is not.</li>",
+  "<li><strong>chr11 is not the lone exception.</strong> It inverts at 1&ndash;5 Mb (&minus;2.6) and 5&ndash;10 Mb",
+  "(&minus;11.8), but chr1 inverts harder at both (&minus;3.4, &minus;17.0), and chr8, chr10 and chr15 also invert",
+  "at long range. Any statement that singles chr11 out as reversing the rule is wrong; it is one of five.</li>",
+  "<li><strong>Power is very unevenly distributed.</strong> het&ndash;het pair counts at 1&ndash;5 Mb range from 1,245",
+  "(chr11) to 61,329 (chr7) &mdash; a 49&times; spread, because heterochromatin content varies from 3.1% of bins on",
+  "chr11 to far more on chr7. The chromosomes that invert at long range are, with the exception of chr1, among the",
+  "thinnest. Read the sign, not the magnitude, on chr8, chr10, chr11, chr15 and chr18.</li>",
   "</ul>",
-  "<div class=\'warn\'><strong>This is why only the within-chromosome class contrast is interpretable.</strong>",
-  "NPMI is a relative measure, so anything that shifts a chromosome&rsquo;s detection frequency between genotypes moves",
-  "every class on it in the same direction. chr7 and chr11 are mirror images of each other at every band, which is more",
-  "consistent with such an offset than with opposite biology. We have not identified its cause &mdash; a candidate check",
-  "is whether PC1 and the per-chromosome offset both track detection frequency, which is not yet done. Until then, read",
-  "the <em>difference between classes within</em> a chromosome, never a chromosome&rsquo;s overall direction.</div>",
-  "<p>On that contrast, het&ndash;het minus eu&ndash;eu is positive genome-wide. chr11 is <strong>negative</strong>",
-  "(&minus;2.3 at 1&ndash;5 Mb, &minus;11.8 at 5&ndash;10 Mb): its heterochromatin loses <em>faster</em> than its",
-  "euchromatin, which is the inversion, and it survives the offset argument because an offset cancels in the difference.</p>",
-  "<div class=\'warn\'><strong>Do not over-read chr11.</strong> It is the least heterochromatic autosome (3.1% of bins",
-  "against 7.2% genome-wide), so its het&ndash;het cells rest on ~1,000&ndash;1,200 bin pairs where eu&ndash;eu has millions.",
-  "Its dominant feature is a loss across <em>every</em> class (eu&ndash;eu &minus;22% at 5&ndash;10 Mb, &minus;27.8% beyond",
-  "10 Mb); the het&ndash;het number is simply more negative still, on thin data. Nothing we have computed attributes this",
-  "to the loss of one large LAD-associated domain, and a large heterochromatin domain is unlikely there by construction.</div>",
+  embed_fig("chromosomes/perchrom_class_contrast_all19.png",
+            "het&ndash;het minus euchromatin&ndash;euchromatin per autosome and separation band. This is the offset-invariant contrast."),
+  embed_fig("chromosomes/perchrom_class_band_all19.png",
+            "All four pair classes on all 19 autosomes. Read the shape across separations within a panel; the level of a whole panel is confounded by the per-chromosome offset."),
+  "<div class=\'warn\'><strong>chr11 specifically.</strong> It is the least heterochromatic autosome (3.1% of bins",
+  "against 7.2% genome-wide), so its het&ndash;het cells rest on roughly 900&ndash;1,250 bin pairs where eu&ndash;eu",
+  "has millions. Its dominant feature is a loss in <em>every</em> class (eu&ndash;eu &minus;22.0% at 5&ndash;10 Mb,",
+  "&minus;27.8% beyond 10 Mb), with het&ndash;het more negative still on thin data. Nothing computed here attributes",
+  "that to the loss of one large LAD-associated domain, and chr11 is an unlikely place for a large heterochromatin",
+  "domain by construction.</div>",
 
-  "<h3>7. Four things tested and rejected. Recorded so they are not re-derived.</h3>",
+  "<h3>7. Four things tested and rejected.</h3>",
   "<ul>",
   "<li><strong>Heterochromatin-rich chromosomes gain contacts.</strong> No: rho = &minus;0.014, p = 0.96 across 19 autosomes.",
   "chr7 and chr11 are simply the extremes of both rankings at once.</li>",
@@ -299,7 +337,7 @@ parts$pcdh <- sec("The protocadherin cluster as a TAD",
 chr_files <- file.path(results_dir, "chromosomes", paste0(c("chr3","chr7","chr11","chr16","chr18"), ".md"))
 parts$chrom <- sec("Per-chromosome characterisation",
   p_("chr11 and chr16 were flagged by the data producers; chr3 and chr7 carry large GAM_6 blocks; chr18 holds the Pcdh cluster."),
-  "<div class='warn'><strong>Retraction.</strong> An earlier agent reported chr11 as having &ldquo;the strongest mark-contact coupling of any chromosome, rho +0.51 to +0.66, rank 1 of 19&rdquo;. That agent produced no output file and the numbers had no source. Directly computed, chr11 <em>is</em> rank 1 of 19 &mdash; but at rho = 0.128, with chr17 at &minus;0.149 (larger, opposite sign) and a genome-wide value of 0.012. The ordering is weak evidence.</div>",
+  "<div class='warn'><strong>Mark-contact coupling does not rank chromosomes.</strong> chr11 is rank 1 of 19 for rho(H4K20me3, net contacts), but at rho = 0.128, with chr17 at &minus;0.149 &mdash; larger, opposite sign &mdash; and a genome-wide value of 0.012. The spread is small and roughly symmetric about zero, so the ordering carries no weight.</div>",
   embed_fig("chromosomes/chromosome_ranking.png"),
   "<div class='warn'><strong>A tempting over-read, tested and rejected.</strong> chr7 is by far the most heterochromatic chromosome (20.2% of bins against 7.2% genome-wide) <em>and</em> gains contacts at every separation, while chr11 is the least (3.1%) and loses most. Across all 19 autosomes that relationship is absent: rho = &minus;0.014, p = 0.96. The two are simply the extremes of both rankings at once.</div>",
   embed_fig("chromosomes/het_content_vs_net.png"),
@@ -338,6 +376,122 @@ parts$coupling <- sec("Coupling: does the mark loss have a contact counterpart?"
   "</ul>",
   p_("The positive result is elsewhere: H4K20me3 loss tracks <em>baseline</em> architecture, not contact <em>change</em> &mdash; pc1 +0.196 and npmi_short &minus;0.166 after coverage control. Insulation does not survive the control (&minus;0.180 &rarr; &minus;0.066) and should not be reported."),
   embed_fig("coupling/specificity_control_rho.png"))
+
+parts$methods <- sec("How every comparison in this report is computed",
+  "<p>Every number above is one of a small number of operations. This section states each one exactly,",
+  "including what is and is not normalised, so a figure can be checked without reading the scripts.</p>",
+
+  "<h3>The contact measure</h3>",
+  "<ul>",
+  "<li><strong>NPMI (normalised pointwise mutual information)</strong> is the delivered quantity, one 20 kb &times;",
+  "20 kb matrix per chromosome per genotype, computed upstream at sigma 2.6 from the nuclear-profile segregation",
+  "table. It is a co-segregation frequency already normalised for how often each of the two windows is detected",
+  "at all, which is why <em>no further coverage or library-size normalisation is applied to it anywhere in this",
+  "pipeline</em>. It is bounded in [&minus;1, 1] and mostly positive in cis.</li>",
+  "<li><strong>Unmappable bins stay NA.</strong> All-NA rows and columns are dropped before any arithmetic. They",
+  "are never set to 0, because 0 in NPMI means &ldquo;co-segregates exactly as often as chance&rdquo;, not",
+  "&ldquo;no data&rdquo;, and would pull every average towards the middle.</li>",
+  "<li><strong>Delta-z</strong> in the differential-contact files is the upstream caller&rsquo;s own statistic, not",
+  "ours. Sign convention here is <strong>cKO &minus; WT</strong>; the collaborators&rsquo; slides use WT &minus; cKO,",
+  "so a gain in this report is a loss in theirs.</li>",
+  "</ul>",
+
+  "<h3>Percent change, and what it is a change in</h3>",
+  "<ul>",
+  "<li>Bin pairs are assigned to a cell of chromatin class &times; separation band, the mean NPMI of all pairs in",
+  "that cell is taken <em>within each genotype separately</em>, and the reported figure is",
+  "<strong>100 &times; (mean<sub>cKO</sub> / mean<sub>WT</sub> &minus; 1)</strong>. It is a ratio of two means, not a",
+  "mean of per-pair ratios, so a cell with few pairs cannot be dominated by one extreme pair.</li>",
+  "<li><strong>Separation bands</strong> are &lt;0.2, 0.2&ndash;1, 1&ndash;5, 5&ndash;10 and &gt;10 Mb. Banding is",
+  "mandatory rather than cosmetic: NPMI falls steeply with separation, so any average pooled over separations is",
+  "mostly a statement about which separations the two sets happened to contain.</li>",
+  "<li><strong>Chromatin class</strong> is from the WT H3K9me3/H4K20me3 heterochromatin domain calls, so the class",
+  "label is fixed and does not move with the genotype. A pair is het&ndash;het, het&ndash;euchromatin or",
+  "euchromatin&ndash;euchromatin; het&ndash;het is split further into same-domain and different-domain.</li>",
+  "<li><strong>Confidence intervals are a bootstrap over the 19 autosomes</strong>, resampled with replacement,",
+  "the whole cell mean recomputed each time, 95% percentile interval. The chromosome is the resampling unit",
+  "because bin pairs within a chromosome are not independent &mdash; treating millions of pairs as independent",
+  "would give intervals too narrow to mean anything. Per-chromosome figures therefore carry no CI: there is",
+  "nothing left to resample.</li>",
+  "<li><strong>Within- versus between-domain</strong> is a difference-in-differences: (intra<sub>cKO</sub> &minus;",
+  "intra<sub>WT</sub>) &minus; (inter<sub>cKO</sub> &minus; inter<sub>WT</sub>), bootstrapped the same way, so a",
+  "change shared by both does not register as a difference between them.</li>",
+  "</ul>",
+
+  "<h3>Permutation nulls, and why a raw overlap is never used</h3>",
+  "<p>Large heterochromatin domains overlap narrow features trivially, by being large. Every overlap-shaped claim",
+  "is therefore tested against a matched null rather than against chance:</p>",
+  "<ul>",
+  "<li><strong>Size-matched</strong> &mdash; the query set is replaced by random regions drawn to the same width",
+  "distribution on the same chromosomes.</li>",
+  "<li><strong>Separation-matched</strong> &mdash; for contact comparisons, partners are drawn at the same",
+  "separations as the observed set, so a difference cannot be the distance decay in disguise.</li>",
+  "<li><strong>Repeat-content-matched</strong> &mdash; for the repeat-class work, since H4K20me3 domains and young",
+  "LINE/LTR content are heavily confounded.</li>",
+  "</ul>",
+
+  "<h3>TADs: yes, called explicitly, and two independent ways</h3>",
+  "<p>The Pcdh test needs a partition of chr18 into TADs. Both partitions are used and reported side by side,",
+  "because agreement between an external call and our own is the only check available:</p>",
+  "<ul>",
+  "<li><strong>External partition.</strong> <code>TAD_boundaries_mm39.bed</code>, 2,438 published boundaries each",
+  "150 kb wide. TAD intervals are the spans <em>between</em> consecutive boundaries on a chromosome",
+  "(<code>load_tads_external()</code>). Fixed across genotypes, so it cannot absorb a genotype effect. 81 usable",
+  "TADs on chr18.</li>",
+  "<li><strong>Our own partition, per genotype.</strong> Called from GAM insulation",
+  "(<code>call_tads_insulation()</code>). Insulation at a bin is the mean NPMI <em>across</em> that bin, so a strong",
+  "boundary is a local <strong>minimum</strong>. The profile is smoothed over 5 bins; a boundary is a minimum within",
+  "&plusmn;10 bins whose prominence is at least 0.5 local standard deviations, with boundaries forced at least 10 bins",
+  "apart and the deeper of a close pair kept. Prominence is measured in local sd rather than absolute NPMI so one",
+  "threshold works on chromosomes of different contact density. 144 TADs on chr18 in each genotype.</li>",
+  "</ul>",
+  "<p>The Pcdh cluster sits in one TAD under both: <code>chr18:36.82&ndash;37.87 Mb</code> externally (88.9% of the",
+  "cluster inside it) and <code>chr18:37.40&ndash;38.06 Mb</code> by insulation (63.1%). <strong>The insulation call",
+  "is identical in WT and cKO</strong> &mdash; the boundaries around Pcdh do not move &mdash; which is itself a result.</p>",
+  "<p>The test is then: for the Pcdh TAD, compute the change in mean NPMI to every other chr18 TAD, average",
+  "<em>within</em> separation band first and only then across bands, and compare that single number against the same",
+  "quantity computed for each of the other 80 (or 143) chr18 TADs. Averaging within band first is what stops a TAD",
+  "being ranked by which separations it happens to have partners at. The p value is two-sided empirical, the",
+  "fraction of other TADs at least as extreme.</p>",
+  "<p>Result, under all three partitions: the Pcdh TAD is indistinguishable from other chr18 TADs, both internally",
+  "(&minus;4.8% external, &minus;3.2% own, p = 0.75 and 0.85) and distally (&minus;8.4% and &minus;3.5%, p = 0.88",
+  "and 0.69). It loses contacts, but so does the rest of chr18 &mdash; the median other TAD loses more.</p>",
+
+  "<h3>The compartment axis</h3>",
+  "<p>Stated here because result 4 turns on the detail. The matrix is first converted to",
+  "<strong>observed minus expected</strong>, where expected is the mean of its own diagonal, i.e. the mean NPMI at",
+  "that exact separation on that chromosome in that genotype. Subtracted, not divided: NPMI is already a log-scale",
+  "quantity that goes negative, so a ratio would flip sign wherever a diagonal mean passes through zero.</p>",
+  "<p>That matrix is then block-averaged from 20 kb to <strong>100 kb</strong> bins, NA-aware, because compartments",
+  "are not resolvable at 20 kb. A Pearson correlation matrix is formed across its columns, and the top four",
+  "eigenvectors are taken. The compartment axis is chosen <em>balance first</em>: only eigenvectors assigning between",
+  "20% and 80% of the chromosome to the A side are eligible, and among those the one with the largest |Spearman rho|",
+  "against the active-chromatin reference wins. Balance is a precondition rather than a tiebreak because the leading",
+  "eigenvector is systematically degenerate here, putting 87&ndash;96% of bins on one side while still correlating",
+  "slightly better with the reference than the real compartment vector does.</p>",
+  "<p>The <strong>reference</strong> is the mean of per-bin WT H3K4me3 and WT H3K36me3 z-scores. Two marks because",
+  "H3K4me3 is punctate at promoters and thin across a 20 kb bin while H3K36me3 is broad over gene bodies. Both are",
+  "unchanged in the KO (per-bin median log2FC +0.000 and &minus;0.052, against &minus;0.497 for H4K20me3), so the A/B",
+  "axis is the same ruler in both genotypes. Anchoring on H3K9me3 or H4K20me3 would be circular &mdash; the axis would",
+  "move with the effect being measured.</p>",
+
+  "<h3>The ChIP side</h3>",
+  "<ul>",
+  "<li><strong>DESeq2 with sizeFactors = 1.</strong> Deliberate. The median-of-ratios estimate assumes most features",
+  "do not change; here H4K20me3 is down almost everywhere, so median-of-ratios would divide the genome-wide loss out",
+  "and report it as nothing.</li>",
+  "<li><strong>No lfcShrink.</strong> ashr's prior assumes most effects are null, the same assumption",
+  "sizeFactors = 1 exists to avoid. Applied, it collapses H3K36me3 and H3K9me2 to exactly 0 and pulls H4K20me3 from",
+  "&minus;0.497 to &minus;0.212.</li>",
+  "<li><strong>Effect sizes are relative to each mark's own genome-wide median</strong>, not to an absolute cutoff,",
+  "because an absolute cutoff is not shift-invariant and the effect here is a shift.</li>",
+  "</ul>",
+
+  "<h3>Joining the two assays</h3>",
+  "<p>The ChIP counts path uses NCBI seqnames (<code>1</code>, <code>2</code>) and the GAM files use UCSC",
+  "(<code>chr1</code>). A mismatched flip produces zero overlaps, which reads downstream as a clean null rather than",
+  "an error, so every cross-assay join asserts its overlap rate with <code>stopifnot()</code> and fails loudly. Both",
+  "assays are mm39; anything external is lifted with CrossMap and the liftover recorded in METHODS.md.</p>")
 
 parts$caveats <- sec("Standing caveats",
   "<ul>",
@@ -400,7 +554,7 @@ theme_css <- function(for_artifact) {
 }
 
 body_html <- paste0("<main>",
-  parts$head, parts$bottom, parts$het, parts$pcdh, parts$chrom, parts$regions, parts$coupling, parts$caveats,
+  parts$head, parts$bottom, parts$het, parts$pcdh, parts$chrom, parts$regions, parts$coupling, parts$methods, parts$caveats,
   "</main>")
 
 html <- paste0("<!doctype html><html><head><meta charset='utf-8'>",
