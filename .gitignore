@@ -10,11 +10,17 @@
 # by run_MINUTE.R, so none are committed (the .rds are tens of MB each). Only
 # MINUTE_3 can run off a committed handoff; every other stage re-reads bigWigs
 # anyway, so tracking the .rds bought little and cost repo size.
-ChIP/results/counts/
-ChIP/results/tables/
-ChIP/results/figures/
-ChIP/results/bed/
-ChIP/results/rds/
+#
+# Ignore the whole tree and name the exceptions, rather than listing the
+# generated subfolders. Listing them meant any NEW output location was tracked
+# by default: that is how 23 MB of generated GAM output (GAM_REPORT.html,
+# chromosomes/, igv/) got committed in d685ac8 and 7a4f9e0 and had to be
+# untracked again. The hand-written .md at the top level are the only source of
+# truth here, so they are the only exceptions.
+ChIP/results/*
+!ChIP/results/EXECUTIVE_SUMMARY.md
+!ChIP/results/METHODS.md
+!ChIP/results/COMPARTMENT_CUTOFFS.md
 # alternate output trees from MINUTE_RESULTS=... sensitivity runs (regenerable)
 ChIP/results_*/
 
@@ -36,14 +42,13 @@ TAD_boundaries_mm39.bed
 GAM/NPMI_matrices/
 GAM/Diff_contacts/
 GAM/Hotspots/
-# GAM analysis outputs — regenerable by run_GAM.R from the data above. The
-# hand-written results/*.md (METHODS etc.) ARE committed, so ignore only the
-# generated subfolders, matching the ChIP/results rule above.
-GAM/results/counts/
-GAM/results/rds/
-GAM/results/tables/
-GAM/results/figures/
-GAM/results/bed/
+# GAM analysis outputs — regenerable by run_GAM.R from the data above. Same
+# deny-all-then-except rule as ChIP/results: everything is generated except the
+# hand-written METHODS.md. In particular GAM_REPORT.html (make_report.R),
+# chromosomes/*.md (GAM_7_Figures.R) and igv/* (export_igv.R, README and session
+# XML included) are all written by code and must not be committed.
+GAM/results/*
+!GAM/results/METHODS.md
 GAM/results_*/
 
 # stray base-R plot device output
