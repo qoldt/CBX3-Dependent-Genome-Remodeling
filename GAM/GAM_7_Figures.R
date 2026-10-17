@@ -102,6 +102,25 @@ local({
   # Marks that must be drawn on ONE shared y-axis. Each element is a group.
   gam12_mark_scale_groups <- list(c("H3K9me2", "H3K9me3"))
 
+  # ROBUST CEILING FOR THE MARK PANELS. A single bin can be two orders of
+  # magnitude above everything else in a region and then sets an axis nothing
+  # else reaches. chr11:3.04-3.16 Mb is the case that forced this: it is the
+  # first assembled sequence on chr11 (mm39 pads chr11 with 3 Mb of N), it sits
+  # against the pericentromeric major satellite, and multi-mapping heterochromatin
+  # reads pile up there - H3K9me3 reaches 67.8 against a region 99th percentile
+  # of 3.7 and a genome-wide 99.9th of 11.1. The same pileup sits at exactly
+  # 3.0-3.2 Mb on chr9, chr12 and chr14. Drawn to its own maximum it flattened
+  # the whole 24 Mb region to the axis floor.
+  # The ceiling is k x the 99th percentile of the values actually drawn, and is
+  # only applied when it buys at least `clip_min` of height - so on 9 of the 11
+  # regions it is inert (ceiling == maximum, nothing clipped) and it only bites
+  # where there is a genuine off-scale outlier. Clipped spans are marked with a
+  # dark bar along the top of the panel and the true maximum is printed in the
+  # axis title, so nothing is hidden. Set gam12_mark_clip_k <- Inf to disable.
+  gam12_mark_clip_q   <- 0.99
+  gam12_mark_clip_k   <- 2
+  gam12_mark_clip_min <- 1.25
+
   # MASK THE DELTA-Z MAP TO SIGNIFICANT CONTACTS? Off, because at display
   # resolution it does not do what it looks like it should. The delivered
   # criterion (|delta-z| > 2 AND max NPMI > 0.1, from the Diff_contacts
@@ -711,15 +730,44 @@ local({
       # what is drawn is a 100 kb mean, and a raw per-bin maximum is several
       # times higher, which would set an axis the curve never reaches and squash
       # it into the floor (H3K4me3 went to 40 against a drawn maximum of ~8).
-      ymax <- max(unlist(lapply(grp_marks, function(m) {
+      grp_vals <- unlist(lapply(grp_marks, function(m) {
         cc <- paste0("sig_", m, "_", c("WT", "HP1gKO"))
         if (!all(cc %in% names(reg))) return(NA_real_)
         g <- ((seq_len(nrow(reg)) - 1L) %/% fac) + 1L
         c(tapply(reg[[cc[1]]], g, mean, na.rm = TRUE),
           tapply(reg[[cc[2]]], g, mean, na.rm = TRUE))
-      })), na.rm = TRUE)
+      }))
+      ymax <- max(grp_vals, na.rm = TRUE)
       if (!is.finite(ymax) || ymax <= 0) ymax <- 1
-      rng <- c(0, ymax * 1.04)
+      # Robust ceiling (see gam12_mark_clip_* in the config block). Applied only
+      # when it gains real height, so regions without an outlier are drawn
+      # exactly as before.
+      ycap <- ymax
+      if (is.finite(gam12_mark_clip_k)) {
+        q <- stats::quantile(grp_vals, gam12_mark_clip_q, na.rm = TRUE)
+        cand <- as.numeric(gam12_mark_clip_k * q)
+        if (is.finite(cand) && cand > 0 && ymax / cand >= gam12_mark_clip_min) ycap <- cand
+      }
+      clipped <- ycap < ymax
+      rng <- c(0, ycap * 1.04)
+      # the largest round number that still fits inside the panel, so the top
+      # break is always drawn
+      ybr <- local({
+        cand <- pretty(c(0, ycap), n = 3)
+        cand <- cand[cand > 0 & cand <= ycap]
+        if (!length(cand)) c(0, signif(ycap, 2)) else c(0, max(cand))
+      })
+      # Spans of the drawn curve that run off the ceiling, as rectangles half a
+      # column wide so adjacent columns join into one continuous bar.
+      clip_rect <- if (clipped) local({
+        hi <- pmax(fine$wt, fine$ko)
+        i  <- which(is.finite(hi) & hi > ycap)
+        if (!length(i)) NULL else {
+          hw <- (fine$x[2] - fine$x[1]) / 2
+          data.table(xmin = fine$x[i] - hw, xmax = fine$x[i] + hw,
+                     ymin = ycap * 0.955, ymax = ycap * 1.04)
+        }
+      }) else NULL
 
       ggplot(fine) +
         # replicate-range bands first, so the means read on top of them
@@ -746,15 +794,27 @@ local({
         # the two means and the coloured band at the higher, so both means are
         # already the edges of a filled area - drawing them again added two more
         # strokes per panel, ten across the stack, for no information.
+        # off-scale marker: a dark bar along the top wherever the curve is cut
+        { if (!is.null(clip_rect))
+            geom_rect(data = clip_rect,
+                      aes(xmin = xmin, xmax = xmax, ymin = ymin, ymax = ymax),
+                      fill = "grey25", colour = NA, inherit.aes = FALSE) } +
         scale_fill_manual(values = c(up = "#b2182b", down = "#2166ac"),
                           breaks = c("up", "down"),
                           labels = c("more in cKO", "less in cKO"), name = NULL) +
         scale_x_continuous(expand = c(0, 0)) +
-        # two breaks, not three: a 0.525 in panel cannot seat three numbers
-        # without them touching.
-        scale_y_continuous(n.breaks = 2, expand = c(0, 0)) +
+        # Two breaks, not three: a 0.525 in panel cannot seat three numbers
+        # without them touching. They are placed explicitly rather than by
+        # n.breaks, because with expand = c(0, 0) an automatic upper break
+        # usually lands above the panel and is dropped, leaving panels labelled
+        # only "0" - the reader then cannot tell how high the track goes.
+        scale_y_continuous(breaks = ybr, expand = c(0, 0)) +
         coord_cartesian(xlim = c(from, to) / 1e6, ylim = rng, expand = FALSE) +
-        labs(y = sprintf("%s\ncoverage", mk),
+        labs(y = if (clipped)
+                    sprintf("%s\ncoverage\n(peak %s)", mk,
+                            formatC(ymax, format = "f",
+                                    digits = if (ymax >= 10) 0 else 1))
+                  else sprintf("%s\ncoverage", mk),
              x = if (last) sprintf("%s (Mb)", chrom) else NULL) +
         theme_m + theme(legend.position = if (show_key) "right" else "none",
                         legend.key.size = unit(9, "pt"), legend.text = element_text(size = 7),
@@ -906,9 +966,6 @@ local({
         "GAM: CA1 pyramidal cells, HP1g WT/cKO, 20 kb, |delta-z|>2, max NPMI>0.1. ",
         "ChIP: Emx1-Cre cortex+hippocampus (pyramidal neurons), per-bin log2FC (KO/WT).\n",
         "Contact map block-averaged and 3x3 smoothed for display. ",
-        "MARK TRACKS, how they are built: per-bin log2FC(cKO/WT) at 20 kb is aggregated to 100 kb display bins, each 20 kb bin ",
-        "weighted by its baseMean, then resampled to a smooth outline. Aggregation is necessary because per-bin log2FC at 20 kb is ",
-        "noise-dominated (sd 0.14-0.16 for the broad marks, up to 0.57 for H3K4me3). All statistics elsewhere use unsmoothed values.\n",
         "MARK TRACKS ARE COVERAGE, NOT A RATIO, drawn at a display bin chosen from the region width (~400 bins across it, floored at the ",
         "native 20 kb). Each panel overlays the two genotypes: the solid lines are the mean per-bin coverage ",
         "across that genotype's libraries (6 WT, 4 cKO - cKO rep2 excluded at QC). The shaded gap between them is the effect, coloured ",
@@ -920,7 +977,14 @@ local({
         "whatever the size of its effect - H3K9me2 (genome-wide median -0.18) read as dramatically as H4K20me3 (-0.50). The genome-wide ",
         "medians are in the ChIP section of the report; this figure is for seeing where signal actually is.\n",
         "THE Y SCALE IS PER MARK and starts at zero. H3K4me3 is punctate and high, H3K9me2 broad and low, so one shared scale would ",
-        "flatten the punctate marks to a line. Compare marks by the gap relative to their own bands, which is scale-free, not by height.\n",
+        "flatten the punctate marks to a line (H3K9me2 and H3K9me3 are the exception and share one axis, so that the comparison ",
+        "between them is a comparison of the drawing). Compare marks by the gap relative to their own height, not across panels.\n",
+        "OFF-SCALE SPANS. The ceiling of a mark panel is twice the 99th percentile of the values drawn in it, not their maximum, so a ",
+        "single repeat-pileup bin cannot flatten a whole region (chr11:3.04-3.16 Mb, the first assembled sequence on chr11 and against ",
+        "the pericentromeric satellite, reaches H3K9me3 67.8 where the rest of chr11:1-25 Mb has a 99th percentile of 3.7). The ceiling ",
+        "is only applied where it gains at least 25% of panel height, so most regions are drawn to their true maximum and nothing is ",
+        "clipped. Where it is applied, the cut spans carry a dark bar along the top of the panel and the true peak is printed in the ",
+        "axis title.\n",
         "Diff. contacts = count of significant differential contacts per 20 kb bin within 5 Mb (the dashed line on the map); ",
         "net = gained - lost, same sign convention as the difference map. Those are COUNTS, every bin has one. ",
         "Hotspot is the separate CALL on that count: bins at or above the collaborators' 50-75 per-window cutoff. ",
