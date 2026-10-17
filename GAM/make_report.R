@@ -147,6 +147,78 @@ parts$head <- paste0(
   "Per-bin ChIP log2FC at 20 kb is noise-dominated (per-bin sd 0.14&ndash;0.16 for the broad marks, 0.57 for H3K4me3); genome-wide medians are sound, local structure is not. ",
   "The A/B compartment axis is weakly determined on most chromosomes and is not used for any claim below.</div>")
 
+parts$bottom <- sec("Bottom line",
+  "<p>Everything below this section is the supporting detail. Percentages are change in mean NPMI,",
+  "cKO vs WT, with 95% CIs from a bootstrap over the 19 autosomes",
+  "(<code>gam10_class_change.tsv</code>, <code>gam13_did.tsv</code>).</p>",
+
+  "<h3>1. H4K20me3 is lost almost everywhere. That part is solid.</h3>",
+  "<p>Median log2FC about &minus;0.50 per 20 kb bin, &minus;0.68 over peaks, ~95% of domains down.",
+  "A global shift, not a minority-of-sites effect. Everything else here is the architecture question.</p>",
+
+  "<h3>2. Heterochromatin becomes more self-associated at short range. It is NOT mixing.</h3>",
+  "<p>This is the central result and the loose phrase &ldquo;heterochromatin gains contacts&rdquo; hides which partners.",
+  "Split by partner class:</p>",
+  "<table>",
+  "<tr><th>pair type</th><th>&lt;0.2 Mb</th><th>0.2&ndash;1 Mb</th><th>5&ndash;10 Mb</th><th>&gt;10 Mb</th></tr>",
+  "<tr><td>het&ndash;het, same domain</td><td><strong>+4.3%</strong> (1.8, 6.6)</td><td><strong>+5.9%</strong> (1.3, 18.6)</td><td>&mdash;</td><td>&mdash;</td></tr>",
+  "<tr><td>het&ndash;het, different domains</td><td><strong>+4.2%</strong> (3.4, 4.9)</td><td><strong>+6.2%</strong> (3.5, 8.2)</td><td>+5.1% (&minus;5.9, 9.0)</td><td>&minus;0.6% (&minus;10.3, 4.9)</td></tr>",
+  "<tr><td>het&ndash;euchromatin</td><td>+2.0% (1.3, 2.8)</td><td>+0.2% (&minus;1.2, 1.6)</td><td><strong>&minus;5.2%</strong> (&minus;10.1, &minus;1.0)</td><td>&minus;6.4% (&minus;13.5, 0.0)</td></tr>",
+  "<tr><td>euchromatin&ndash;euchromatin</td><td>+0.9% (0.3, 1.6)</td><td><strong>&minus;1.7%</strong> (&minus;3.0, &minus;0.5)</td><td><strong>&minus;8.1%</strong> (&minus;12.0, &minus;4.2)</td><td><strong>&minus;8.9%</strong> (&minus;13.8, &minus;4.0)</td></tr>",
+  "</table>",
+  "<p>Read down the columns, not across:</p>",
+  "<ul>",
+  "<li><strong>The gain is specifically heterochromatin-to-heterochromatin, and only below 1 Mb</strong> &mdash; those are the",
+  "only cells whose CIs exclude zero. Beyond 1 Mb the het&ndash;het CIs span zero and nothing can be claimed.</li>",
+  "<li><strong>It is not mixing.</strong> Mixing would require het&ndash;euchromatin to rise. It does not: flat at 0.2&ndash;1 Mb",
+  "(+0.2%, CI spans zero) and <em>falling</em> at long range (&minus;5.2%, &minus;6.4%). Heterochromatin is keeping more",
+  "company with heterochromatin and no more with euchromatin &mdash; segregation sharpening at short range, not dissolving.</li>",
+  "<li><strong>At long range everything loses, euchromatin most</strong> (&minus;8 to &minus;9%). The &ldquo;het gains while eu loses,",
+  "diverging with distance&rdquo; shorthand conflates two separate things: a short-range het&ndash;het gain, and a",
+  "long-range loss that hits euchromatin hardest.</li>",
+  "</ul>",
+
+  "<h3>3. Individual domains do not compact. Heterochromatin-to-heterochromatin contact is what rises.</h3>",
+  "<p>Within-domain versus between-domain is indistinguishable: every difference-in-differences CI spans zero",
+  "(p 0.19&ndash;0.89) under all three domain definitions. So the right statement is &ldquo;heterochromatin contacts",
+  "heterochromatin more&rdquo;, not &ldquo;each domain tightens&rdquo;. That null replicates across definitions, which is",
+  "what makes it believable rather than a definition artefact.</p>",
+
+  "<h3>4. Whether compartments are better or worse defined: we cannot say.</h3>",
+  "<p>The A/B axis (PC1) is usable on only 11 of 38 chromosome &times; genotype combinations, so no compartment-strength",
+  "claim is supported either way. The class table above is <em>consistent with</em> sharper short-range segregation, but",
+  "that is an inference from contact classes, not a compartment measurement. Answering it properly needs a different",
+  "axis &mdash; the cLAD/ciLAD annotation is the obvious external candidate.</p>",
+
+  "<h3>5. The remodelling does not track the size of the mark loss, bin by bin.</h3>",
+  "<p>rho = &minus;0.015 raw, &minus;0.046 partialled on coverage, n = 119,952 &mdash; a powered negative. But the contact",
+  "variable is smeared over 5 Mb while the ChIP variable varies at 20 kb, a ~250&times; scale mismatch, so this cannot",
+  "separate &ldquo;no relationship&rdquo; from &ldquo;cannot resolve it&rdquo;. The architecture does change; it just does not",
+  "change in proportion to how much mark a bin lost.</p>",
+
+  "<h3>6. Chromosomes split by direction, and chr11 runs the other way.</h3>",
+  "<p>chr3 and chr7 gain; chr11, chr16 and chr18 lose. Genome-wide, het&ndash;het minus eu&ndash;eu is positive.",
+  "On chr11 it is <strong>negative</strong> &mdash; &minus;2.3 at 1&ndash;5 Mb and &minus;11.8 at 5&ndash;10 Mb &mdash; i.e. its",
+  "heterochromatin loses contacts <em>faster</em> than its euchromatin, which is the inversion.</p>",
+  "<div class=\'warn\'><strong>Do not over-read chr11.</strong> It is the least heterochromatic autosome (3.1% of bins",
+  "against 7.2% genome-wide), so its het&ndash;het cells rest on ~1,000&ndash;1,200 bin pairs where eu&ndash;eu has millions.",
+  "Its dominant feature is a loss across <em>every</em> class (eu&ndash;eu &minus;22% at 5&ndash;10 Mb, &minus;27.8% beyond",
+  "10 Mb); the het&ndash;het number is simply more negative still, on thin data. Nothing we have computed attributes this",
+  "to the loss of one large LAD-associated domain, and a large heterochromatin domain is unlikely there by construction.</div>",
+
+  "<h3>7. Four things tested and rejected. Recorded so they are not re-derived.</h3>",
+  "<ul>",
+  "<li><strong>Heterochromatin-rich chromosomes gain contacts.</strong> No: rho = &minus;0.014, p = 0.96 across 19 autosomes.",
+  "chr7 and chr11 are simply the extremes of both rankings at once.</li>",
+  "<li><strong>The Pcdh TAD changes its distal contacts distinctively.</strong> No: p = 0.75/0.85 intra and 0.88/0.68 distal",
+  "against separation-matched chr18 TADs, under both partitions.</li>",
+  "<li><strong>Large domains compact internally.</strong> No &mdash; item 3.</li>",
+  "<li><strong>H3K36me3 rises over Pcdh.</strong> No: &minus;0.049 against a genome median of &minus;0.052, p = 0.93.</li>",
+  "</ul>",
+  "<p>Pcdh does meet GAM_5&rsquo;s decompaction criteria (short-range loss plus a shift toward A) while failing the",
+  "matched-TAD test. Both are true: the comparisons differ &mdash; matched background bins genome-wide versus neighbouring",
+  "TADs at matched separation &mdash; so any claim must say which.</p>")
+
 parts$het <- sec("Heterochromatin domains",
   p_("The merged H3K9me3/H4K20me3 set is <strong>126,197 fragments of mean width 3.5 kb</strong> &mdash; a peak set, not a domain set.",
      "GAM_10 took whichever single fragments exceeded a width cut and called them domains. GAM_13 builds domains three ways and reports every result against all three;",
@@ -277,7 +349,7 @@ theme_css <- function(for_artifact) {
 }
 
 body_html <- paste0("<main>",
-  parts$head, parts$het, parts$pcdh, parts$chrom, parts$regions, parts$coupling, parts$caveats,
+  parts$head, parts$bottom, parts$het, parts$pcdh, parts$chrom, parts$regions, parts$coupling, parts$caveats,
   "</main>")
 
 html <- paste0("<!doctype html><html><head><meta charset='utf-8'>",
