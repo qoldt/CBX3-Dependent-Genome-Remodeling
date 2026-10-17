@@ -126,14 +126,45 @@ Superseded annotation kept as `*.bed.truncated-tablebrowser`.
    with HUSH/TRIM28 targets; SINE and ERVL-MaLR are depleted. **Direct signal
    quantification over the repeat copies themselves** (MINUTE_4, `bw_loci`,
    peak-calling-independent) confirms this with magnitude: H4K20me3 is lost over
-   every class but **deepest over IAP** (IAPEz-int −0.52, IAPLTR1a_Mm −0.55) and
-   **young L1** (L1MdT −0.45, L1MdGf −0.41, L1MdA −0.38 log2FC), shallowest over
-   **SINE controls (~−0.18)**; H3K9me3 loss is milder (−0.10 to −0.23, ERV-focused);
-   and the active/euchromatic marks (H3K4me3, H3K36me3, H3K9me2) stay flat over all
-   classes (|log2FC| < 0.1) — a clean specificity control. This ordering
+   every class but **deepest over IAP** (IAPEz-int −0.71, IAPLTR1a_Mm −0.73) and
+   **young L1** (L1MdT −0.61, L1MdGf −0.60, L1MdA −0.55 log2FC), shallowest over
+   **SINE controls** (B1 −0.31, B2 −0.34). This ordering
    (IAP > young L1 > older ERV/LINE > SINE) is the mouse read-out of HUSH/TRIM28
    substrate preference and does **not** depend on peak calling or the significance
-   definition (unlike the MINUTE_4 hypergeometric test).
+   definition (unlike the MINUTE_4 hypergeometric test). It also survived the
+   2026-10-16 annotation correction essentially unchanged (≤0.04 per class).
+
+   **H3K9me3 over the same copies is milder but less so than previously stated**
+   (−0.21 to −0.40, ERV-focused; the earlier −0.10 to −0.23 was a
+   pre-rep2-exclusion figure). Stated as a ratio at the deepest class, H4K20me3
+   −0.71 against H3K9me3 −0.39 at IAPEz-int is about **1.8×**, not the ~3× the
+   older numbers implied. The uncoupling is directional and still holds, but it is
+   narrower over repeats than finding 2's peak-level framing suggests.
+
+   **Specificity controls — H3K4me3 and H3K36me3 only.** Over repeat copies
+   H3K36me3 stays flat (max |log2FC| 0.07) and H3K4me3 nearly so (0.12). These are
+   the genuine controls, and they are clean.
+
+   **H3K9me2 is NOT a control and should not be described as euchromatic.** It is a
+   repressive mark and it is lost: −0.06 to −0.28 across repeat classes (median
+   −0.14, deepest at IAPLTR1a_Mm; shallowest over the B1/B2 SINE controls) and
+   −0.18 genome-wide per 20 kb bin. Its loss is reported here as an observation,
+   not as a specificity check.
+
+   **Is the H3K9me3 loss explained by conversion to H3K9me2? No — the data do not
+   support that.** If H3K9me3 were being demethylated to H3K9me2, H3K9me2 should
+   *rise* where H3K9me3 falls. Measured per 20 kb bin (n = 119,942): the two
+   changes are **positively** correlated (Spearman ρ = +0.118), **93.3%** of bins
+   *lose* H3K9me2, and bins in the lowest H3K9me3 decile show essentially the same
+   H3K9me2 change as the rest (−0.189 vs −0.179). So H3K9me2 and H3K9me3 are
+   co-lost rather than interconverted. The coupling between them is weak, so this
+   is stated only as "no evidence for conversion" — it does not establish an
+   independent mechanism for the H3K9me2 loss, and a direct test of H3K9
+   methylation state would need mass-spec or a me2-specific orthogonal assay.
+   These bin-level figures come from the GAM 20 kb grid's per-mark log2FC matrix
+   (`GAM/results/rds/gam_bins_annotated.rds`, `$l2fc`, built by
+   `GAM/GAM_1_Bins_and_Signal.R`), not from the peak-level ChIP tables, so they
+   are on a different feature set to the rest of this finding.
 
 6. **Chromatin-state clusters** (MINUTE_2 k-means, 5 groups): an active
    H3K4me3/promoter cluster (which *gains* signal), an H3K36me3/transcription
