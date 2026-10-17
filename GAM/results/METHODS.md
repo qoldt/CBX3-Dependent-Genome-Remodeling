@@ -112,3 +112,15 @@ data owner before this file can be treated as complete.
    holding three loci together from three cells each holding a pair - which is
    the entire distinction being asked about. If it is ever reported it must be
    labelled a pairwise clustering statistic, never a multi-contact result.
+
+9. **What is `TAD_boundaries_mm39.bed`?** It is used as the "external" TAD
+   partition in the Pcdh test, but nothing records its cell type, the caller
+   that produced it, its original resolution or its source assembly. The file
+   itself looks like a genuine liftover (per-feature width jitter, boundaries
+   spaced on a 50 kb grid at a median 950 kb, padded to 150 kb windows), so it
+   is not corrupt. But CTCF peaks show **no enrichment at it at any window
+   size** (1.09x genome average at +/-5 kb through +/-100 kb), while the same
+   CTCF track is 5.27x enriched at TSSs and 1.72x at our own GAM insulation
+   minima. Either it is from a cell type far from neurons, or its boundary
+   positions are only accurate to the width of the window. Until the provenance
+   is known it should be treated as the weaker of the two partitions.

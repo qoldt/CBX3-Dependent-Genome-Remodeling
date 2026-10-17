@@ -189,6 +189,35 @@ load_lads <- function() {
   g
 }
 
+# --- CTCF peaks ---------------------------------------------------------------
+# ENCODE conservative IDR thresholded peaks, lifted mm10 -> mm39 by
+# prepare_CTCF_annotation.R. The third, orthogonal line of evidence on where a
+# boundary is: the two TAD partitions below are a published boundary set and our
+# own insulation minima, neither of which is an independent measurement of the
+# architectural protein itself.
+#
+# BULK TISSUE, NOT SORTED CA1. ENCSR877MSN is layer of hippocampus and
+# ENCSR644VYX is left cerebral cortex, both whole tissue from adult B6CASTF1/J.
+# No CA1-pyramidal-specific CTCF ChIP-seq is public. CTCF occupancy is largely
+# cell-type-invariant, which is what makes bulk usable, but label it bulk
+# wherever it appears - it is NOT a CA1 track. Both tissues are carried because
+# together they match the two assays: GAM is CA1 pyramidal cells (hippocampus),
+# the ChIP is Emx1-Cre cortex + hippocampus.
+ctcf_hip_bed <- file.path(annot_dir, "CTCF_hippocampus_mm39.bed")
+ctcf_ctx_bed <- file.path(annot_dir, "CTCF_cortex_mm39.bed")
+load_ctcf <- function() {
+  if (!file.exists(ctcf_hip_bed) || !file.exists(ctcf_ctx_bed))
+    stop("CTCF BEDs missing - run: Rscript prepare_CTCF_annotation.R", call. = FALSE)
+  # One GRanges carrying a `tissue` column, not a list - same shape as
+  # load_lads(), because every consumer wants to overlap both against the same
+  # bins and keep the label. Levels fixed so drop = FALSE scales keep both keys.
+  a <- rtracklayer::import(ctcf_hip_bed); a$tissue <- "hippocampus"
+  b <- rtracklayer::import(ctcf_ctx_bed); b$tissue <- "cortex"
+  g <- c(a, b)
+  g$tissue <- factor(g$tissue, levels = c("hippocampus", "cortex"))
+  g
+}
+
 # --- TAD partitions -----------------------------------------------------------
 # Two independent partitions, kept side by side on purpose. Any "this locus talks
 # to distal TADs differently" claim depends on where the boundaries are, so a

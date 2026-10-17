@@ -62,6 +62,15 @@ local({
   gam12_hot_cut   <- 50      # slides: 50-75 differential contacts per window
   gam12_count_mode <- "net"  # diff-contact COUNT panels: "net" / "split" / "both"
 
+  # HORIZONTAL LEFT-HAND LABELS. Rotated 90-degree axis titles force the reader to
+  # tilt their head once per track, and with ten stacked tracks that is the main
+  # friction in reading this figure. angle = 0 with hjust = 1 right-aligns them
+  # into a clean column; labels are pre-wrapped so the column stays narrow.
+  # patchwork aligns panels on the widest label, so this is set once and applies
+  # to every row.
+  ylab_h <- theme(axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
+                                              size = 7, lineheight = 0.95))
+
   # Row heights in inches. Absolute, so the layout is the same whatever the region.
   gam12_h_hot    <- 0.75
   gam12_h_hotmap <- 0.55
@@ -69,14 +78,17 @@ local({
   # it - a presence/absence strip, not a magnitude - so it gets the same height.
   # Only the differential-contact COUNT track above needs room, because there the
   # bar height carries the number.
-  gam12_h_lad    <- 0.22
-  gam12_h_hotcall<- 0.22
+  # 0.26, not 0.22: with horizontal axis titles each ribbon row has to be tall
+  # enough to seat its own label, and at 0.22 in the hotspot / CTCF / LAD labels
+  # collided with each other.
+  gam12_h_lad    <- 0.26
+  gam12_h_hotcall<- 0.26
   gam12_h_mark   <- 0.70
   gam12_h_gene   <- 0.80
-  gam12_h_cov    <- 0.26   # the coverage key strip under the mark panels
+  gam12_h_ctcf   <- 0.26   # CTCF strip, same height as the LAD ribbon
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
-  gam12_h_chrome <- 2.10
+  gam12_h_chrome <- 2.30
 
   # MINIMUM Y SPAN of a mark panel, in log2FC. Without a floor the axis fits
   # whatever the region happens to contain, so a mark with almost no dynamic range
@@ -122,6 +134,28 @@ local({
     for (mk in colnames(X$l2fc)) {
       d <- S[mark == mk]
       A[[paste0("bm_", mk)]] <<- d$baseMean[match(A$bin_id, d$bin_id)]
+    }
+  })
+
+  # PER-GENOTYPE COVERAGE, which is what the mark tracks now draw. $signal is the
+  # un-rounded per-bin, per-library coverage, so a genotype mean is just the mean
+  # over that genotype's libraries - no weighting, because coverage IS the
+  # quantity rather than a ratio built from one.
+  # min/max across libraries give the replicate-range band: with 6 WT and 4 cKO
+  # libraries (cKO rep2 excluded at QC) and no within-genotype test available,
+  # the spread between replicates is the only honest indication of whether a gap
+  # between the two means means anything.
+  local({
+    i <- match(A$bin_id, rownames(X$signal))
+    for (mk in colnames(X$l2fc)) {
+      for (gt in c("WT", "HP1gKO")) {
+        cols <- grep(paste0("^", mk, "_", gt, "_rep"), colnames(X$signal))
+        if (!length(cols)) next
+        M <- X$signal[i, cols, drop = FALSE]
+        A[[paste0("sig_", mk, "_", gt)]]     <<- rowMeans(M, na.rm = TRUE)
+        A[[paste0("sig_", mk, "_", gt, "_lo")]] <<- matrixStats::rowMins(M, na.rm = TRUE)
+        A[[paste0("sig_", mk, "_", gt, "_hi")]] <<- matrixStats::rowMaxs(M, na.rm = TRUE)
+      }
     }
   })
 
@@ -186,11 +220,13 @@ local({
         geom_tile(width = tw, height = tw) +
         scale_fill_gradientn(colours = npmi_cols, limits = c(0, cap),
                              name = "NPMI", guide = guide_colourbar(barheight = grid::unit(2.4, "cm"))) +
-        scale_y_continuous(expand = c(0, 0), name = "sep (Mb)") +
+        scale_y_continuous(expand = c(0, 0), name = "Genomic\ndistance\n(Mb)") +
         scale_x_continuous(expand = c(0, 0)) +
         coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
         labs(subtitle = ttl) +
         theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                        axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
+                                                    size = 7, lineheight = 0.95),
                         plot.subtitle = element_text(size = 9),
                         plot.margin = margin(2, 4, 1, 4))
     }
@@ -294,13 +330,15 @@ local({
       { if (gam12_hotline / 2 < maxdist / 2)
           annotate("text", x = from / 1e6, y = gam12_hotline / 2e6, hjust = -0.04, vjust = -0.5,
                    size = 2.3, colour = "grey30", label = "diff. contact counting window") } +
-      scale_y_continuous(expand = c(0, 0), name = "sep (Mb)") +
+      scale_y_continuous(expand = c(0, 0), name = "Genomic\ndistance\n(Mb)") +
       scale_x_continuous(expand = c(0, 0)) +
       coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
       labs(subtitle = if (identical(diff_mode, "deltaz"))
              "delta-z, cKO - WT  (red = more contact in cKO; note their slides use the opposite sign)"
            else "cKO - WT NPMI  (red = more contact in cKO)") +
       theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                      axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
+                                                  size = 7, lineheight = 0.95),
                       plot.subtitle = element_text(size = 9),
                       plot.margin = margin(2, 4, 1, 4))
 
@@ -368,9 +406,10 @@ local({
         # only the zero line is labelled.
         scale_y_continuous(limits = c(-ncap, ncap), expand = c(0, 0), breaks = 0) +
         coord_cartesian(xlim = c(from, to) / 1e6) +
-        labs(y = sprintf("net diff.\ncontacts (+/-%d)", round(ncap))) +
+        labs(y = sprintf("net diff.\ncontacts\n(+/-%d)", round(ncap))) +
         theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
-                        axis.title.y = element_text(size = 7),
+                        axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
+                                                    size = 7, lineheight = 0.95),
                         panel.grid.major.x = element_blank(),
                         plot.margin = margin(1, 4, 1, 4))
     })
@@ -415,7 +454,7 @@ local({
         labs(y = "hotspot") +
         theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
                         axis.text.y = element_blank(), axis.ticks.y = element_blank(),
-                        axis.title.y = element_text(size = 7),
+                        axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5, size = 7),
                         panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
     })
 
@@ -451,7 +490,7 @@ local({
         labs(y = "LAD") +
         theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
                         axis.text.y = element_blank(), axis.ticks.y = element_blank(),
-                        axis.title.y = element_text(size = 7),
+                        axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5, size = 7),
                         panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
     }
 
@@ -473,144 +512,110 @@ local({
     # that real features are flattened. ~1/600 of the region, floor of 3 bins.
     smw <- max(3L, round(nrow(reg) / 600))
     mk_panel <- function(mk, last = FALSE, show_key = FALSE) {
-      # Keep every bin, including those with no value: dropping them lets
-      # geom_area draw a straight wedge across the gap, which looks like real
-      # signal. Smoothing ignores the gaps; plotting leaves them as breaks.
-      d <- reg[, .(start, end, v = get(mk), bm = get(paste0("bm_", mk)))]
-      # Aggregate to the display bin, weighting each 20 kb log2FC by its coverage.
-      # An unweighted mean lets a near-empty bin - whose ratio is almost pure
-      # noise - count as much as a well-covered one.
+      # WT AND cKO COVERAGE OVERLAID, not log2 fold change.
+      #
+      # Why this replaced the log2FC panels. Those drew a ratio on a per-mark
+      # symmetric axis, so every mark filled its panel to the same extent
+      # whatever the size of its effect: H3K9me2 (genome median -0.18) looked
+      # exactly as dramatic as H4K20me3 (-0.50). The encoding erased the one
+      # comparison the figure most needs to support. A ratio also hides depth -
+      # a 2x change on nothing is still nothing - and these are read as browser
+      # tracks, where the expectation is coverage.
+      #
+      # What is drawn, per mark:
+      #   pale band per genotype   min-max across that genotype's libraries
+      #   solid line per genotype  mean across its libraries
+      #   shaded gap between means red where cKO > WT, blue where cKO < WT,
+      #                            the same convention as the contact maps
+      # So height is signal level, the gap is the effect, its colour is the
+      # direction, and the bands say whether the gap is larger than the spread
+      # between replicates. A mark with a weak effect now looks weak: its two
+      # lines sit on top of each other inside overlapping bands.
+      #
+      # Y SCALE IS PER MARK, not shared. H3K4me3 is punctate and high, H3K9me2
+      # broad and low; one scale across marks would flatten the punctate ones to
+      # a flat line. Comparison across marks is of the GAP relative to the bands,
+      # which is scale-free, not of absolute height.
+      cols <- paste0("sig_", mk, "_", rep(c("WT", "HP1gKO"), each = 3),
+                     c("", "_lo", "_hi"))
+      if (!all(cols %in% names(reg))) return(NULL)
+      # c("start","end", cols) with with = FALSE selects COLUMNS by name. mget()
+      # inside a data.table [ resolves names as variables in the calling frame,
+      # not as columns, which is why it failed here.
+      d <- reg[, c("start", "end", cols), with = FALSE]
+      setnames(d, cols, c("wt", "wt_lo", "wt_hi", "ko", "ko_lo", "ko_hi"))
+
+      # Aggregate to the display bin. Plain means: coverage is additive, and
+      # unlike the log2FC version there is no near-empty-denominator problem to
+      # weight away.
       fac <- max(1L, round(gam12_mark_binsize / gam_binsize))
       d[, grp := ((seq_len(.N) - 1L) %/% fac) + 1L]
-      d <- d[, {
-        ok <- is.finite(v) & is.finite(bm) & bm > 0
-        .(x0 = min(start) / 1e6, x1 = max(end) / 1e6,
-          v  = if (!any(ok)) NA_real_ else sum(v[ok] * bm[ok]) / sum(bm[ok]),
-          bm = if (!any(ok)) 0        else mean(bm[ok]))
-      }, by = grp]
-      # TWO SEPARATE REFERENCES, and they are different statistics of different
-      # quantities. Keeping them straight is the whole reading of this track:
-      #   gm     = median of this mark's per-bin log2FC over all autosomal 20 kb
-      #            bins. Sets where the FILL changes colour.
-      #   bm_ref = 90th percentile of this mark's per-bin DESeq2 baseMean.
-      #            Sets the OPACITY, i.e. how much signal there was to take a
-      #            ratio of. Nothing to do with log2FC.
-      # MEDIAN, NOT MEAN, for gm: per-bin log2FC at 20 kb is a ratio of small
-      # integer counts (~1-11 per bin after the x10 scaling), so its distribution
-      # is heavy-tailed - bins with a near-empty denominator throw out extreme
-      # values and drag a mean. The median is unmoved by them. The question the
-      # fill answers is also a quantile question ("is this bin unusual against the
-      # typical bin?"), not a question about a total.
-      gm <- median(A[[mk]], na.rm = TRUE)
-      # Opacity carries coverage: a display bin at or above the mark's median
-      # baseMean is solid, one with nothing in it fades out. This is what stops a
-      # region with no signal in either genotype from drawing a confident profile
-      # - the H3K4me3 case, where 84% of 20 kb bins have baseMean < 0.5.
-      # q90, not the median: for a focal mark the median bin is itself empty
-      # (H3K4me3 median baseMean 0.12 against q90 3.18 - the signal lives in the
-      # top decile, the promoters), so a median reference would render most of an
-      # empty track solid. q90 adapts per mark on its own: H3K9me2 is uniform
-      # (1.10 vs 1.39) and stays solid, H3K4me3 correctly goes faint nearly
-      # everywhere except over real peaks.
-      bm_ref <- quantile(A[[paste0("bm_", mk)]], 0.9, na.rm = TRUE)
-      d[, a := pmax(0.10, pmin(1, bm / bm_ref))]
-      d[!is.finite(a), a := 0.10]
-      rng <- range(c(d$v, 0, gm), na.rm = TRUE)
-      # SYMMETRIC ABOUT ZERO. A panel whose axis ran from just above 0 down to
-      # -1 put zero hard against the top edge and read as though the track had
-      # been cropped - and it made two marks with different ranges impossible to
-      # compare by eye, because each had its own off-centre baseline. Forcing
-      # +/- the same limit puts zero at the vertical centre of every mark panel,
-      # so height above or below the middle means the same thing in all of them.
-      # The median line then sits wherever it falls, which is the information: a
-      # mark whose dotted line is well below centre lost signal genome-wide.
-      rng <- c(-1, 1) * max(abs(rng), na.rm = TRUE)
-      # MINIMUM SPAN. Without this the y axis fits whatever the region happens to
-      # contain, so a mark with almost no dynamic range here (H3K36me3 varies by
-      # ~0.15 over the Pcdh cluster) gets its noise stretched to the full panel
-      # height and reads as dramatic structure. Floor the span and tiny deviations
-      # look tiny, which is what they are. Marks with real signal are unaffected
-      # because their own range already exceeds the floor.
-      if (diff(rng) < gam12_mark_minspan)
-        rng <- c(-1, 1) * max(gam12_mark_minspan / 2, abs(gm))  # stays symmetric
-      # SMOOTH SILHOUETTE. The 100 kb aggregation is what controls the noise, but
-      # drawn as rects it reads as steps. Resample the aggregated values onto a
-      # fine grid so the outline is a continuous bigwig-style profile while the
-      # numbers behind it stay the aggregated ones. rule = 1 leaves NA outside the
-      # data, so a gap stays a gap instead of being bridged.
+      d <- d[, .(x0 = min(start) / 1e6, x1 = max(end) / 1e6,
+                 wt = mean(wt, na.rm = TRUE), ko = mean(ko, na.rm = TRUE),
+                 wt_lo = mean(wt_lo, na.rm = TRUE), wt_hi = mean(wt_hi, na.rm = TRUE),
+                 ko_lo = mean(ko_lo, na.rm = TRUE), ko_hi = mean(ko_hi, na.rm = TRUE)),
+             by = grp]
+
       fine <- local({
         mid <- (d$x0 + d$x1) / 2
-        ok  <- is.finite(d$v)
         fx  <- seq(from / 1e6, to / 1e6, length.out = gam12_mark_npoints)
-        itp <- function(y, dflt) if (sum(ok) >= 2)
-                 stats::approx(mid[ok], y[ok], xout = fx, rule = 1)$y else rep(dflt, length(fx))
-        # Linear interpolation leaves visible corners at each 100 kb midpoint,
-        # which on a small region (Pcdh is only ~18 display bins) reads as a
-        # polygon rather than a profile. A short running mean ON THE FINE GRID
-        # rounds them without the overshoot a spline would introduce, and it
-        # cannot invent structure: the window is half a display bin.
+        itp <- function(y) { ok <- is.finite(y)
+          if (sum(ok) < 2) return(rep(NA_real_, length(fx)))
+          stats::approx(mid[ok], y[ok], xout = fx, rule = 1)$y }
         ppb  <- length(fx) / max(1, nrow(d))
         smw2 <- max(3L, as.integer(round(ppb / 2)))
-        roll <- function(y) {
-          g <- is.finite(y)
+        roll <- function(y) { g <- is.finite(y)
           num <- as.numeric(stats::filter(ifelse(g, y, 0), rep(1, smw2), sides = 2))
           den <- as.numeric(stats::filter(g * 1, rep(1, smw2), sides = 2))
           out <- ifelse(is.finite(den) & den > 0, num / den, NA_real_)
-          ifelse(g & !is.finite(out), y, out)   # keep the ends
-        }
-        data.table(x = fx, v = roll(itp(d$v, NA_real_)),
-                   a = { z <- roll(itp(d$a, 0.10)); z[!is.finite(z)] <- 0.10; z })
+          ifelse(g & !is.finite(out), y, out) }
+        data.table(x = fx, wt = roll(itp(d$wt)), ko = roll(itp(d$ko)),
+                   wt_lo = roll(itp(d$wt_lo)), wt_hi = roll(itp(d$wt_hi)),
+                   ko_lo = roll(itp(d$ko_lo)), ko_hi = roll(itp(d$ko_hi)))
       })
-      fw <- diff(fine$x[1:2])
-      ggplot() +
-        # Two ribbons clipped at zero, NOT geom_area(fill = v < 0): mapping fill to
-        # the sign splits the data into two groups, and each group's polygon then
-        # joins its own points straight across the other's territory - which drew
-        # long straight wedges wherever positive values were sparse.
-        # The fill diverges from THAT MARK'S GENOME MEDIAN, not from zero. With a
-        # near-genome-wide loss (H4K20me3 median -0.497, ~100% of bins down) a
-        # zero baseline paints the whole track solid red and hides everything; the
-        # informative quantity is deviation from the typical loss. The y axis
-        # still shows absolute log2FC, and the solid line marks the median, so
-        # nothing is hidden - only the fill reference changes.
-        geom_ribbon(data = fine, aes(x = x, ymin = gm, ymax = pmin(v, gm),
-                                     fill = "below"), na.rm = TRUE) +
-        geom_ribbon(data = fine, aes(x = x, ymin = gm, ymax = pmax(v, gm),
-                                     fill = "above"), na.rm = TRUE) +
-        # Coverage fade. Alpha cannot vary within a single ribbon polygon, so the
-        # fading is a wash of background-coloured rects laid over the finished
-        # ribbon at alpha = 1 - coverage. At ~1200 columns it reads as continuous,
-        # and the silhouette underneath stays smooth.
-        geom_rect(data = fine, aes(xmin = x - fw / 2, xmax = x + fw / 2,
-                                   ymin = rng[1], ymax = rng[2], alpha = 1 - a),
-                  fill = "white", na.rm = TRUE) +
-        scale_alpha_identity() +
-        # after the wash, so the reference lines stay crisp. ZERO is the solid
-        # black line - it is the fixed, shared reference and the centre of the
-        # axis. The mark's genome-wide MEDIAN is the dotted line, and it is also
-        # where the fill changes colour, so the two conventions agree: dotted =
-        # the typical bin for this mark, solid = no change at all.
-        geom_hline(yintercept = 0, linewidth = .4, colour = "black") +
-        geom_hline(yintercept = gm, linewidth = .4, colour = "grey25", linetype = 3) +
-        scale_fill_manual(values = c(below = "#c0392b", above = "#2166ac"),
-                          breaks = c("below", "above"),
-                          labels = c("below mark's genome median", "above it"),
-                          name = NULL) +
+      ymax <- max(c(fine$wt_hi, fine$ko_hi, fine$wt, fine$ko), na.rm = TRUE)
+      if (!is.finite(ymax) || ymax <= 0) ymax <- 1
+      rng <- c(0, ymax * 1.04)
+
+      ggplot(fine) +
+        # replicate-range bands first, so the means read on top of them
+        geom_ribbon(aes(x = x, ymin = wt_lo, ymax = wt_hi), fill = geno_colors[["WT"]],
+                    alpha = .20, na.rm = TRUE) +
+        geom_ribbon(aes(x = x, ymin = ko_lo, ymax = ko_hi), fill = geno_colors[["HP1gKO"]],
+                    alpha = .20, na.rm = TRUE) +
+        # the gap between the means, coloured by direction. Two ribbons each
+        # clipped at the other mean, for the same reason the old panels used two:
+        # one ribbon with a mapped fill joins its own points straight across
+        # wherever the sign flips.
+        geom_ribbon(aes(x = x, ymin = wt, ymax = pmax(ko, wt), fill = "up"), na.rm = TRUE) +
+        geom_ribbon(aes(x = x, ymin = pmin(ko, wt), ymax = wt, fill = "down"), na.rm = TRUE) +
+        geom_line(aes(x = x, y = wt, colour = "WT"), linewidth = .45, na.rm = TRUE) +
+        geom_line(aes(x = x, y = ko, colour = "HP1gKO"), linewidth = .45, na.rm = TRUE) +
+        scale_fill_manual(values = c(up = "#b2182b", down = "#2166ac"),
+                          breaks = c("up", "down"),
+                          labels = c("more in cKO", "less in cKO"), name = NULL) +
+        scale_colour_manual(values = geno_colors, breaks = c("WT", "HP1gKO"),
+                            labels = c("WT mean", "cKO mean"), name = NULL) +
         scale_x_continuous(expand = c(0, 0)) +
-        scale_y_continuous(n.breaks = 3, expand = expansion(mult = 0.04)) +
+        scale_y_continuous(n.breaks = 3, expand = c(0, 0)) +
         coord_cartesian(xlim = c(from, to) / 1e6, ylim = rng, expand = FALSE) +
-        labs(y = sprintf("%s\nmed %+.2f", mk, gm),
+        labs(y = sprintf("%s\ncoverage", mk),
              x = if (last) sprintf("%s (Mb)", chrom) else NULL) +
         theme_m + theme(legend.position = if (show_key) "right" else "none",
                         legend.key.size = unit(9, "pt"), legend.text = element_text(size = 7),
                         plot.margin = margin(1, 4, if (last) 2 else 1, 4),
-                        axis.title.y = element_text(size = 8),
+                        axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
+                                                    size = 7.5, lineheight = 0.95),
                         axis.text.y = element_text(size = 6.5),
                         axis.title.x = if (last) element_text() else element_blank(),
                         axis.text.x  = if (last) element_text() else element_blank())
     }
+
+    # One panel per mark; the legend is collected onto the last one only, so the
+    # key appears once for the whole stack rather than beside every mark.
     panels <- lapply(seq_along(marks), function(i)
                      mk_panel(marks[i], FALSE, show_key = (i == length(marks))))
+    panels <- Filter(Negate(is.null), panels)
 
     # --- gene track -------------------------------------------------------------
     gg <- GENES[as.character(seqnames(GENES)) == chrom &
@@ -641,7 +646,7 @@ local({
       coord_cartesian(xlim = c(from, to) / 1e6) +
       labs(y = "genes", x = sprintf("%s (Mb)", chrom)) +
       theme_m + theme(axis.text.y = element_blank(), panel.grid = element_blank(),
-                      axis.title.y = element_text(size = 8),
+                      axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5, size = 8),
                       plot.margin = margin(1, 4, 4, 4))
 
     # SQUARE DATA POINTS. In a rotated triangle every matrix cell is a 45 degree
@@ -687,42 +692,46 @@ local({
     # or a band) inflated the tracks to fill the page and the maps came out as
     # slivers. With all rows in inches the figure height is just their sum, and a
     # map row is the same physical size whatever else is in the figure.
-    # COVERAGE KEY. The fade is drawn as a wash of white rects at
-    # alpha = 1 - coverage over the finished ribbon, under scale_alpha_identity,
-    # so ggplot cannot generate a legend for it - a second alpha scale would be
-    # needed and only one is allowed per plot. Drawing the key as its own thin
-    # panel is the way to label it, and it shows the actual gradient rather than
-    # describing it. Same construction as the track wash, so it cannot drift out
-    # of step with what the tracks do.
-    p_cov <- local({
-      xs <- seq(0, 1, length.out = 200)
-      ggplot() +
-        geom_rect(data = data.frame(x = xs),
-                  aes(xmin = x - 1/400, xmax = x + 1/400, ymin = 0, ymax = 1),
-                  fill = "#2166ac", colour = NA) +
-        geom_rect(data = data.frame(x = xs),
-                  aes(xmin = x - 1/400, xmax = x + 1/400, ymin = 0, ymax = 1,
-                      alpha = 1 - pmax(0.10, x)),
-                  fill = "white", colour = NA) +
-        scale_alpha_identity() +
-        scale_x_continuous(breaks = c(0, 0.5, 1),
-                           labels = c("0", "0.5", ">=1 x q90"), expand = c(0, 0)) +
-        coord_cartesian(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
-        labs(y = "mark\ncoverage", x = NULL) +
-        theme_m +
-        theme(panel.grid = element_blank(), axis.title.y = element_text(size = 7),
-              axis.text.y = element_blank(), axis.text.x = element_text(size = 6),
-              plot.margin = margin(1, 4, 1, 4))
-    })
+    # The coverage key strip was removed: it took a row on every figure to label
+    # a fade that the caption already describes, and it read as another data
+    # track rather than a legend. The fade itself is unchanged.
+
+    # --- CTCF strip -------------------------------------------------------------
+    # External to both assays and to all five marks, so unlike insulation it
+    # cannot move with the KO. BULK hippocampus, NOT sorted CA1 - see
+    # prepare_CTCF_annotation.R. Drawn as segments rather than filled rects
+    # because at a whole-chromosome width ~90k peaks would otherwise merge into a
+    # solid bar; one tick per peak keeps the density readable.
+    ctcf <- tryCatch(load_ctcf(), error = function(e) NULL)
+    p_ctcf <- if (is.null(ctcf)) NULL else {
+      cg <- as.data.table(as.data.frame(IRanges::subsetByOverlaps(
+              ctcf[ctcf$tissue == "hippocampus"], GRanges(chrom, IRanges(from, to)))))
+      if (!nrow(cg)) NULL else {
+        cg <- cg[, .(x = pmax(pmin((start + end) / 2, to), from) / 1e6)]
+        ggplot(cg) +
+          geom_segment(aes(x = x, xend = x, y = 0, yend = 1),
+                       linewidth = .25, colour = "#3f6b52") +
+          scale_x_continuous(expand = c(0, 0), limits = c(from, to) / 1e6) +
+          scale_y_continuous(expand = c(0, 0)) +
+          labs(y = "CTCF") +
+          theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                          axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+                          axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5, size = 7),
+                          panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
+      }
+    }
+    ctcf_h  <- if (is.null(p_ctcf)) numeric(0) else gam12_h_ctcf
     lad_h   <- if (is.null(p_lad)) numeric(0) else gam12_h_lad
-    track_h <- c(hot_h, lad_h, rep(gam12_h_mark, length(panels)), gam12_h_cov, gam12_h_gene)
+    track_h <- c(hot_h, ctcf_h, lad_h, rep(gam12_h_mark, length(panels)), gam12_h_gene)
     heights <- grid::unit(c(rep(map_h_in, n_tri), track_h), "in")
     # guides = "collect" is essential here, not cosmetic. Without it every panel
     # keeps its own legend, and patchwork centres each one on ITS OWN ROW - so the
     # LAD legend (two keys) was being centred on a 0.22 in row and spilled over
     # the legends above and below it. Collected and top-justified, they stack.
-    wrap_plots(c(tri, hot_panels, if (is.null(p_lad)) NULL else list(p_lad),
-                 panels, list(p_cov), list(p_gene)), ncol = 1, heights = heights) +
+    wrap_plots(c(tri, hot_panels,
+                 if (is.null(p_ctcf)) NULL else list(p_ctcf),
+                 if (is.null(p_lad))  NULL else list(p_lad),
+                 panels, list(p_gene)), ncol = 1, heights = heights) +
       plot_layout(guides = "collect") +
       plot_annotation(
         title = sprintf("%s:%.2f-%.2f Mb", chrom, from / 1e6, to / 1e6),
@@ -740,20 +749,21 @@ local({
         "MARK TRACKS, how they are built: per-bin log2FC(cKO/WT) at 20 kb is aggregated to 100 kb display bins, each 20 kb bin ",
         "weighted by its baseMean, then resampled to a smooth outline. Aggregation is necessary because per-bin log2FC at 20 kb is ",
         "noise-dominated (sd 0.14-0.16 for the broad marks, up to 0.57 for H3K4me3). All statistics elsewhere use unsmoothed values.\n",
-        "MARK FILL REFERENCE = that mark's GENOME-WIDE MEDIAN per-bin log2FC (solid grey line; its value is printed in the axis label). ",
-        "Red is below that median, blue above it - so for a mark with a negative median, blue is still a loss, just a smaller one than ",
-        "typical. Each mark panel is scaled SYMMETRICALLY about zero, so zero is the solid black line at the vertical centre of ",
-        "every panel and the mark's median is the dotted line; how far the dotted line sits from the centre is that mark's ",
-        "genome-wide shift. Median rather than mean because per-bin log2FC is a ratio of small ",
-        "counts with a heavy tail, which drags a mean but not a median. The fill shows direction only; read the y axis for magnitude.\n",
-        "MARK OPACITY = that bin's baseMean divided by the 90th percentile of the same mark's baseMean genome-wide, capped at 1 and ",
-        "floored at 0.10. Solid = as much signal as the mark's well-covered bins; faint = little signal in either genotype, so the ratio ",
-        "is unreliable. q90 rather than the median because for a punctate mark the median bin is itself empty (H3K4me3 median baseMean ",
-        "0.12 against q90 3.18), which would render an empty track solid.\n",
+        "MARK TRACKS ARE COVERAGE, NOT A RATIO. Each panel overlays the two genotypes: the solid lines are the mean per-bin coverage ",
+        "across that genotype's libraries (6 WT, 4 cKO - cKO rep2 excluded at QC), and the pale band behind each is the min-max range ",
+        "across those libraries. The shaded gap between the two means is the effect, coloured red where the cKO is higher and blue where ",
+        "it is lower - the same convention as the contact maps above. Read it as: height is how much signal is there, the gap is the size ",
+        "of the change, and the gap matters only if it is wider than the replicate bands.\n",
+        "This replaced a log2 fold-change panel, which drew a ratio on a per-mark symmetric axis so every mark filled its panel equally ",
+        "whatever the size of its effect - H3K9me2 (genome-wide median -0.18) read as dramatically as H4K20me3 (-0.50). The genome-wide ",
+        "medians are in the ChIP section of the report; this figure is for seeing where signal actually is.\n",
+        "THE Y SCALE IS PER MARK and starts at zero. H3K4me3 is punctate and high, H3K9me2 broad and low, so one shared scale would ",
+        "flatten the punctate marks to a line. Compare marks by the gap relative to their own bands, which is scale-free, not by height.\n",
         "Diff. contacts = count of significant differential contacts per 20 kb bin within 5 Mb (the dashed line on the map); ",
         "net = gained - lost, same sign convention as the difference map. Those are COUNTS, every bin has one. ",
         "Hotspot is the separate CALL on that count: bins at or above the collaborators' 50-75 per-window cutoff. ",
-        "LADs: constitutive cLAD/ciLAD, Peric-Hupkes 2010 (GSE17051), lifted mm9->mm39.")) &
+        "LADs: constitutive cLAD/ciLAD, Peric-Hupkes 2010 (GSE17051), lifted mm9->mm39. ",
+        "CTCF: ENCODE ENCSR877MSN conservative IDR peaks, BULK hippocampus (not sorted CA1), lifted mm10->mm39; one tick per peak.")) &
       theme(legend.justification = "top") -> out
     # Exact figure height: every row plus the title/caption/axis furniture.
     attr(out, "gam_map_in") <- list(n = n_tri, h = map_h_in,
