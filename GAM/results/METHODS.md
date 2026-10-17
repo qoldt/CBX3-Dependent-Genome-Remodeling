@@ -67,3 +67,48 @@ data owner before this file can be treated as complete.
 7. **Are the two merged biological replicates balanced** in profile count, and
    were they collected in the same batch? Pooling unequal replicates would let
    one replicate dominate a genotype.
+8. **The segregation tables themselves — windows x nuclear profiles, per
+   genotype.** This is now the top data request, because it is the only thing
+   that unlocks GAM's defining capability and we do not have it.
+
+   GAM detects **three-way (and higher) contacts** directly, because a nuclear
+   profile either contains a window or does not and no ligation step forces loci
+   into pairs. Beagrie et al. 2017 (Nature 543:519) used exactly this to report
+   an abundance of three-way contacts genome-wide, enriched between highly
+   transcribed regions and super-enhancers, modelled with SLICE. Nothing in our
+   delivery supports that analysis:
+
+   - What we hold is **pairwise** — NPMI matrices plus differential contacts and
+     hotspots derived from them.
+   - Three-way co-segregation **cannot be recovered from pairwise NPMI**, as a
+     matter of arithmetic rather than effort: pairwise marginals do not determine
+     the probability that all three loci occupy the same slice. Three loci that
+     pairwise-contact strongly may never co-occur in one profile.
+   - Per GAMtools' own documentation the segregation table is "the crucial and
+     most important output of a GAM experiment - all further downstream analysis
+     will generally be based on" it; `gamtools matrix` then derives the pairwise
+     matrices we were sent (cosegregation / linkage / dprime / npmi). So the
+     table exists upstream by construction, and our filenames name it:
+     `HP1g_mm39.segregation_at20000.<date>.passed_qc.curated.sigma.2.6.NPMI.chrN.squared.txt.gz`.
+
+   **Ask for:** `segregation_at_20000.table` (and a coarser one, 50 kb or 100 kb,
+   for triplet power) for each genotype, unmerged per replicate if possible,
+   which would also settle questions 1 and 7. **Also ask** how many NPs passed
+   QC per genotype: triplet frequencies scale as the cube of detection
+   probability, so power here depends on NP count far more steeply than the
+   pairwise analysis does, and a triplet null needs the NP-level data to permute.
+
+   **What could then be asked** (all currently blocked): do heterochromatin
+   domains lose multi-way contacts while keeping pairwise ones, and does that
+   depend on domain size; are multi-way hubs enhancer-centred here as they are in
+   mESC (we have Enh/EnhG/EnhPr/EnhPois from the 18-state cortex ChromHMM,
+   though it is P0 cortex, not adult CA1); and does the Pcdh cluster form a
+   multi-way hub, which is a good test case since its NPMI coverage is 97% and
+   the alpha cluster's HS5-1 enhancer is a known multi-loop organiser.
+
+   **A pairwise proxy exists but does not answer the question.** Triangle
+   density in a thresholded NPMI graph ("do a bin's partners also contact each
+   other?") is computable from what we have, but it cannot distinguish one cell
+   holding three loci together from three cells each holding a pair - which is
+   the entire distinction being asked about. If it is ever reported it must be
+   labelled a pairwise clustering statistic, never a multi-contact result.
