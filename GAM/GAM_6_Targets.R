@@ -63,6 +63,26 @@ local({
                       "npmi_long_delta", "decay_slope_delta", "compartment_WT",
                       "compartment_switch", "n_valid_WT", "n_valid_HP1gKO"), names(feat))
   d <- merge(d, feat[, ..keep], by = "bin_id", all.x = TRUE, sort = FALSE)
+  # SHARED-AXIS compartment delta from GAM_2b, if it has been run. pc1_delta is
+  # the difference between each genotype's OWN selected eigenvector, and the two
+  # genotypes select the same eigenvector on only 8 of 19 autosomes, so it
+  # subtracts two different objects (CLAUDE.md settled point 2). shared_delta is
+  # the same quantity measured on one axis common to both. Both are carried so
+  # the contrast is visible; the verdict below uses the shared one.
+  local({
+    f <- file.path(rds_dir, "shared_axis_scores.rds")
+    if (!file.exists(f)) {
+      warning("GAM_2b output not found - the decompaction verdict will fall back to ",
+              "pc1_delta, which is not a sound comparison.\n  Run: Rscript GAM_2b_Shared_Axis.R",
+              call. = FALSE)
+      return(invisible(NULL))
+    }
+    sa <- readRDS(f)$fine[, .(bin_id, shared_delta = score_delta)]
+    d <<- merge(d, sa, by = "bin_id", all.x = TRUE, sort = FALSE)
+    ov <- mean(!is.na(d$shared_delta))
+    message(sprintf("  shared-axis delta joined to %.1f%% of bins", 100 * ov))
+    stopifnot(ov > 0.80)
+  })
   setkey(d, NULL)
   d <- d[match(mcols(bins)$bin_id, bin_id)]     # restore GRanges order: row i == bins[i]
   stopifnot(identical(d$bin_id, mcols(bins)$bin_id))
@@ -236,7 +256,8 @@ local({
     d[, switch_BA := as.numeric(compartment_switch == "B_A")]
   }
   metric_cols <- intersect(c("lost_log1p", "gained_log1p", "net_remodel", "top_lost", "top_gained",
-                             "pc1_delta", "npmi_short_delta", "npmi_long_delta", "decay_slope_delta",
+                             "pc1_delta", "shared_delta", "npmi_short_delta", "npmi_long_delta",
+                             "decay_slope_delta",
                              "insulation_delta", "in_A_WT", "switch_AB", "switch_BA"), names(d))
   M <- as.matrix(d[, ..metric_cols])
 
@@ -293,13 +314,28 @@ local({
   # 4. Headline: do the derepressed clusters DECOMPACT?
   # ================================================================
   # Decompaction = short-range contacts LOST (npmi_short_delta below matched) AND
-  # compartment shift toward A (pc1_delta above matched), each BH < 0.05. A mixed or
-  # null outcome is reported as such - this is a test, not a label.
-  hl <- dcast(res[metric %in% c("npmi_short_delta", "pc1_delta", "net_remodel")],
+  # compartment shift toward A, each BH < 0.05. A mixed or null outcome is
+  # reported as such - this is a test, not a label.
+  #
+  # THE A-SHIFT IS MEASURED ON THE SHARED AXIS (GAM_2b), not on pc1_delta.
+  # pc1_delta differences each genotype's own selected eigenvector, and they
+  # select the same one on 8 of 19 autosomes, so it is a difference of two
+  # different objects. pc1_delta is kept in the table beside it, labelled, so the
+  # two can be compared - but it no longer decides a verdict. An earlier version
+  # of this table called Protocadherin "DECOMPACTS (short-range loss + toward A)"
+  # with the A-shift resting on pc1_delta alone.
+  axis_metric <- if ("shared_delta" %in% res$metric) "shared_delta" else "pc1_delta"
+  if (axis_metric == "pc1_delta")
+    warning("decompaction verdict is using pc1_delta: run GAM_2b_Shared_Axis.R",
+            call. = FALSE)
+  hl <- dcast(res[metric %in% c("npmi_short_delta", "pc1_delta", "shared_delta",
+                                "net_remodel")],
               set + type ~ metric, value.var = c("diff", "p_adj_BH"))
-  if (all(c("diff_npmi_short_delta", "diff_pc1_delta") %in% names(hl))) {
+  dcol <- paste0("diff_", axis_metric); pcol <- paste0("p_adj_BH_", axis_metric)
+  if (all(c("diff_npmi_short_delta", dcol) %in% names(hl))) {
+    hl[, axis_used := axis_metric]
     hl[, loses_short_range := diff_npmi_short_delta < 0 & p_adj_BH_npmi_short_delta < 0.05]
-    hl[, shifts_toward_A   := diff_pc1_delta        > 0 & p_adj_BH_pc1_delta        < 0.05]
+    hl[, shifts_toward_A   := get(dcol) > 0 & get(pcol) < 0.05]
     hl[, verdict := fifelse(loses_short_range & shifts_toward_A, "DECOMPACTS (short-range loss + toward A)",
                     fifelse(loses_short_range, "loses short-range contacts, no A shift",
                     fifelse(shifts_toward_A, "shifts toward A, no short-range loss", "no decompaction signal")))]
@@ -333,14 +369,16 @@ local({
     npmi_short_delta = "short-range NPMI\n+ = more contact",
     npmi_long_delta  = "long-range NPMI\n+ = more contact",
     insulation_delta = "insulation\n+ = weaker boundary",
-    pc1_delta        = "compartment axis\n+ = toward A",
+    pc1_delta        = "per-genotype PC1 delta\n(not a sound comparison)",
+    shared_delta     = "shared compartment axis\n+ = toward A",
     switch_AB        = "called A in WT,\nB in cKO",
     switch_BA        = "called B in WT,\nA in cKO")
   grp <- c(lost_log1p = "differential contacts", gained_log1p = "differential contacts",
            net_remodel = "differential contacts",
            npmi_short_delta = "contact density (NPMI)", npmi_long_delta = "contact density (NPMI)",
            insulation_delta = "boundary",
-           pc1_delta = "compartment call (see caveat)", switch_AB = "compartment call (see caveat)",
+           pc1_delta = "compartment call (see caveat)", shared_delta = "compartment axis",
+           switch_AB = "compartment call (see caveat)",
            switch_BA = "compartment call (see caveat)")
   pd <- res[metric %in% shown]
   nb <- unique(res[, .(set, n_target_bins)])
@@ -383,8 +421,8 @@ local({
                     panel.grid = element_blank())
   save_fig(g_z, "target_vs_matched_z", sub_dir, width = 12.5, height = 7.5)
 
-  if (all(c("diff_npmi_short_delta", "diff_pc1_delta") %in% names(hl))) {
-    g_q <- ggplot(hl, aes(diff_pc1_delta, diff_npmi_short_delta, colour = type, label = set)) +
+  if (all(c("diff_npmi_short_delta", dcol) %in% names(hl))) {
+    g_q <- ggplot(hl, aes(.data[[dcol]], diff_npmi_short_delta, colour = type, label = set)) +
       geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
       geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey55") +
       geom_point(size = 3) + geom_text(vjust = -0.9, size = 3, show.legend = FALSE) +

@@ -110,6 +110,10 @@ GAM_1_Bins_and_Signal.R           ChIP signal/stats + annotation on the 20 kb gr
   ▼
 GAM_2_NPMI_Compartments.R         NPMI -> PC1 compartments, insulation, decay
   │   writes results/rds/npmi_bin_features.rds
+  ├─▶ GAM_2b_Shared_Axis.R      one A/B axis, both genotypes scored on it
+  │     writes results/rds/shared_axis_scores.rds  (GAM_6 joins score_delta)
+  ├─▶ GAM_2c_Meltron.R          MELTRON melting / condensation
+  │     writes results/rds/meltron_{is,scores}.rds
   ├─▶ GAM_3_Coupling.R
   ├─▶ GAM_4_Large_Scale.R
   ├─▶ GAM_5_Heterochromatin.R
@@ -121,15 +125,19 @@ GAM_2_NPMI_Compartments.R         NPMI -> PC1 compartments, insulation, decay
 |-------|--------|---------|
 | **GAM_1** `Bins_and_Signal` | ChIP bigWigs (`MINUTE_DATA`), the ChIP annotated `.rds` (`require_chip_rds()`), Hotspots, repeat/TAD/ChromHMM annotation | `rds/gam_bins_annotated.rds`: the 123,133-bin autosomal grid with per-bin ChIP DESeq2 stats and signal, per-bin differential contact counts (`n_contacts_lost`/`n_contacts_gained`), repeat fractions, ChromHMM coverage, TAD boundary, TSS count, and ChIP compartment labels (`compartment_abs`, `compartment_centred`) |
 | **GAM_2** `NPMI_Compartments` | NPMI matrices (both genotypes, autosomes + chrX/chrY), GAM_1 rds | `rds/npmi_bin_features.rds`: per bin and genotype PC1, A/B compartment, insulation, short/long-range NPMI, decay slope, valid-cell count; PC1/insulation deltas and A/B switch class; saddle matrices |
+| **GAM_2b** `Shared_Axis` | NPMI matrices, GAM_1 rds | ONE compartment axis from the averaged correlation matrix, with both genotypes scored on it. Replaces `pc1_delta` for any WT-vs-cKO comparison: the two genotypes select the same eigenvector on only 8 of 19 autosomes. Better determined than either genotype's own axis on 16 of 19. Writes `rds/shared_axis_scores.rds`, `gam2b_*`, and four IGV bedGraphs |
+| **GAM_2c** `Meltron` | NPMI matrices, GAM_1 hotspot tables | the Pombo lab's melting / condensation measure, ported. Insulation-score distributions over 11 square sizes (240-1040 kb) compared between genotypes by Kolmogorov-Smirnov. Reports the KS statistic D as the effect size and an empirical p from size-matched random regions; the published -log10(p) score saturates on this data. Writes `rds/meltron_*.rds`, `gam2c_*`, and the melting bedGraph |
 | **GAM_3** `Coupling` | GAM_1 + GAM_2 rds | does contact remodelling coincide with the mark loss? Three framings in one file: per-bin Spearman (a powered null), a local recount from the pairs that retracts its scale premise, and contact density per ChIP compartment. Writes `coupling_*`, `gam7_*`, `gam4_*` |
 | **GAM_4** `Large_Scale` | GAM_1 + GAM_2 rds | the 10-25 Mb one-directional blocks (41.6% of the genome) and the block x block contact budget. Writes `gam6_*`, `gam8_*` |
 | **GAM_5** `Heterochromatin` | GAM_1 + GAM_2 rds, NPMI | heterochromatin domains built three ways, intra vs inter contacts, mark-change strata, domain size, and the constitutive-LAD cross. Writes `gam10_*`, `gam11_*`, `gam13_*` |
 | **GAM_6** `Targets` | GAM_1 + GAM_2 rds, GAM_4 tables | HUSH/CBX3 target families and repeats against matched background, protocadherin at native resolution, and the Pcdh TAD against every other chr18 TAD under two TAD partitions. Writes `gam5_*`, `gam9_*`, `gam14_*` |
 | **GAM_7** `Figures` | GAM_1 + GAM_2 rds, NPMI | region plots (contact map, differential contacts, hotspot calls, LADs, five marks, genes) and per-chromosome characterisation. Writes `regions/`, `chromosomes/`, `gam15_*` |
 
-GAM_1, GAM_2, GAM_5 and GAM_7 are sustained all-core jobs; GAM_3, GAM_4 and GAM_6
-need mainly the two `.rds`
-files and can be re-run independently.
+GAM_1, GAM_2, GAM_2b, GAM_2c, GAM_5 and GAM_7 are sustained all-core jobs (they
+re-read the NPMI matrices); GAM_3, GAM_4 and GAM_6 need mainly the `.rds` files
+and can be re-run independently. GAM_2b and GAM_2c take a `GAM2B_CHROMS` /
+`GAM2C_CHROMS` environment variable to spot-run a few chromosomes, and GAM_2c
+caches its insulation scores (`GAM2C_FORCE=1` to recompute).
 
 **Annotation preparation** (run once, not pipeline stages):
 `prepare_LAD_annotation.R` fetches the constitutive cLAD/ciLAD sets and lifts

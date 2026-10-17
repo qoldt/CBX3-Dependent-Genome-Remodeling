@@ -15,6 +15,11 @@ GAM_1_Bins_and_Signal.R       ChIP signal/stats + annotation on the 20 kb grid  
   │  writes results/rds/gam_bins_annotated.rds
 GAM_2_NPMI_Compartments.R     NPMI -> PC1/compartments/insulation/decay            (heavy)
   │  needs GAM_1 (PC1 orientation); writes results/rds/npmi_bin_features.rds
+  ├── GAM_2b_Shared_Axis.R    ONE A/B axis, both genotypes scored on it     (heavy)
+  │    needs GAM_1 + NPMI only; writes results/rds/shared_axis_scores.rds
+  │    GAM_6 joins its score_delta, so run it before GAM_6
+  ├── GAM_2c_Meltron.R        MELTRON melting / condensation                (heavy)
+  │    needs NPMI only; writes meltron_is.rds + meltron_scores.rds
   ├── GAM_3_Coupling.R        does contact remodelling coincide with the mark loss?
   ├── GAM_4_Large_Scale.R     10-25 Mb one-directional blocks + block contact budget
   ├── GAM_5_Heterochromatin.R heterochromatin domains, intra vs inter, mark strata  (heavy)
@@ -233,6 +238,94 @@ switching is what axis noise looks like.
 **Cache gotcha:** `gam2_params$version` must be bumped whenever the compartment
 METHOD changes, not only its parameters - a cached per-chromosome reduction
 carries the PC it was computed with. Currently version 2.
+
+## The shared A/B axis (GAM_2b) supersedes pc1_delta for WT vs cKO
+
+`pc1_WT` and `pc1_HP1gKO` are each genotype's OWN selected eigenvector, and
+settled point 2 above says those are different objects. Now measured on all 19
+autosomes rather than the 5 originally tested: **the two genotypes select the
+same eigenvector on only 8 of 19**. `pc1_delta` is therefore a difference
+between two different vectors and must not be used for a genotype comparison.
+
+`GAM_2b_Shared_Axis.R` implements settled point 3. One axis from the AVERAGED
+correlation matrix at 100 kb, phased once against `active_chromatin_ref()`, then
+both genotypes scored on it as `s_g = C_g %*% a` (one power-iteration step, so
+if `a` were C_g's own eigenvector the score returns that eigenvector back).
+
+**It is measurably better, and the comparison is in the output rather than
+asserted.** Against the same active-chromatin reference, autosomes only:
+
+| axis | median rho | reaches rho > 0.4 |
+|---|---|---|
+| WT's own | 0.315 | 5 of 19, either genotype |
+| cKO's own | 0.254 | |
+| **shared** | **0.422** | **10 of 19** |
+
+The shared axis beats BOTH per-genotype axes on **16 of 19** autosomes
+(exceptions chr3, chr8, chr13). Per chromosome in
+`gam2b_shared_axis_summary.tsv`.
+
+**The track is SHAPE ONLY.** Each genotype's score is median-centred and scaled
+to RMS 1 per chromosome. Deliberate: lambda1 falls ~20% in the cKO, but that is
+global (settled point 6), and leaving it in the track would repaint the
+retracted "compartments are weaker in the cKO" claim across the whole genome.
+Amplitude is kept in `rayleigh_WT` / `rayleigh_HP1gKO` / `lambda1_ratio` in the
+summary, where it reads as what it is. **This stage does not re-answer the
+strength question** - that is settled and null on two external axes.
+
+Still weak evidence: 10 of 19 is better, not good. Report the quality numbers
+with any compartment claim, as before.
+
+**`GAM_6`'s decompaction verdict now uses `shared_delta`.** The earlier table
+called Protocadherin "DECOMPACTS (short-range loss + toward A)" with the A-shift
+resting entirely on `pc1_delta`. `pc1_delta` is still computed and still in the
+table, labelled "not a sound comparison", so the two can be contrasted - it just
+no longer decides a verdict. The short-range-loss half was never affected.
+
+## MELTRON (GAM_2c): use the KS statistic D, not the published melting score
+
+`GAM_2c_Meltron.R` ports the Pombo lab's MELTRON / MELTRONIC (Winick-Ng et al.
+Nature 2021, github.com/pombo-lab/Meltron). Insulation score = mean contact
+value in the square `[v-s, v) x (v, v+s]`, over 11 square sizes 240-1040 kb;
+the two genotypes' pooled IS distributions compared with a one-sided KS test;
+published score = -log10(Bonferroni-corrected p).
+
+**Two deviations, both forced, both in the file header:**
+
+1. **IS is additive here, not `log2(square mean) - log2(chromosome mean)`.** The
+   published form needs a positive quantity. **Only ~50% of our insulation
+   squares have a positive mean NPMI**, so the log form is undefined for half
+   the genome. We subtract instead - the same decision, for the same reason, as
+   settled point 8. Sign and ranking stay comparable to published work; the
+   **magnitude does not**.
+2. 20 kb viewpoints rather than 40 kb, so the output joins the rest of the repo
+   without a regrid. Square sizes unchanged.
+
+**The published |score| > 5 cutoff does not transfer and is NOT used.** It calls
+about a third of the genome in the published setting; here it calls roughly two
+thirds, because each window pools 11 square sizes x 25 viewpoints into a test
+that assumes independence - they are nested and overlapping - so
+`-log10(p_adj)` saturates. Calls come from the tails of the genome's own
+**signed KS D** instead, which is a relative statement ("the most melted 5%")
+and is labelled as such. The published figure is printed beside ours so the
+discrepancy stays visible.
+
+**The track is regionally coherent over megabases, not at window level.**
+Measured every run into `gam2c_meltron_spatial_coherence.tsv`: aggregated to one
+point per 500 kb sliding window, the direction changes sign between ~25% of
+adjacent windows, the median run of one direction is 3 windows (1.5 Mb) and the
+longest is 28 (14 Mb). That is the scale of GAM_4's one-directional blocks - and
+those blocks come out melting (lost) and condensing (gained) at the floor of the
+null here. So read regions, not single windows.
+
+**Quote `p_empirical_D`, not the raw score.** Every region set is also scored
+against size-matched random regions on the same chromosomes, and that null is
+what makes the output interpretable at all: **the raw score saturates at the
++/-300 cap for all four significant sets**, so it cannot rank or separate them.
+Against the null they separate cleanly. D also shows something the score cannot:
+the gene-family sets sit BELOW their own nulls (e.g. Pcdh 0.224 against a null
+median of 0.260), i.e. less changed than a random region of the same width, which
+a one-sided score reports simply as "not significant".
 
 ## GAM_5 sections A and B use a domain definition section C disproves
 

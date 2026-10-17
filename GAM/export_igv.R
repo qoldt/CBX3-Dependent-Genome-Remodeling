@@ -82,21 +82,23 @@ if (file.exists(dom_f)) {
             'visibility=dense color=200,90,40 useScore=1'))
 } else message("  (no hotspot domain table - run GAM_1)")
 
-# --- 4. Architecture: PC1, WT ------------------------------------------------
-# One genotype. NA on chromosomes where no balanced compartment eigenvector was
-# found - those gaps are real and should stay visible rather than be filled.
-g2 <- file.path(rds_dir, "npmi_bin_features.rds")
-if (file.exists(g2)) {
-  f <- readRDS(g2)$features
-  m <- merge(a[, .(bin_id, chr, start, end)], f[, .(bin_id, pc1_WT)], by = "bin_id")
-  setorder(m, chr, start)
-  d4 <- m[is.finite(pc1_WT), .(chr, start, end, round(pc1_WT, 4))]
-  wr(d4, "gam_pc1_WT.bedgraph",
-     paste0('track type=bedGraph name="GAM PC1 (WT, A/B axis)" ',
-            'description="100kb compartment call expanded to 20kb; axis weakly ',
-            'determined on most chromosomes - see GAM/CLAUDE.md" visibility=full ',
-            'color=33,102,172 altColor=178,24,43 viewLimits=-2:2 windowingFunction=mean'))
-} else message("  (no NPMI features - run GAM_2)")
+# --- 4. Architecture: the SHARED A/B axis ------------------------------------
+# GAM_2b writes gam_shared_axis.bedgraph and the two per-genotype scores
+# directly, so nothing is rebuilt here - this only reports whether they exist.
+#
+# The per-genotype PC1 track that used to live here has been RETIRED from the
+# session. It showed one genotype's own selected eigenvector, and the two
+# genotypes select the same eigenvector on only 8 of 19 autosomes, so putting
+# WT's axis on screen invited a WT-vs-cKO comparison that is not defined. The
+# shared axis is one ruler both genotypes are scored against, and it is better
+# determined on 16 of 19 autosomes. gam_pc1_WT.bedgraph is still written by
+# GAM_2's own outputs if you want it; it is simply not in the session.
+sa <- file.path(igv_dir, "gam_shared_axis.bedgraph")
+message(if (file.exists(sa)) "  gam_shared_axis.bedgraph  (from GAM_2b)"
+        else "  (no shared axis - run GAM_2b_Shared_Axis.R)")
+ms <- file.path(igv_dir, "gam_melting_score.bedgraph")
+message(if (file.exists(ms)) "  gam_melting_score.bedgraph  (from GAM_2c)"
+        else "  (no melting track - run GAM_2c_Meltron.R)")
 
 # --- 5. ChIP differential-loss compartments ---------------------------------
 # The median-centred labels (the primary ones). itemRgb so the three groups are
@@ -130,7 +132,8 @@ if (file.exists(blk_src)) {
 # Relative paths, so the folder can be moved or sent as a unit.
 files <- c("gam_large_blocks.bed", "chip_H4K20me3_log2FC.bedgraph",
            "gam_contacts_lost.bedgraph", "gam_hotspot_domains.bed",
-           "gam_pc1_WT.bedgraph", "chip_compartments.bed")
+           "gam_shared_axis.bedgraph", "gam_shared_score_delta.bedgraph",
+           "gam_melting_score.bedgraph", "chip_compartments.bed")
 files <- files[file.exists(file.path(igv_dir, files))]
 writeLines(c(
   '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
@@ -151,7 +154,9 @@ writeLines(c(
   "| H4K20me3 log2FC | the ChIP effect, per 20 kb bin, KO vs WT |",
   "| GAM contacts lost | differential contacts stronger in WT (lost in the KO) |",
   "| Hotspot domains | called remodelled domains, adjusted variant |",
-  "| GAM PC1 (WT) | compartment axis; gaps = no usable axis on that chromosome |",
+  "| GAM shared A/B axis | one compartment axis both genotypes are scored on |",
+  "| GAM A/B score delta | cKO minus WT on that axis; shape only |",
+  "| MELTRON signed KS D | + = contact density lost (melting), - = condensing |",
   "| ChIP compartments | stable / H4K20me3_only / co_loss |",
   "| GAM large blocks | 10-25 Mb one-directional territory (red lost, blue gained) |",
   "",
@@ -159,8 +164,16 @@ writeLines(c(
   "clearly: contacts are lost across essentially all of 0-25 Mb and gained",
   "across 55-110 Mb. That large-block structure covers 41.6% of the genome.",
   "",
-  "The PC1 track is NOT reliable genome-wide - only 11 of 38 chromosome x",
-  "genotype axes reach |rho| > 0.4. See `../../CLAUDE.md` before using it.",
+  "The compartment track is the SHARED axis from GAM_2b, not a per-genotype PC1.",
+  "Each genotype selects its own eigenvector, and they pick the same one on only",
+  "8 of 19 autosomes, so a WT-PC1-vs-cKO-PC1 comparison is not defined. The",
+  "shared axis is better determined than either genotype's own on 16 of 19",
+  "autosomes, but it still only reaches |rho| > 0.4 against active chromatin on",
+  "10 of 19 - read it as weak evidence, and see `../../CLAUDE.md` first.",
+  "",
+  "The melting track is the signed Kolmogorov-Smirnov statistic D, NOT the",
+  "published -log10(p) melting score. On this data that score saturates and",
+  "its |score| > 5 cutoff calls most of the genome; GAM_2c's header explains why.",
   "",
   "Read together: H4K20me3 falls almost everywhere, while contact direction is",
   "organised into very large blocks - the two are uncoupled at bin level",

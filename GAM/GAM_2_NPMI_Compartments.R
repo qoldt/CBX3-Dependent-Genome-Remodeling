@@ -77,39 +77,10 @@ if (!file.exists(gam1_rds))
        "\nRun it first:   cd GAM && Rscript GAM_1_Bins_and_Signal.R", call. = FALSE)
 gam1 <- readRDS(gam1_rds)
 stopifnot(all(c("signal", "stats") %in% names(gam1)))
-# ACTIVE-CHROMATIN REFERENCE: mean of the per-bin z-scores of WT H3K4me3 and WT
-# H3K36me3. This both SELECTS which eigenvector is the compartment axis and
-# orients its sign (see select_compartment_pc() for the full rationale).
-#
-# Two marks, not one: H3K4me3 is punctate at promoters and thin across a 20 kb
-# bin; H3K36me3 is broad over transcribed gene bodies and better matched to this
-# resolution. Averaging their z-scores gives a steadier A-compartment anchor.
-#
-# Both are UNCHANGED in the KO (per-bin median log2FC +0.000 and -0.052, against
-# -0.497 for H4K20me3), so the A/B axis is the same ruler in both genotypes.
-# Anchoring on H3K9me3/H4K20me3 would be circular - the axis would move with the
-# effect under study.
-h3k4_wt <- local({
-  zs <- function(v) { s <- stats::sd(v, na.rm = TRUE)
-                      if (!is.finite(s) || s < 1e-12) return(rep(0, length(v)))
-                      (v - mean(v, na.rm = TRUE)) / s }
-  parts <- list(); used <- character(0)
-  for (mk in c("H3K4me3", "H3K36me3")) {
-    cols <- grep(paste0("^", mk, "_WT"), colnames(gam1$signal))
-    if (length(cols)) {
-      parts[[mk]] <- zs(rowMeans(gam1$signal[, cols, drop = FALSE], na.rm = TRUE))
-      used <- c(used, paste0(mk, " (", length(cols), " WT libs)"))
-    }
-  }
-  if (!length(parts)) {
-    warning("no WT H3K4me3/H3K36me3 columns in $signal; falling back to pooled",
-            " H3K4me3 baseMean - the A/B call will be weaker", call. = FALSE)
-    st <- gam1$stats[gam1$stats$mark == "H3K4me3", ]
-    return(setNames(st$baseMean, st$bin_id))
-  }
-  message("Active-chromatin reference from: ", paste(used, collapse = " + "))
-  setNames(Reduce(`+`, parts) / length(parts), rownames(gam1$signal))
-})
+# ACTIVE-CHROMATIN REFERENCE: see active_chromatin_ref() in config.R. It is
+# defined there because GAM_2b phases the SHARED axis with the same ruler, and
+# the two must not drift apart.
+h3k4_wt <- active_chromatin_ref(gam1)
 rm(gam1); invisible(gc())
 
 # ---------------------------------------------------------------
@@ -167,65 +138,9 @@ pc1_corr <- function(x) {
   }
 }
 
-# Choose WHICH eigenvector is the compartment axis, and orient it.
-#
-# Reference = active chromatin, built from WT H3K4me3 AND H3K36me3 (mean of their
-# per-bin z-scores). Two marks rather than one because they mark active chromatin
-# differently and complementarily: H3K4me3 is punctate at promoters, which is a
-# thin signal across a 20 kb bin, while H3K36me3 is broad over transcribed gene
-# bodies and therefore better matched to this bin size. Their average is a more
-# stable A-compartment anchor than either alone.
-#
-# Critically, these are the two marks that DO NOT change in the KO (per-bin median
-# log2FC +0.000 and -0.052, against -0.497 for H4K20me3). Anchoring on them means
-# the A/B axis is the same ruler in both genotypes. Anchoring on H3K9me3/H4K20me3
-# would be circular: the axis would move with the very effect being measured.
-#
-# Returns the selected vector already sign-oriented so positive = A = active-high,
-# plus the diagnostics needed to judge the call per chromosome.
-select_compartment_pc <- function(pc, ids, ref, balance = c(0.2, 0.8)) {
-  V <- pc$vecs
-  rhos <- apply(V, 2, function(v) {
-    names(v) <- ids
-    ok <- is.finite(v) & is.finite(ref[ids])
-    if (sum(ok) < 50) return(NA_real_)
-    suppressWarnings(stats::cor(v[ok], ref[ids][ok], method = "spearman"))
-  })
-  # Fraction on the A side once oriented - the balance of each candidate.
-  fracs <- vapply(seq_len(ncol(V)), function(k) {
-    v <- V[, k]; sgn <- if (is.finite(rhos[k]) && rhos[k] < 0) -1 else 1
-    mean(v * sgn > 0, na.rm = TRUE)
-  }, 0)
-  # SELECT ON BALANCE FIRST, then correlation. Ranking on |rho| alone picks the
-  # wrong vector: measured across chromosomes, the LEADING eigenvector is
-  # systematically degenerate (frac_A 0.04-0.13 - almost every bin on one side,
-  # i.e. the overall contact-structure component) yet often correlates slightly
-  # better with the active reference than the true compartment vector does. On
-  # chr19 WT, PC1 had |rho| 0.32 at frac_A 0.038 while PC2 had |rho| 0.23 at
-  # frac_A 0.64; on chr11 WT, PC2 reached |rho| 0.53 at frac_A 0.68. A vector
-  # that assigns 96% of a chromosome to one compartment is not an A/B split
-  # whatever it correlates with, so balance is a precondition, not a tiebreak.
-  cand <- which(is.finite(rhos) & fracs > balance[1] & fracs < balance[2])
-  if (!length(cand)) {
-    # No balanced candidate: the axis is not determined for this chromosome.
-    # Returning NA is the honest outcome - better than shipping a degenerate
-    # vector that downstream code would treat as a compartment call.
-    return(list(vec = setNames(rep(NA_real_, length(ids)), ids), which_pc = NA_integer_,
-                rho = NA_real_, rho_all = rhos, frac_all = fracs, sign = NA_real_,
-                frac_A = NA_real_, determined = FALSE))
-  }
-  k <- cand[which.max(abs(rhos[cand]))]
-  v <- V[, k]; names(v) <- ids
-  sgn <- if (is.finite(rhos[k]) && rhos[k] < 0) -1 else 1
-  list(vec = v * sgn, which_pc = k, rho = abs(rhos[k]),
-       rho_all = rhos, frac_all = fracs, sign = sgn, determined = TRUE,
-       # A/B from the SIGN of the selected eigenvector, with no median-centring.
-       # Centring was previously needed only because the wrong (all-positive)
-       # eigenvector was being used; selecting the right one removes the need and
-       # frees frac_A to differ from 0.5, which is what makes a net A<->B shift
-       # detectable at all.
-       frac_A = mean(v * sgn > 0, na.rm = TRUE))
-}
+# select_compartment_pc() lives in config.R: GAM_2b selects the SHARED axis with
+# the identical rule, and a second copy of a selection rule is how two stages
+# end up calling different vectors the compartment.
 
 # PC1 sign: Spearman against a reference over bins finite in both. Rank-based so
 # the few extreme H3K4me3 bins (promoter peaks) do not set the sign.
