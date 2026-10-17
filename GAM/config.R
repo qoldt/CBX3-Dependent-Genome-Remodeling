@@ -462,7 +462,14 @@ gam_block_min_mb      <- 4       # minimum block size to report
 # does decay with distance, 0.69 at 20 kb to 0.12 at 20 Mb, so it is not being
 # double-corrected).
 #
-# The remaining explanation is resolution. A/B compartments are conventionally
+# RESOLUTION IS NOT THE EXPLANATION - tested 2026-10-17 and rejected. |rho| is
+# flat from 100 kb through 240 kb and 500 kb to 1 Mb on chr1/7/11/16/19 (chr11
+# 0.465 -> 0.425, chr19 0.250 -> 0.306), and Beagrie 2017 called GAM compartments
+# at 1 Mb, so this was the obvious fix and it does nothing. The real defect is
+# that WT and cKO do not select the same eigenvector (subspace overlap 0.27-0.57,
+# eigengap 1.2-3.1). See GAM/CLAUDE.md. The paragraph below is kept because the
+# 100 kb choice is still right, but not for the reason it gives.
+# The original (now disproven) reasoning was: A/B compartments are conventionally
 # called at 100 kb - 1 Mb; at 20 kb the correlation matrix is dominated by
 # TAD-scale local structure rather than the compartment signal, which is a
 # long-range property. Aggregating to 100 kb (5 x 5 blocks of the native matrix)

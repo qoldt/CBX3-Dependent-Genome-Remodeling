@@ -726,20 +726,37 @@ local({
   PROF <- rbindlist(lapply(R, `[[`, "profile"))
   fwrite(PROF, file.path(tables_dir, "gam14_pcdh_partner_profile.tsv"), sep = "\t")
 
+  # FACET LABELS. "external / own_WT / own_HP1gKO" reads as three genotypes or
+  # three conditions. They are not: they are three ways of DIVIDING chr18 into
+  # TADs, and every panel plots the same measured quantity (percent change in
+  # mean NPMI, cKO vs WT). Showing all three is a robustness check on the
+  # partition, not a comparison of samples. Spelled out because this figure was
+  # misread exactly that way.
+  part_lab <- c(external   = "TADs from published boundaries\n(same boundaries for both genotypes)",
+                own_WT     = "TADs called from WT insulation",
+                own_HP1gKO = "TADs called from cKO insulation")
+  relab <- ggplot2::as_labeller(part_lab)
+  part_note <- paste0("The three panels are three ways of dividing chr18 into TADs, NOT three samples. ",
+                      "Every panel measures the same thing:\npercent change in mean NPMI, cKO vs WT. The WT and cKO ",
+                      "insulation calls put the Pcdh cluster in the SAME TAD, so those two\npanels differ only in the ",
+                      "other TADs that form the comparison set.")
+
   # --- figures ------------------------------------------------------------------
   NULLD <- rbindlist(lapply(R, `[[`, "nullv"))
   OBS <- SUM[, .(partition, distal_pct)]
   p <- ggplot(NULLD, aes(stratified)) +
     geom_histogram(bins = 40, fill = "grey80", colour = NA) +
     geom_vline(data = OBS, aes(xintercept = distal_pct), colour = "#b2182b", linewidth = .8) +
-    facet_wrap(~ partition, scales = "free_y", nrow = 1) +
+    facet_wrap(~ partition, scales = "free_y", nrow = 1, labeller = relab) +
     labs(title = "Pcdh TAD vs distal TADs, against every other chr18 TAD at matched separation",
          subtitle = paste0("Grey = the separation-stratified contact change of each other chr18 TAD against its own ",
                            "partners.\nRed = the Pcdh TAD. Averaging within separation band first stops a TAD being ",
                            "scored by how many near\npartners it happens to have."),
-         x = "separation-matched change in mean NPMI, HP1gKO vs WT (%)", y = "TADs") +
-    theme_m
-  save_fig(p, "pcdh_vs_null", subdir = fig_sub, width = 11, height = 4.6)
+         caption = part_note,
+         x = "separation-matched change in mean NPMI, cKO vs WT (%)", y = "number of TADs") +
+    theme_m + theme(plot.caption = element_text(hjust = 0, size = 7, lineheight = 1.2),
+                    strip.text = element_text(size = 8, lineheight = 1.1))
+  save_fig(p, "pcdh_vs_null", subdir = fig_sub, width = 12, height = 5.6)
 
   BYN <- rbindlist(lapply(R, `[[`, "by_sep_null"))
   bq <- BYN[, .(lo = quantile(pct, .25, na.rm = TRUE), md = median(pct, na.rm = TRUE),
@@ -751,25 +768,31 @@ local({
     geom_line(data = bq, aes(as.integer(sep_band), md, group = partition), colour = "grey45") +
     geom_line(data = BY, aes(as.integer(sep_band), pct, group = partition), colour = "#b2182b", linewidth = .8) +
     geom_point(data = BY, aes(as.integer(sep_band), pct), colour = "#b2182b", size = 1.8) +
-    facet_wrap(~ partition, nrow = 1) +
+    facet_wrap(~ partition, nrow = 1, labeller = relab) +
     scale_x_continuous(breaks = seq_along(SEP_NM), labels = SEP_NM) +
     labs(title = "Where along the chromosome does the Pcdh TAD change its contacts?",
-         subtitle = paste0("Red = the Pcdh TAD. Grey band = interquartile range over all other chr18 TADs at the same ",
-                           "separation,\ngrey line their median - so the grey IS the distance control."),
-         x = "separation from the Pcdh TAD", y = "% change in mean NPMI") +
-    theme_m
-  save_fig(p, "pcdh_by_separation", subdir = fig_sub, width = 11, height = 4.6)
+         subtitle = paste0("RED = the Pcdh TAD. GREY LINE = the median of every OTHER chr18 TAD measured at the same ",
+                           "separation;\nGREY BAND = their interquartile range. The grey is therefore the distance-matched ",
+                           "control: the Pcdh TAD is\nunusual only where red leaves the band."),
+         caption = part_note,
+         x = "separation from the Pcdh TAD", y = "% change in mean NPMI, cKO vs WT") +
+    theme_m + theme(plot.caption = element_text(hjust = 0, size = 7, lineheight = 1.2),
+                    plot.subtitle = element_text(size = 8.5, lineheight = 1.2),
+                    strip.text = element_text(size = 8, lineheight = 1.1))
+  save_fig(p, "pcdh_by_separation", subdir = fig_sub, width = 12, height = 5.6)
 
   p <- ggplot(PROF, aes(partner_mid / 1e6, pct)) +
     geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
     geom_vline(xintercept = (start(pcdh) + end(pcdh)) / 2e6, linetype = 2, colour = "grey40") +
     geom_point(aes(colour = pct > 0), size = 1.3) +
     scale_colour_manual(values = c(`TRUE` = "#b2182b", `FALSE` = "#2166ac"), guide = "none") +
-    facet_wrap(~ partition, nrow = 1) +
+    facet_wrap(~ partition, nrow = 1, labeller = relab) +
     labs(title = "Pcdh TAD contact change with each partner TAD along chr18",
-         subtitle = "Dashed line = the Pcdh cluster. Each point is one partner TAD; red = more contact in the KO.",
-         x = "partner TAD midpoint (Mb)", y = "% change in mean NPMI") +
-    theme_m
+         subtitle = "Dashed line = the Pcdh cluster. Each point is one partner TAD; red = more contact in the cKO.",
+         caption = part_note,
+         x = "partner TAD midpoint (Mb)", y = "% change in mean NPMI, cKO vs WT") +
+    theme_m + theme(plot.caption = element_text(hjust = 0, size = 7, lineheight = 1.2),
+                    strip.text = element_text(size = 8, lineheight = 1.1))
   save_fig(p, "pcdh_partner_profile", subdir = fig_sub, width = 11, height = 4.6)
 
   msg("\nGAM_14 complete.")

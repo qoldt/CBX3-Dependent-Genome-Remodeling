@@ -133,51 +133,104 @@ visibly fade. Also note the track FILL diverges from each mark's **genome
 median**, not from zero - blue means "above that median", which for a negative
 median is still a loss.
 
-## A/B compartments: PARKED, axis weakly determined (2026-10-16)
+## A/B compartments: axis weakly determined; NO strength change (2026-10-17)
 
-The compartment call runs and no longer produces artifacts, but it is **not
-reliable on most chromosomes**. Do not report an A/B assignment, a net A<->B
-shift, or `compartment_switch` without restating the quality numbers below.
+The compartment call runs and is not artefactual, but it is **not reliable on
+most chromosomes**. Do not report an A/B assignment, a net A<->B shift, or
+`compartment_switch` without restating the quality numbers below.
 
 **What was wrong and is now fixed.** The first draft ranked candidate
 eigenvectors purely by correlation with an active-chromatin reference. That
-picks the wrong vector: measured on chr19/chr11/chr3, the LEADING eigenvector is
-systematically degenerate (`frac_A` 0.04-0.13 - nearly every bin on one side,
-i.e. the overall contact-structure component) yet often correlates slightly
-*better* with active marks than the real compartment vector (chr19 WT: PC1
-|rho| 0.32 at frac_A 0.038 vs PC2 |rho| 0.23 at frac_A 0.64). Balance is now a
-precondition over 4 eigenvectors, not a tiebreak. Result: implausible `frac_A`
-13/38 -> 0/38, PC1 chosen 2/38 instead of 19/38.
+picks the wrong vector: the LEADING eigenvector is systematically degenerate
+(`frac_A` 0.04-0.13 - nearly every bin on one side) yet often correlates
+slightly *better* with active marks than the real compartment vector. Balance is
+now a precondition over 4 eigenvectors, not a tiebreak. Result: implausible
+`frac_A` 13/38 -> 0/38, PC1 chosen 2/38 instead of 19/38.
 
 **What is still wrong.** Usable axis (|rho| > 0.4) only **11 of 38** chromosome x
-genotype combinations; median |rho| 0.348; WT-vs-KO PC agreement 0.383. The
-switch table is near-symmetric (A->B 21,393 vs B->A 21,078) and that symmetry is
-*not* forced by construction this time - but **do not read it as "no net
-shift"**: 36% of bins switching is what axis noise looks like.
+genotype combinations; median |rho| 0.348. The switch table is near-symmetric
+(A->B 21,393 vs B->A 21,078); **do not read it as "no net shift"** - 36% of bins
+switching is what axis noise looks like.
 
 **Usable without reservation** (none depend on the PC): insulation,
-`npmi_short` / `npmi_long`, `decay_slope`, and the raw NPMI. Chromosomes with a
-decent axis if a restricted analysis is wanted: chr11 (0.48), chr5 (0.42),
-chr8 (0.42), chr2 (0.40).
+`npmi_short` / `npmi_long`, `decay_slope`, and the raw NPMI.
 
-**Leads for the next attempt, in priority order:**
-1. **Coarsen further** to 250 kb - 1 Mb. 20 kb -> 100 kb moved |rho| only
-   0.304 -> 0.348, but the direction was right and the step was small.
-2. **Change the A/B anchor.** The H3K4me3+H3K36me3 reference tops out at
-   |rho| 0.725; GC content or gene density is the field standard and may anchor
-   better where the marks are thin over 100 kb.
-3. **Accept the limit.** With 2 merged biological replicates and z>2 baked in,
-   "GAM NPMI at this depth does not support compartment calling" is a legitimate
-   and reportable conclusion. Prefer it over tuning until the numbers look clean.
+### Settled 2026-10-17 - do not re-derive any of this
 
-Already ruled out, do not re-test: O-E is not double-correcting (raw NPMI decays
-properly with distance, 0.69 at 20 kb to 0.12 at 20 Mb), and axis quality does
-not track chromosome size (rho = -0.04), so it is not a power problem.
+1. **Resolution is NOT the limitation. The old lead 1 is dead.** Tested 100 kb,
+   240 kb, 500 kb and 1 Mb on chr1/7/11/16/19. |rho| is flat across the whole
+   range (chr11 0.465 -> 0.425, chr19 0.250 -> 0.306, chr16 0.469 -> 0.548).
+   Beagrie 2017 validated GAM compartments at 1 Mb, so this was the obvious fix
+   and it does nothing. **The comment in `config.R` attributing the weak axis to
+   resolution is wrong** and should not be used as justification.
+2. **The real defect is that WT and cKO do not select the same eigenvector.**
+   Mean squared cosine between the two genotypes' leading 4-eigenvector subspaces
+   is only **0.27-0.57**, the 4th principal angle is near-orthogonal, and the
+   selected PC differs between genotypes on 4 of 5 chromosomes tested. The
+   eigengap lambda1/lambda2 is 1.2-3.1, so the leading vectors are close to an
+   arbitrary rotation of each other. Any per-genotype PC1-vs-PC1 comparison is
+   comparing two different objects.
+3. **A shared axis is constructible and generalises.** Build it from the averaged
+   correlation matrix, fit its direction once against the active-chromatin
+   reference, score both genotypes on it. Held-out rho (weights fitted on odd
+   coarse bins, evaluated on even) matches in-sample: chr16 0.555 -> 0.565,
+   chr11 0.519 -> 0.553, chr1 0.435 -> 0.437. k = 4 and k = 8 agree. This is a
+   real improvement over per-genotype selection **as a definition of the axis**.
+4. **Never measure compartment STRENGTH along an eigen-derived axis.** It is
+   circular: the axis fits whichever genotype's matrix built it. Same data, k=4,
+   100 kb, median strength ratio cKO/WT by axis source - **WT axis 0.540
+   (28/28 below 1), averaged axis 0.786 (25/28), cKO axis 1.207 (8/28)**. The
+   direction of the answer is set by the choice of axis. An earlier
+   "compartments are less defined in the cKO" claim came from the averaged axis
+   and is **retracted**.
+5. **There is no detectable compartment-strength change.** Measured on axes
+   EXTERNAL to both contact matrices, so neither genotype can be favoured, all
+   19 autosomes at 100 kb, bootstrap over chromosomes:
+   - active-chromatin axis (WT H3K4me3 + H3K36me3 z): mean delta **-0.00018**,
+     95% CI -0.00213 to +0.00186, negative on 10/19, paired Wilcoxon p = 0.62
+   - TSS-density axis (no ChIP at all): mean delta +0.00019, CI -0.00057 to
+     +0.00103, negative on 11/19, p = 0.74
+
+   Two independent rulers, both null. Report this as a negative result, not as
+   "not yet tested".
+6. **lambda1 falls ~20% in the cKO** (ratio 0.58-1.02, median 0.81). That is a
+   global property of the correlation matrix affecting every direction equally,
+   not a compartment-specific effect, and it is what made the biased test look
+   positive. Normalising by each genotype's own lambda1 on the averaged axis
+   gives a strength ratio of 0.953 - i.e. nothing.
+7. **Detection frequency explains chr7 and chr11, and only those.** A leading
+   eigenvector tracks per-bin `n_valid` at |rho| 0.34-0.47 on chr7 and chr11,
+   versus 0.01-0.23 on chr1, chr16 and chr19. Those are exactly the two
+   chromosomes showing whole-chromosome contact offsets, so treat them as
+   coverage-affected rather than biologically opposite.
+8. **Our strength statistic is additive and is NOT comparable to published
+   values.** The field computes saddle strength as (AA+BB)/(AB+BA) on
+   **observed/expected**, which is positive so the ratio is defined. NPMI is
+   already log-scale and goes negative, so GAM_2 subtracts the distance
+   expectation rather than dividing; on O-E the AB denominator crosses zero and
+   the ratio returns nonsense (it was producing negative "strengths"). Use
+   **(AA+BB)/2 - AB**. Never quote it against a Hi-C paper's number.
+
+### How the field does this, for when it is picked up again
+
+- **dcHiC** is the standard differential-compartment tool: SVD per sample, PC
+  selected and sign-phased against GC content or gene density, **quantile
+  normalisation of the compartment scores across all samples** to put them on a
+  common scale, then a per-bin Mahalanobis distance with a chi-square p and
+  IHW/FDR. Note it assumes the same PC is selected in every sample - an
+  assumption **our data violates** (point 2), which is why it cannot simply be
+  run as-is here.
+- **GENOVA / Imakaev saddle** for strength: O/E matrix, subtract 1, eigen
+  decompose, first eigenvector scaled by sqrt(eigenvalue); phase by correlating
+  the arm-wise score with an active mark (H3K4me1) and flipping on a negative
+  correlation. Strength from the top/bottom 20% of score-ranked quantile groups.
+  Our phasing against H3K4me3+H3K36me3 is the same idea.
+- **HiCDOC** is the newer alternative that does prediction plus differential
+  analysis with replicates.
 
 **Cache gotcha:** `gam2_params$version` must be bumped whenever the compartment
 METHOD changes, not only its parameters - a cached per-chromosome reduction
-carries the PC it was computed with. A re-test once silently read stale pre-fix
-reductions because of this. Currently version 2.
+carries the PC it was computed with. Currently version 2.
 
 ## The `.rds` handoffs (schemas)
 
