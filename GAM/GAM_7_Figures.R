@@ -272,9 +272,47 @@ local({
     # SIGN: they compute z(WT) - z(cKO), so their positive means LOST in the KO.
     # This repo uses positive = MORE in the KO throughout, so our map is their map
     # inverted. Stated on the panel so it is not read backwards.
-    D <- if (identical(diff_mode, "deltaz"))
-           mats$KO$z[ids, ids] - mats$WT$z[ids, ids]
-         else K0 - W0
+    # SIGNIFICANT CONTACTS ONLY, from the delivered Diff_contacts files rather
+    # than from a local recomputation.
+    #
+    # Why. A full delta-z map spends its colour range on cells that are near zero,
+    # so the structure washes out - that is the top panel of the collaborators'
+    # own figure, against the bottom panel which masks to significant cells and in
+    # which the compartment-scale checkerboard is immediately legible. The files
+    # already carry their `deltaz` for exactly the pairs that passed their
+    # criterion (|delta-z| > 2 AND max NPMI > 0.1), so this uses their number for
+    # their pairs instead of reproducing both.
+    #
+    # SIGN: their `deltaz` is set1 - set2 = WT - cKO, so positive means LOST in
+    # the cKO. This repo is positive = MORE in the cKO throughout, so it is
+    # negated here and nowhere else.
+    #
+    # THREE STATES, not two. NA in this map would otherwise conflate "measured and
+    # not significant" with "never measured", and an absence of measurement that
+    # reads as a result is this repo's documented worst failure mode. So:
+    #   coloured  measured and significant
+    #   grey      measured, not significant
+    #   white     not measured in one or both genotypes
+    D <- if (identical(diff_mode, "deltaz")) {
+      dz <- matrix(NA_real_, length(ids), length(ids), dimnames = list(ids, ids))
+      for (sel in c("selWT", "selcKO")) {
+        dc <- tryCatch(load_diff_contacts(chrom, sel,
+                 select = c("start_x", "end_x", "start_y", "end_y", "deltaz")),
+               error = function(e) NULL)
+        if (is.null(dc) || !nrow(dc)) next
+        dc <- dc[start_x >= from & end_y <= to]
+        if (!nrow(dc)) next
+        i <- match(sprintf("%s:%d-%d", chrom, dc$start_x, dc$end_x), ids)
+        j <- match(sprintf("%s:%d-%d", chrom, dc$start_y, dc$end_y), ids)
+        ok <- is.finite(i) & is.finite(j)
+        if (!any(ok)) next
+        dz[cbind(i[ok], j[ok])] <- -dc$deltaz[ok]   # to cKO - WT
+        dz[cbind(j[ok], i[ok])] <- -dc$deltaz[ok]
+      }
+      dz
+    } else K0 - W0
+    # measured = finite raw NPMI in both genotypes; used to separate grey from white
+    MEAS <- if (identical(diff_mode, "deltaz")) is.finite(W0) & is.finite(K0) else NULL
     pos <- as.numeric(sub("-.*", "", sub(".*:", "", ids)))
     rm(mats); gc(FALSE)
 
@@ -295,10 +333,26 @@ local({
     # rather than domains. Block-averaging to a display bin keeps every value and
     # produces a smooth map. Target ~350 display columns across the region.
     n <- length(ids)
+    FRAC <- NULL
     fac <- max(1L, round(n / 350))
     dbin <- fac * gam_binsize
     grp <- ((seq_len(n) - 1L) %/% fac) + 1L
     if (fac > 1L) {
+      # COLOUR FROM THE SIGNIFICANT CELLS, TRANSPARENCY FROM HOW MANY THERE WERE.
+      # Two wrong ways to aggregate a sparse significant map were tried first.
+      # Mean over significant cells alone fills every block at whole-chromosome
+      # scale, because a 27x27 block almost always contains one. Setting
+      # non-significant cells to 0 and averaging over all measured cells divides
+      # a handful of delta-z by ~729 and washes the map to near-white.
+      # So: the block keeps the mean delta-z of its significant cells, which is
+      # the direction of change and should read at full strength, and the
+      # FRACTION significant is carried as alpha. Sparse blocks fade; blocks with
+      # a consistent, dense change are solid.
+      if (identical(diff_mode, "deltaz") && !is.null(MEAS)) {
+        sg <- rowsum(is.finite(D) * 1, grp); sg <- t(rowsum(t(sg), grp))
+        ms <- rowsum(MEAS * 1, grp);         ms <- t(rowsum(t(ms), grp))
+        FRAC <- sg / pmax(ms, 1); FRAC[ms == 0] <- NA
+      } else FRAC <- NULL
       Z <- D; nn <- is.finite(Z); Z[!nn] <- 0
       S1 <- rowsum(Z, grp); N1 <- rowsum(nn * 1, grp)
       S2 <- t(rowsum(t(S1), grp)); N2 <- t(rowsum(t(N1), grp))
@@ -308,6 +362,10 @@ local({
         a2 <- t(rowsum(t(a1), grp)); b2 <- t(rowsum(t(b1), grp))
         R <- a2 / pmax(b2, 1); R[b2 == 0] <- NA; R }
       W0 <- agg1(W0); K0 <- agg1(K0)
+      if (!is.null(MEAS)) {
+        mz <- rowsum(MEAS * 1, grp); mz <- t(rowsum(t(mz), grp))
+        MEAS <- mz > 0            # a display block counts as measured if any cell was
+      }
       pos <- as.numeric(tapply(pos, grp, mean))
       rm(Z, nn, S1, N1, S2, N2); gc(FALSE)
     }
@@ -316,7 +374,7 @@ local({
     # box filter suppresses it while preserving domain-scale features. Display
     # only - every statistic elsewhere uses the unsmoothed values. (The Pombo
     # 2026 preprint applies a Gaussian filter for the same reason.)
-    if (smooth_map && nrow(D) > 9) {
+    if (smooth_map && nrow(D) > 9 && !identical(diff_mode, "deltaz")) {
       Z <- D; nn <- is.finite(Z); Z[!nn] <- 0
       k <- 1L; mm <- nrow(Z)
       cs <- function(M) { M <- apply(M, 2, cumsum); rbind(0, M) }
@@ -336,14 +394,28 @@ local({
     ij[, d := pos[j] - pos[i]]
     ij <- ij[d <= maxdist]
     ij[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = D[cbind(i, j)])]
-    ij <- ij[is.finite(v)]
+    if (identical(diff_mode, "deltaz")) {
+      ij[, meas := MEAS[cbind(i, j)]]
+      ij <- ij[meas %in% TRUE]            # drop unmeasured: those stay white
+      # alpha only where blocks were aggregated; at native resolution every
+      # drawn cell is one significant contact and there is no fraction to show.
+      ij[, al := if (is.null(FRAC)) 1 else FRAC[cbind(i, j)]]
+      if (!is.null(FRAC)) {
+        q <- stats::quantile(ij$al[ij$al > 0], 0.90, na.rm = TRUE)
+        ij[, al := pmax(0.12, pmin(1, al / max(q, 1e-9)))]
+      }
+      ij[!is.finite(al), al := 0.12]
+    } else { ij <- ij[is.finite(v)]; ij[, al := 1] }
     lim <- if (identical(diff_mode, "deltaz")) gam12_dz_lim
-           else as.numeric(quantile(abs(ij$v), 0.99, na.rm = TRUE))
+           else as.numeric(quantile(abs(ij$v[is.finite(ij$v)]), 0.99, na.rm = TRUE))
     tw <- dbin / 1e6   # tiles overlap 2x on the rotated lattice, which fills it
 
-    p_map <- ggplot(ij, aes(x, y, fill = pmax(-lim, pmin(lim, v)))) +
+    p_map <- ggplot(ij, aes(x, y, fill = pmax(-lim, pmin(lim, v)), alpha = al)) +
       geom_tile(width = tw, height = tw) +
-      scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim), name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
+      scale_alpha_identity() +
+      scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim),
+                           na.value = if (identical(diff_mode, "deltaz")) "grey88" else "transparent",
+                           name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
                            guide = guide_colourbar(barheight = grid::unit(2.8, "cm"))) +
       { if (gam12_hotline / 2 < maxdist / 2)
           geom_hline(yintercept = gam12_hotline / 2e6, linetype = 2, linewidth = .3,
@@ -354,7 +426,10 @@ local({
       scale_y_continuous(expand = c(0, 0), name = "Genomic\ndistance\n(Mb)") +
       scale_x_continuous(expand = c(0, 0)) +
       coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
-      labs(subtitle = if (identical(diff_mode, "deltaz")) "delta-z, cKO - WT"
+      labs(subtitle = if (identical(diff_mode, "deltaz"))
+             sprintf("delta-z, cKO - WT, significant contacts only%s",
+                     if (fac > 1L) "  (colour = mean delta-z of the significant cells; faded = few of them)"
+                     else "  (grey = measured, not significant)")
            else "cKO - WT NPMI") +
       theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
                       axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
@@ -640,13 +715,13 @@ local({
         # wherever the sign flips.
         geom_ribbon(aes(x = x, ymin = wt, ymax = pmax(ko, wt), fill = "up"), na.rm = TRUE) +
         geom_ribbon(aes(x = x, ymin = pmin(ko, wt), ymax = wt, fill = "down"), na.rm = TRUE) +
-        geom_line(aes(x = x, y = wt, colour = "WT"), linewidth = .45, na.rm = TRUE) +
-        geom_line(aes(x = x, y = ko, colour = "HP1gKO"), linewidth = .45, na.rm = TRUE) +
+        # No lines on the coverage tracks. The grey body tops out at the lower of
+        # the two means and the coloured band at the higher, so both means are
+        # already the edges of a filled area - drawing them again added two more
+        # strokes per panel, ten across the stack, for no information.
         scale_fill_manual(values = c(up = "#b2182b", down = "#2166ac"),
                           breaks = c("up", "down"),
                           labels = c("more in cKO", "less in cKO"), name = NULL) +
-        scale_colour_manual(values = geno_colors, breaks = c("WT", "HP1gKO"),
-                            labels = c("WT mean", "cKO mean"), name = NULL) +
         scale_x_continuous(expand = c(0, 0)) +
         scale_y_continuous(n.breaks = 3, expand = c(0, 0)) +
         coord_cartesian(xlim = c(from, to) / 1e6, ylim = rng, expand = FALSE) +
