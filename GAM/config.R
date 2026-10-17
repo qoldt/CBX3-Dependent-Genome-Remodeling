@@ -452,7 +452,9 @@ gam_block_min_mb      <- 4       # minimum block size to report
 # A/B compartments are called at a COARSER resolution than everything else.
 #
 # WHY. The first real GAM_2 run called them at the native 20 kb and the axis was
-# not usable: only 9 of 38 chromosome x genotype combinations reached |rho| > 0.4
+# not usable: only 11 of 38 chromosome x genotype combinations reached |rho| > 0.4
+# (25 reach 0.3, 3 reach 0.5; an oriented axis IS found on all 38, but it is PC1
+# only on chr7 and PC2-PC4 elsewhere - see npmi_compartment_orientation.tsv)
 # against the active-chromatin reference, 13 of 38 gave an implausible frac_A
 # (<0.1 or >0.9, e.g. chr3 WT at 0.989), and the PC1-vs-PC2 choice split exactly
 # 19/19 - a coin flip. Axis quality did not track chromosome size (rho = -0.04),
