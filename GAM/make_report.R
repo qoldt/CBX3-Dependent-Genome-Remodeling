@@ -16,11 +16,25 @@
 # Images are downscaled and base64-embedded so the HTML is a single portable
 # file that can be sent to a phone. results/ is git-ignored, so the HTML is an
 # artifact, not a source; this script is the thing under version control.
+#
+# TWO OUTPUT MODES.
+#   Rscript make_report.R              -> results/GAM_REPORT.html
+#   Rscript make_report.R --artifact   -> also results/GAM_REPORT_artifact.html
+# The second is for publishing as a claude.ai Artifact, whose host supplies its
+# own <!doctype>/<head>/<body> and would nest a second document inside it. That
+# variant therefore emits only <title>, <style> and the content, and it carries
+# the explicit [data-theme] blocks the Artifact host needs: there a viewer can
+# force light or dark, which prefers-color-scheme alone does not see, so a
+# report built for the browser only would show one theme's text on the other
+# theme's background. Regenerate it whenever the report changes - a published
+# Artifact does not update itself.
 # ================================================================
 source("config.R")
 suppressPackageStartupMessages({ library(data.table); library(base64enc) })
 
-OUT <- file.path(results_dir, "GAM_REPORT.html")
+ARTIFACT <- "--artifact" %in% commandArgs(TRUE)
+OUT      <- file.path(results_dir, "GAM_REPORT.html")
+OUT_ART  <- file.path(results_dir, "GAM_REPORT_artifact.html")
 MAXW <- 1100L           # px, downscale wider images before embedding (keeps the
                         # single-file HTML small enough to open on a phone)
 msg <- function(...) cat(sprintf(...), "\n", sep = "")
@@ -74,33 +88,52 @@ tbl <- function(path, caption = NULL, digits = 3, max_rows = 40L, cols = NULL) {
          "<table>", h, paste0(rows, collapse = ""), "</table>", note)
 }
 
-md_file <- function(path) {
+# demote = TRUE is for an .md embedded under a heading the report has already
+# printed: its own "# chrN" title would otherwise repeat that heading at <h2>,
+# i.e. at the level of the enclosing SECTION, so the title is dropped and the
+# rest shifts down one level.
+md_file <- function(path, demote = FALSE) {
   if (!file.exists(path)) return(sprintf('<div class="missing">missing: <code>%s</code></div>', esc(path)))
   x <- readLines(path, warn = FALSE)
-  out <- character(0); intab <- FALSE
+  out <- character(0); intab <- FALSE; inlist <- FALSE
+  # A bare <li> outside a list is invalid and loses its marker and indent.
+  close_list <- function() { if (inlist) { out <<- c(out, "</ul>"); inlist <<- FALSE } }
   for (ln in x) {
     if (grepl("^\\|", ln)) {
       cells <- trimws(strsplit(sub("^\\|", "", sub("\\|$", "", ln)), "|", fixed = TRUE)[[1]])
       if (all(grepl("^-+$", cells))) next
+      close_list()
       tag <- if (!intab) { intab <- TRUE; out <- c(out, "<table>"); "th" } else "td"
       out <- c(out, paste0("<tr>", paste0("<", tag, ">", esc(cells), "</", tag, ">", collapse = ""), "</tr>"))
     } else {
       if (intab) { out <- c(out, "</table>"); intab <- FALSE }
-      if (grepl("^### ", ln))      out <- c(out, paste0("<h4>", esc(sub("^### ", "", ln)), "</h4>"))
-      else if (grepl("^## ", ln))  out <- c(out, paste0("<h3>", esc(sub("^## ", "", ln)), "</h3>"))
-      else if (grepl("^# ", ln))   out <- c(out, paste0("<h2>", esc(sub("^# ", "", ln)), "</h2>"))
-      else if (grepl("^- ", ln))   out <- c(out, paste0("<li>", bold(esc(sub("^- ", "", ln))), "</li>"))
-      else if (nzchar(trimws(ln))) out <- c(out, paste0("<p>", bold(esc(ln)), "</p>"))
+      hh <- if (demote) c("h5", "h4", NA) else c("h4", "h3", "h2")
+      if (grepl("^### ", ln))      { close_list(); out <- c(out, paste0("<", hh[1], ">", esc(sub("^### ", "", ln)), "</", hh[1], ">")) }
+      else if (grepl("^## ", ln))  { close_list(); out <- c(out, paste0("<", hh[2], ">", esc(sub("^## ", "", ln)), "</", hh[2], ">")) }
+      else if (grepl("^# ", ln))   { close_list(); if (!is.na(hh[3])) out <- c(out, paste0("<", hh[3], ">", esc(sub("^# ", "", ln)), "</", hh[3], ">")) }
+      else if (grepl("^- ", ln))   { if (!inlist) { out <- c(out, "<ul>"); inlist <- TRUE }
+                                     out <- c(out, paste0("<li>", bold(esc(sub("^- ", "", ln))), "</li>")) }
+      else if (nzchar(trimws(ln))) { close_list(); out <- c(out, paste0("<p>", bold(esc(ln)), "</p>")) }
     }
   }
+  close_list()
   if (intab) out <- c(out, "</table>")
   paste(out, collapse = "\n")
 }
 # perl = TRUE for the lazy quantifier; R's default TRE does not support it.
-bold <- function(x) gsub("\\*\\*(.+?)\\*\\*", "<strong>\\1</strong>", x, perl = TRUE)
+# Runs after esc(), so the backticks are still literal but any < > inside them
+# is already an entity.
+bold <- function(x) {
+  x <- gsub("\\*\\*(.+?)\\*\\*", "<strong>\\1</strong>", x, perl = TRUE)
+  gsub("`(.+?)`", "<code>\\1</code>", x, perl = TRUE)
+}
 
-sec <- function(title, ...) paste0("<section><h2>", title, "</h2>", paste0(..., collapse = "\n"), "</section>")
-p_   <- function(...) paste0("<p>", paste0(..., collapse = " "), "</p>")
+# paste0(..., collapse = x) is a trap here: with length-1 arguments paste0
+# concatenates them element-wise FIRST, so collapse gets a single string and
+# inserts nothing. That silently ran sentences together in the rendered report
+# ("not a domain set.GAM_10 took"). c(...) first, then collapse.
+sec <- function(title, ...) paste0("<section><h2>", title, "</h2>", paste(c(...), collapse = "\n"), "</section>")
+p_   <- function(...) paste0("<p>", paste(c(...), collapse = " "), "</p>")
 
 # ==============================================================================
 parts <- list()
@@ -155,7 +188,8 @@ parts$chrom <- sec("Per-chromosome characterisation",
   paste0(sapply(c("chr3","chr7","chr11","chr16","chr18"), function(ch)
     paste0("<h3>", ch, "</h3>",
            embed_fig(sprintf("chromosomes/%s_overview.png", ch)),
-           md_file(file.path(results_dir, "chromosomes", paste0(ch, ".md"))))), collapse = ""))
+           md_file(file.path(results_dir, "chromosomes", paste0(ch, ".md")),
+                   demote = TRUE))), collapse = ""))
 
 # chr18_Pcdh has no _band variant by design: at 1.8 Mb the full triangle is
 # already compact, so band_maxdist() skips it rather than writing a duplicate
@@ -193,8 +227,14 @@ parts$caveats <- sec("Standing caveats",
   "<li><strong>Unresolved provenance.</strong> Nuclear profiles per genotype, the passed_qc.curated criteria, what sigma 2.6 was fit on, and whether the GAM cKO is the same Emx1-Cre cortex as the ChIP.</li>",
   "</ul>")
 
+# Theme tokens are defined once and emitted under whichever selectors the
+# target needs (see TWO OUTPUT MODES above). Every colour is a token: a literal
+# colour inside a theme block is the classic unreadable-page bug, because it
+# applies in one theme only.
+light_tokens <- "--bg:#fff;--fg:#1c1b1f;--mut:#5b5b66;--line:#e2e1e6;--warn:#fff8e6;--warnb:#e6c65c;--miss:#fdeaea;--missb:#d98b8b;--panel:#f6f6f8;--code:#f3f3f5;--imgbg:transparent"
+dark_tokens  <- "--bg:#16151a;--fg:#e9e8ee;--mut:#a3a2ad;--line:#33323b;--warn:#2c2616;--warnb:#8a7430;--miss:#2e1d1d;--missb:#8a4a4a;--panel:#232229;--code:#232229;--imgbg:#fff;color-scheme:dark"
+
 css <- "
-:root{--bg:#fff;--fg:#1c1b1f;--mut:#5b5b66;--line:#e2e1e6;--warn:#fff8e6;--warnb:#e6c65c;--miss:#fdeaea;--missb:#d98b8b}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif}
 main{max-width:1180px;margin:0 auto;padding:28px 16px 80px}
@@ -210,26 +250,57 @@ img{max-width:100%;height:auto;border:1px solid var(--line);border-radius:6px}
 figcaption{color:var(--mut);font-size:.85rem;margin-top:.35em}
 table{border-collapse:collapse;width:100%;margin:.6em 0 1.2em;font-size:.86rem;display:block;overflow-x:auto}
 th,td{border:1px solid var(--line);padding:4px 8px;text-align:right;white-space:nowrap}
-th{background:#f6f6f8;text-align:left;font-weight:600}
+th{background:var(--panel);text-align:left;font-weight:600}
 td:first-child,th:first-child{text-align:left}
 .warn{background:var(--warn);border-left:4px solid var(--warnb);padding:10px 14px;margin:1em 0;border-radius:0 6px 6px 0}
 .missing{background:var(--miss);border-left:4px solid var(--missb);padding:8px 12px;margin:.8em 0;border-radius:0 6px 6px 0;font-size:.88rem}
-code{background:#f3f3f5;padding:1px 5px;border-radius:3px;font-size:.88em}
+code{background:var(--code);padding:1px 5px;border-radius:3px;font-size:.88em}
+img{background:var(--imgbg)}
 ul{padding-left:1.2em} li{margin:.3em 0}
 section{margin-bottom:1.5em}
-@media (prefers-color-scheme:dark){
- :root{--bg:#16151a;--fg:#e9e8ee;--mut:#a3a2ad;--line:#33323b;--warn:#2c2616;--warnb:#8a7430;--miss:#2e1d1d;--missb:#8a4a4a;color-scheme:dark}
- th{background:#232229} code{background:#232229} img{background:#fff}
-}
 "
+
+# The browser file only ever sees the OS preference. The Artifact host also lets
+# a viewer force a theme, so there the media query is guarded against an
+# explicit light choice and the dark tokens are repeated for an explicit dark
+# one - otherwise the toggle wins in one direction only.
+theme_css <- function(for_artifact) {
+  if (!for_artifact) {
+    sprintf(":root{%s}\n@media (prefers-color-scheme:dark){:root{%s}}\n",
+            light_tokens, dark_tokens)
+  } else {
+    sprintf(paste0(":root{%s}\n",
+                   "@media (prefers-color-scheme:dark){:root:not([data-theme=\"light\"]){%s}}\n",
+                   ":root[data-theme=\"dark\"]{%s}\n"),
+            light_tokens, dark_tokens, dark_tokens)
+  }
+}
+
+body_html <- paste0("<main>",
+  parts$head, parts$het, parts$pcdh, parts$chrom, parts$regions, parts$coupling, parts$caveats,
+  "</main>")
 
 html <- paste0("<!doctype html><html><head><meta charset='utf-8'>",
   "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-  "<title>GAM working report</title><style>", css, "</style></head><body><main>",
-  parts$head, parts$het, parts$pcdh, parts$chrom, parts$regions, parts$coupling, parts$caveats,
-  "</main></body></html>")
+  "<title>GAM working report</title><style>", theme_css(FALSE), css, "</style></head><body>",
+  body_html, "</body></html>")
 
 writeLines(html, OUT)
 msg("wrote %s (%.1f MB)", OUT, file.size(OUT) / 1e6)
 n_missing <- length(gregexpr("class=\"missing\"", html)[[1]])
 if (grepl("class=\"missing\"", html)) msg("%d missing figure/table placeholder(s) - stages that did not complete", n_missing)
+
+if (ARTIFACT) {
+  # No <!doctype>, <html>, <head> or <body>: the Artifact host wraps the file in
+  # its own skeleton, and a second document nested inside that renders wrong.
+  # :root is left to the host as well - it pads it with the phone's safe-area
+  # insets, which is what keeps the page clear of the status bar.
+  art <- paste0("<title>GAM Working Report</title>\n<style>",
+                theme_css(TRUE), css, "</style>\n", body_html)
+  writeLines(art, OUT_ART)
+  mb <- file.size(OUT_ART) / 1e6
+  msg("wrote %s (%.1f MB)", OUT_ART, mb)
+  # The Artifact limit is 16 MB with embedded data: URIs counted, and the
+  # figures are nearly all of this file, so warn before a publish is refused.
+  if (mb > 15) msg("WARNING: %.1f MB is close to the 16 MB Artifact limit - lower MAXW", mb)
+}
