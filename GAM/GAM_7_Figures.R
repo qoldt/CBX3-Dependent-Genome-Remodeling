@@ -941,6 +941,33 @@ local({
     theme_m + theme(panel.grid = element_blank())
   save_fig(pB, "perchrom_class_contrast_all19", subdir = fig_sub, width = 8, height = 7)
 
+  # --- panel C: ONE figure carrying all four variables ------------------------
+  # chromosome (y), separation (x), chromatin class (facet) and percent change
+  # (fill). 19 x 5 x 4 = 380 cells, which is the whole per-chromosome result in a
+  # single view - the previous contact-budget figure showed 5 chromosomes as line
+  # panels and could not be scanned down a chromosome or across a class.
+  # Grey cells are combinations with no bin pairs: intra-domain pairs only exist
+  # on chromosomes that have a large heterochromatin domain, and only out to the
+  # separations that domain spans.
+  lim2 <- max(abs(W$pct), na.rm = TRUE)
+  pC <- ggplot(W[is.finite(pct)], aes(band, chr, fill = pct)) +
+    geom_tile(colour = "white", linewidth = .3) +
+    geom_text(aes(label = sprintf("%+.0f", pct)), size = 2.1,
+              colour = ifelse(abs(W[is.finite(pct)]$pct) > 0.6 * lim2, "white", "grey15")) +
+    facet_grid(~ cls_lab) +
+    scale_fill_heat0_div(limits = c(-lim2, lim2), name = "% change in\nmean NPMI") +
+    scale_y_discrete(limits = rev(paste0("chr", 1:19))) +
+    labs(title = "Contact budget: every autosome, chromatin class and separation in one view",
+         subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT. Grey = no bin pairs in that ",
+                           "combination (intra-domain pairs exist only where a\nlarge heterochromatin ",
+                           "domain does). Read ACROSS a row for one chromosome's distance profile, DOWN ",
+                           "a column for how\nconsistent a class and separation are across the genome. ",
+                           "A whole row shifting one way is a per-chromosome offset, not biology."),
+         x = "genomic separation", y = NULL) +
+    theme_m + theme(panel.grid = element_blank(), strip.text = element_text(size = 8, face = "bold"),
+                    axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+  save_fig(pC, "contact_budget_all19_unified", subdir = fig_sub, width = 13.5, height = 7.5)
+
   msg("\n=== het-het minus eu-eu, per autosome (percentage points) ===")
   print(dcast(CC, chr ~ band, value.var = "contrast"))
   msg("positive on: %s of %d autosomes, by band (%s)",

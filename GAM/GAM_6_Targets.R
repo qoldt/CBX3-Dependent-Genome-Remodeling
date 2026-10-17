@@ -320,17 +320,68 @@ local({
   shown <- c(metric_cols[metric_cols %in% c("lost_log1p", "gained_log1p", "net_remodel", "pc1_delta",
                                             "npmi_short_delta", "npmi_long_delta", "insulation_delta",
                                             "switch_AB", "switch_BA")])
+  # PLAIN-LANGUAGE COLUMN LABELS. The raw metric names said nothing about what was
+  # measured or which direction is which, and the heatmap is the figure most likely
+  # to be read without the script open. Each label states the quantity and, where
+  # the sign is not obvious, what a positive value means. Grouped into facets by
+  # what the column is derived FROM, because the four groups do not have equal
+  # standing - see the compartment caveat in the caption.
+  lab <- c(
+    lost_log1p       = "contacts lost\nlog1p(count)",
+    gained_log1p     = "contacts gained\nlog1p(count)",
+    net_remodel      = "net remodelling\ngained - lost",
+    npmi_short_delta = "short-range NPMI\n+ = more contact",
+    npmi_long_delta  = "long-range NPMI\n+ = more contact",
+    insulation_delta = "insulation\n+ = weaker boundary",
+    pc1_delta        = "compartment axis\n+ = toward A",
+    switch_AB        = "called A in WT,\nB in cKO",
+    switch_BA        = "called B in WT,\nA in cKO")
+  grp <- c(lost_log1p = "differential contacts", gained_log1p = "differential contacts",
+           net_remodel = "differential contacts",
+           npmi_short_delta = "contact density (NPMI)", npmi_long_delta = "contact density (NPMI)",
+           insulation_delta = "boundary",
+           pc1_delta = "compartment call (see caveat)", switch_AB = "compartment call (see caveat)",
+           switch_BA = "compartment call (see caveat)")
   pd <- res[metric %in% shown]
-  pd[, `:=`(metric = factor(metric, levels = shown), star = ifelse(p_adj_BH < 0.05, "*", ""))]
-  g_z <- ggplot(pd, aes(metric, set, fill = pmax(pmin(z, 6), -6))) +
+  nb <- unique(res[, .(set, n_target_bins)])
+  pd <- merge(pd, nb, by = c("set", "n_target_bins"))
+  pd[, `:=`(star = ifelse(p_adj_BH < 0.05, "*", ""),
+            col  = factor(lab[as.character(metric)], levels = lab[shown]),
+            grp  = factor(grp[as.character(metric)],
+                          levels = c("differential contacts", "contact density (NPMI)",
+                                     "boundary", "compartment call (see caveat)")))]
+  pd[, set_lab := sprintf("%s  (%s bins)", set, format(n_target_bins, big.mark = ","))]
+  pd[, set_lab := factor(set_lab, levels = unique(set_lab[order(set)]))]
+  g_z <- ggplot(pd, aes(col, set_lab, fill = pmax(pmin(z, 6), -6))) +
     geom_tile(colour = "white") +
     geom_text(aes(label = paste0(sprintf("%.1f", z), star)), size = 3) +
-    scale_fill_heat0_div(name = "z vs\nmatched") +
-    labs(title = "Contact remodelling at HUSH/CBX3 targets vs matched background bins",
-         subtitle = "z of (target mean - matched-background mean); * = BH < 0.05; deltas are HP1gKO - WT; lost/gained from selWT/selcKO",
+    scale_fill_heat0_div(name = "z vs matched\nbackground") +
+    facet_grid(~ grp, scales = "free_x", space = "free_x") +
+    labs(title = "Contact remodelling at HUSH/CBX3 target families, against matched background bins",
+         subtitle = paste0("Each cell is a z-score: how far that family's mean sits from the mean of ",
+                           "background bins matched to it, in units of the\nbackground's own spread. ",
+                           "Positive (red) = higher than matched background. * = BH-adjusted ",
+                           "permutation p < 0.05."),
+         caption = paste0(
+           "HOW THIS IS MEASURED. For each family, every other 20 kb bin in the genome is a candidate background bin. Candidates are ",
+           "stratified\non three covariates jointly: dominant chromHMM state, quartile of repeat content (LINE+SINE+LTR fraction), and tertile of ",
+           "GAM\ncoverage (n_valid, WT + cKO summed). 1,000 permutations each draw, per stratum, as many background bins as the family has in ",
+           "that\nstratum, and recompute the mean of every column. z = (family mean - mean of the 1,000 permuted means) / sd of the permuted ",
+           "means.\nThe p value is the two-sided empirical fraction of permutations at least as extreme, BH-adjusted across families within a ",
+           "column.\nMatching is the whole point: HUSH targets are repeat-rich and heterochromatic, so against unmatched bins every column would ",
+           "be\nsignificant for reasons that have nothing to do with HP1g. The unmatched contrast is kept in gam5_target_vs_matched_background.tsv ",
+           "as\nnaive_diff, for comparison.\n",
+           "DIRECTION. lost/gained are from selWT/selcKO: 'lost' = the contact was stronger in WT. All deltas are cKO minus WT.\n",
+           "CAVEAT ON THE LAST THREE COLUMNS. They derive from the A/B compartment call, which is weakly determined on most chromosomes ",
+           "(see\nGAM/CLAUDE.md). Read them as provisional; the first six columns do not depend on the compartment axis.\n",
+           "Counts are compared as log1p because the per-bin differential-contact counts are heavy-tailed (1-162)."),
          x = NULL, y = NULL) +
-    theme_m + theme(axis.text.x = element_text(angle = 40, hjust = 1))
-  save_fig(g_z, "target_vs_matched_z", sub_dir, width = 9, height = 5)
+    theme_m + theme(axis.text.x = element_text(size = 7, lineheight = 0.9),
+                    strip.text = element_text(size = 8, face = "bold"),
+                    plot.caption = element_text(hjust = 0, size = 6.5, lineheight = 1.15),
+                    plot.subtitle = element_text(size = 8.5, lineheight = 1.15),
+                    panel.grid = element_blank())
+  save_fig(g_z, "target_vs_matched_z", sub_dir, width = 12.5, height = 7.5)
 
   if (all(c("diff_npmi_short_delta", "diff_pc1_delta") %in% names(hl))) {
     g_q <- ggplot(hl, aes(diff_pc1_delta, diff_npmi_short_delta, colour = type, label = set)) +
