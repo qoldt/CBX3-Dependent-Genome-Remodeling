@@ -124,3 +124,39 @@ data owner before this file can be treated as complete.
    minima. Either it is from a cell type far from neurons, or its boundary
    positions are only accurate to the width of the window. Until the provenance
    is known it should be treated as the weaker of the two partitions.
+
+10. **What exactly is floxed in the Cbx3 conditional allele, and where?** The
+    Cbx3 locus itself shows a sharp, local perturbation and we cannot currently
+    tell whether that is biology or the knockout construct.
+
+    Cbx3 is **chr6:51,447,340-51,460,684** (mm39, 13.3 kb), sharing a
+    bidirectional promoter region with Hnrnpa2b1. The 20 kb bin that contains
+    that promoter, `chr6:51440000-51460000`, carries **73 lost and 5 gained**
+    differential contacts against genome-wide medians of 14 and 13 - the
+    **97.8th percentile** for lost contacts, so it is a called hotspot bin at
+    the >= 50 cutoff. The bin is TSS-dense (20 TSSs), and even among bins with
+    >= 20 TSSs the median is 13.5, so 73 is high for its own class.
+
+    Per-bin ChIP log2FC over that bin: **H3K36me3 -0.438** against a genome
+    median of -0.052, with H4K20me3 -0.379 (*less* lost than the -0.497 median),
+    H3K9me3 -0.167 (median -0.290) and H3K4me3 +0.036.
+
+    **This is very probably the construct, not chromatin.** Emx1-Cre excises the
+    floxed segment in the cells assayed, so sequence is physically missing:
+    reads drop out over the deleted interval, ChIP log2FC there goes negative
+    whatever the chromatin is doing, and GAM's detection of the altered locus is
+    affected too. A collapse of H3K36me3 over a gene body is exactly what a
+    deleted or silenced gene looks like, which makes this a **positive control
+    that the knockout worked** rather than a finding.
+
+    Everything around it is unremarkable, which supports that reading: the
+    +/-1 Mb neighbourhood sits at the **54th percentile** of net contact change,
+    no called hotspot domain overlaps it, no large block contains it (it falls
+    between the chr6:27.6-46.0 lost block and the chr6:54.5-63.3 gained block),
+    and the insulation change over +/-200 kb is at the **31st percentile** of
+    |difference| genome-wide. The perturbation is one bin wide.
+
+    To resolve it we need the floxed coordinates (which exons, which loxP
+    positions) and ideally the targeting construct, so the affected interval can
+    be masked in both assays. Until then the Cbx3 bin should be excluded from
+    any per-bin analysis rather than read as a result. Related: question 5.

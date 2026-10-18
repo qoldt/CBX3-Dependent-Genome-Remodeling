@@ -55,7 +55,16 @@ local({
   } else message("GAM_2 output absent - skipping the NPMI-based columns")
 
   # --- the signed direction statistic ------------------------------------------
-  a[, net := log2((n_contacts_lost + 1) / (n_contacts_gained + 1))]
+  # KO-ORIENTED, like every other signed quantity in this repo: positive = MORE
+  # contact in the cKO. It was log2(lost/gained) until 2026-10-18, i.e. WT minus
+  # KO, which is the collaborators' sign and the opposite of ours. The figure
+  # then shaded its lost blocks red while every contact map in the repo uses red
+  # for gained, so a reader moving between the two read every block backwards.
+  # Flipping the QUANTITY rather than just the legend keeps the curve, the
+  # shading and the rest of the repo all pointing the same way.
+  # NOTE: mean_net in gam6_large_blocks.tsv therefore changes sign from this
+  # version on. dirn is unaffected - it is a label, and GAM_2c reads only that.
+  a[, net := log2((n_contacts_gained + 1) / (n_contacts_lost + 1))]
   # Smooth WITHIN chromosome; smoothing across a centromere/telomere boundary
   # would invent a block that spans a discontinuity.
   # Edges use a PARTIAL window, not the raw value. Falling back to the raw
@@ -81,8 +90,8 @@ local({
   # --- call blocks --------------------------------------------------------------
   # Sign of the smoothed net, with a dead zone around 0 so a block must be
   # meaningfully one-directional rather than merely non-zero.
-  a[, dirn := fifelse(net_s >=  gam_block_net_cut, "lost",
-              fifelse(net_s <= -gam_block_net_cut, "gained", NA_character_))]
+  a[, dirn := fifelse(net_s >=  gam_block_net_cut, "gained",
+              fifelse(net_s <= -gam_block_net_cut, "lost", NA_character_))]
   a[, run := rleid(chr, dirn)]
   blk <- a[!is.na(dirn), .(chr = chr[1], start = min(start), end = max(end), dirn = dirn[1],
                            n_bins = .N, mean_net = mean(net_s),
@@ -133,9 +142,9 @@ local({
   bed <- blk[order(chr, start), .(chr, start, end,
              name = sprintf("%s_%.0fMb", dirn, width_Mb), score = 0L, strand = ".",
              ts = start, te = end,
-             rgb = fifelse(dirn == "lost", "178,24,43", "33,102,172"))]
+             rgb = fifelse(dirn == "gained", "178,24,43", "33,102,172"))]
   bed_p <- file.path(bed_dir, "gam6_large_blocks.bed")
-  writeLines('track name="GAM large contact blocks" description="red=lost, blue=gained" itemRgb=On visibility=dense', bed_p)
+  writeLines('track name="GAM large contact blocks" description="red=gained in cKO, blue=lost in cKO" itemRgb=On visibility=dense', bed_p)
   fwrite(bed, bed_p, sep = "\t", col.names = FALSE, append = TRUE, quote = FALSE)
   cat("\nWrote", bed_p, "\n")
 
@@ -153,15 +162,19 @@ local({
                linetype = 2, linewidth = 0.3, colour = "grey50") +
     geom_line(linewidth = 0.4) +
     facet_wrap(~chr, scales = "free_x", ncol = 4) +
-    scale_fill_manual(values = c(lost = "#B2182B", gained = "#2166AC"), name = "block") +
+    # Red = gained in the cKO, blue = lost - the repo convention. The QUANTITY
+    # was flipped to match (see the net definition above), so the curve and the
+    # shading agree: up is red is gained.
+    scale_fill_manual(values = c(gained = "#B2182B", lost = "#2166AC"), name = "block") +
     labs(title = "Large one-directional contact blocks, genome-wide",
-         subtitle = paste0("net = log2((lost+1)/(gained+1)), ",
+         subtitle = paste0("net = log2((gained+1)/(lost+1)), ",
                            gam_block_smooth_bins * gam_binsize / 1e6,
-                           " Mb running mean. Positive = contacts preferentially LOST in the KO.\n",
+                           " Mb running mean. POSITIVE = contacts preferentially GAINED in the cKO, ",
+                           "matching red = gained everywhere else in this repo.\n",
                            "Blocks: |net| > ", gam_block_net_cut, " for at least ",
                            gam_block_min_mb, " Mb. Direction is NOT a coverage artifact ",
                            "(rho with WT-KO valid cells ~ 0)."),
-         x = "position (Mb)", y = "net contact direction") +
+         x = "position (Mb)", y = "net contact direction\n(+ = gained in cKO)") +
     theme_m + theme(legend.position = "top")
   save_fig(p, "large_blocks_genome_wide", subdir = "blocks", width = 15, height = 11)
 

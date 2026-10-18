@@ -121,7 +121,7 @@ if (nrow(cp)) {
 # --- 6. Large one-directional contact blocks (GAM_6) -------------------------
 # The dominant large-scale feature: 10-25 Mb territory that is consistently
 # losing or gaining contacts. Copied from GAM_6's bed so IGV and the tables
-# cannot drift apart. Red = lost in the KO, blue = gained.
+# cannot drift apart. Red = GAINED in the cKO, blue = lost - the repo convention.
 blk_src <- file.path(bed_dir, "gam6_large_blocks.bed")
 if (file.exists(blk_src)) {
   file.copy(blk_src, file.path(igv_dir, "gam_large_blocks.bed"), overwrite = TRUE)

@@ -456,11 +456,18 @@ local({
                               fig_width = 11, side_allow = 2.6,
                               diff_mode = c("deltaz", "raw"),
                               npmi_cap = gam12_npmi_cap,
-                              # Repeat composition. Defaults to the slide variant
-                              # only: the full figure already carries five mark
-                              # tracks and a gene panel, and this is an annotation
-                              # rather than a result. Pass TRUE to force it on.
-                              repeats = slide,
+                              # Mask the difference map to the significant
+                              # contacts. An ARGUMENT, not a global read from the
+                              # environment: the driver renders both variants in
+                              # one pass, and a global meant each needed its own
+                              # run - which is how the masked figures silently
+                              # kept an old palette for half a day.
+                              dz_sig = gam12_dz_significant_only,
+                              # Repeat composition, on every variant. It costs a
+                              # 0.42 in row; on a slide that comes out of the
+                              # contact band, on the full figure it just makes the
+                              # figure taller, since those size by content.
+                              repeats = TRUE,
                               # SLIDE MODE. The full figure is ~1.09:1 - essentially
                               # square - because three map rows, five mark tracks and
                               # a ten-line caption stack up to ~10.1 in at 11 in wide.
@@ -558,7 +565,7 @@ local({
     #   coloured  measured and significant
     #   grey      measured, not significant
     #   white     not measured in one or both genotypes
-    D <- if (identical(diff_mode, "deltaz") && gam12_dz_significant_only) {
+    D <- if (identical(diff_mode, "deltaz") && dz_sig) {
       dz <- matrix(NA_real_, length(ids), length(ids), dimnames = list(ids, ids))
       for (sel in c("selWT", "selcKO")) {
         dc <- tryCatch(load_diff_contacts(chrom, sel,
@@ -579,7 +586,7 @@ local({
       mats$KO$z[ids, ids] - mats$WT$z[ids, ids]
     } else K0 - W0
     # measured = finite raw NPMI in both genotypes; used to separate grey from white
-    MEAS <- if (identical(diff_mode, "deltaz") && gam12_dz_significant_only)
+    MEAS <- if (identical(diff_mode, "deltaz") && dz_sig)
               is.finite(W0) & is.finite(K0) else NULL
     pos <- as.numeric(sub("-.*", "", sub(".*:", "", ids)))
     rm(mats); gc(FALSE)
@@ -646,7 +653,7 @@ local({
       # the direction of change and should read at full strength, and the
       # FRACTION significant is carried as alpha. Sparse blocks fade; blocks with
       # a consistent, dense change are solid.
-      if (gam12_dz_significant_only && !is.null(MEAS)) {
+      if (dz_sig && !is.null(MEAS)) {
         sg <- rowsum(is.finite(D) * 1, grp); sg <- t(rowsum(t(sg), grp))
         ms <- rowsum(MEAS * 1, grp);         ms <- t(rowsum(t(ms), grp))
         FRAC <- sg / pmax(ms, 1); FRAC[ms == 0] <- NA
@@ -672,7 +679,7 @@ local({
     # box filter suppresses it while preserving domain-scale features. Display
     # only - every statistic elsewhere uses the unsmoothed values. (The Pombo
     # 2026 preprint applies a Gaussian filter for the same reason.)
-    if (smooth_map && nrow(D) > 9 && !gam12_dz_significant_only) {
+    if (smooth_map && nrow(D) > 9 && !dz_sig) {
       Z <- D; nn <- is.finite(Z); Z[!nn] <- 0
       k <- 1L; mm <- nrow(Z)
       cs <- function(M) { M <- apply(M, 2, cumsum); rbind(0, M) }
@@ -692,7 +699,7 @@ local({
     ij[, d := pos[j] - pos[i]]
     ij <- ij[d <= maxdist]
     ij[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = D[cbind(i, j)])]
-    if (gam12_dz_significant_only && !is.null(MEAS)) {
+    if (dz_sig && !is.null(MEAS)) {
       ij[, meas := MEAS[cbind(i, j)]]
       ij <- ij[meas %in% TRUE]            # drop unmeasured: those stay white
       # alpha only where blocks were aggregated; at native resolution every
@@ -712,7 +719,7 @@ local({
       geom_tile(width = tw, height = tw) +
       scale_alpha_identity() +
       scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim),
-                           na.value = if (gam12_dz_significant_only) "grey88" else "transparent",
+                           na.value = if (dz_sig) "grey88" else "transparent",
                            name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
                            guide = guide_colourbar(barheight = grid::unit(2.8, "cm"))) +
       { if (gam12_hotline / 2 < maxdist / 2)
@@ -720,13 +727,23 @@ local({
                      colour = "grey30") } +
       { if (gam12_hotline / 2 < maxdist / 2)
           annotate("text", x = from / 1e6, y = gam12_hotline / 2e6, hjust = -0.04, vjust = -0.5,
-                   size = 2.3, colour = "grey30", label = "diff. contact counting window") } +
+                   size = 2.3, colour = "grey30", label = "max hotspot distance") } +
       scale_y_continuous(expand = c(0, 0), name = "Genomic\ndistance\n(Mb)") +
       scale_x_continuous(expand = c(0, 0)) +
       coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
+      # THE FILTER IS NAMED ON THE PANEL, not only in the caption. A masked map is
+      # a map of a THRESHOLD as much as of the data, and a reader who cannot see
+      # which threshold cannot tell whether a white cell is "not different",
+      # "not different enough" or "too little contact to call". The numbers come
+      # from gam_z / gam_npmi in config.R, which are also what build the
+      # Diff_contacts filenames, so the panel cannot claim a cutoff other than
+      # the one that produced the file it just read. The criterion is the
+      # collaborators', not ours - stated in the caption, which has room for the
+      # provenance this line does not.
       labs(subtitle = if (identical(diff_mode, "deltaz"))
-             if (!gam12_dz_significant_only) "delta-z, cKO - WT"
-             else sprintf("delta-z, cKO - WT, significant contacts only%s",
+             if (!dz_sig) "delta-z, cKO - WT - every measured cell drawn"
+             else sprintf("delta-z, cKO - WT, significant contacts only: |delta-z| > %s and max NPMI > %s%s",
+                     format(gam_z), format(gam_npmi),
                      if (fac > 1L) "  (colour = mean delta-z of the significant cells; faded = few of them)"
                      else "  (grey = measured, not significant)")
            else "cKO - WT NPMI") +
@@ -952,9 +969,15 @@ local({
       if (!is.finite(top) || top <= 0) return(NULL)
       m[, frac := pmin(frac, top)]
       ggplot(m, aes(x, frac, colour = class)) +
-        geom_line(linewidth = 0.3) +
-        scale_colour_manual(values = c(LINE = "#8c510a", SINE = "#01665e",
-                                       LTR = "#762a83"), name = NULL) +
+        geom_line(linewidth = 0.38) +
+        # High-chroma and far apart in hue (~40 deg, 165 deg, 310 deg), because
+        # three thin lines in a 0.42 in panel need separation that survives being
+        # projected. The ColorBrewer dark endpoints used first (#8c510a, #01665e,
+        # #762a83) are built for FILLED areas and read as three similar browns at
+        # this linewidth. Deliberately no red and no blue: those two mean
+        # direction of change everywhere else in the figure.
+        scale_colour_manual(values = c(LINE = "#E69F00", SINE = "#009E73",
+                                       LTR = "#AA4499"), name = NULL) +
         scale_x_continuous(expand = c(0, 0)) +
         scale_y_continuous(expand = c(0, 0), limits = c(0, top * 1.04),
                            breaks = c(0, signif(top, 2))) +
@@ -1407,6 +1430,10 @@ local({
         "This replaced a log2 fold-change panel, which drew a ratio on a per-mark symmetric axis so every mark filled its panel equally ",
         "whatever the size of its effect - H3K9me2 (genome-wide median -0.18) read as dramatically as H4K20me3 (-0.50). The genome-wide ",
         "medians are in the ChIP section of the report; this figure is for seeing where signal actually is.\n",
+        "REPEAT PANEL: LINE, SINE and LTR as the fraction of each bin they cover (RepeatMasker, on the same 20 kb grid), all three ",
+        "on ONE shared y axis so that which class dominates where is readable - the hotspot result is that domains losing contacts are ",
+        "LINE-rich (1.25x) and SINE-DEPLETED (0.80x), a comparison that disappears if each class gets its own auto-scaled axis. The ",
+        "ceiling is twice the 99th percentile of the values drawn, capped at 1, so one repeat-pileup bin cannot flatten the region.\n",
         "THE Y SCALE IS PER MARK and starts at zero. H3K4me3 is punctate and high, H3K9me2 broad and low, so one shared scale would ",
         "flatten the punctate marks to a line (H3K9me2 and H3K9me3 are the exception and share one axis, so that the comparison ",
         "between them is a comparison of the drawing). Compare marks by the gap relative to their own height, not across panels.\n",
@@ -1503,7 +1530,24 @@ local({
     list("chr13", 65.0e6, 69.2e6,  "chr13_KRABZFP"),    # 28 Zfp genes, 66.01-68.23
     list("chr17", 20.0e6, 25.1e6,  "chr17_KRABZFP"),    # 23 Zfp genes, 20.98-24.07
     list("chr7",  18.6e6, 25.0e6,  "chr7_Vmn"),         # 87 Vmn genes, 19.58-24.01
-    list("chr2",  83.9e6, 91.5e6,  "chr2_Olfr")         # 224 Olfr genes, 84.91-90.48
+    list("chr2",  83.9e6, 91.5e6,  "chr2_Olfr"),        # 224 Olfr genes, 84.91-90.48
+    # UNBIASED ADDITIONS, picked off gam6_large_blocks.tsv by width rather than
+    # by candidate gene. Two gaps in the set above:
+    #   - chr13:71-97 is the LARGEST block in the genome (25.8 Mb, lost) and had
+    #     no figure at all. chr11:2.7-23.3 (20.6 Mb) was being treated as the
+    #     headline lost block; this one is bigger.
+    #   - every block region here was a LOST block. The report's own result is
+    #     that lost domains are LAD/LINE/quiescent while GAINED domains are
+    #     indistinguishable from rotated background - an asymmetry asserted in
+    #     the tables and never once shown. chr3:143-159.7 is the widest gained
+    #     block (15.8 Mb) and runs to the end of the chromosome.
+    list("chr13", 70.0e6, 98.0e6,  "chr13_71-97Mb_lostblock"),
+    list("chr3",  143.0e6, NULL,   "chr3_144-160Mb_gainedblock"),
+    # The next three by block width, so the figure set covers the top of the
+    # unbiased ranking rather than stopping at whatever was picked first.
+    list("chr2",  136.0e6, 158.0e6, "chr2_137-157Mb_lostblock"),
+    list("chr5",  46.0e6,  67.0e6,  "chr5_47-66Mb_lostblock"),
+    list("chr10", 94.0e6,  111.5e6, "chr10_96-110Mb_gainedblock")
   )
   FIGW <- 11; SIDE <- 2.6
   # Spot-render one region without re-rendering all of them:
@@ -1511,42 +1555,77 @@ local({
   # Each region loads NPMI matrices, so rendering the whole list to check one
   # layout change is an hour of I/O. Comma-separated, matched against the region
   # name; unset means all of them.
-  # GAM7_SLIDE=1 renders a 16:9 subset for presentations, into *_slide files.
-  SLIDE <- identical(Sys.getenv("GAM7_SLIDE", "0"), "1")
-  if (SLIDE) {
-    slide_regions <- c("chr11_1-25Mb_lostblock", "chr16_full", "chr3_30-85Mb", "chr18_Pcdh")
-    regions <- Filter(function(r) r[[4]] %in% slide_regions, regions)
-    message("GAM7_SLIDE: rendering ", length(regions), " regions at 16:9")
+  # EVERY VARIANT, IN ONE PASS. A region used to need three separate runs with
+  # three different environment variables to produce its three renders, and the
+  # masked set silently kept a stale palette for half a day because of exactly
+  # that - a re-render of "all the figures" was not all of them. The variants are
+  # now a list this loop walks, so one run leaves a consistent set on disk.
+  #
+  #   <name>            masked difference map, full triangle
+  #   <name>_band       masked, clipped to a band (skipped when the full
+  #                     triangle is already compact - see band_maxdist)
+  #   <name>_alldz      every measured cell drawn, full triangle
+  #   <name>_band_alldz every measured cell drawn, band
+  #   <name>_slide      masked, 16:9, re-laid-out for presenting
+  #
+  # GAM7_VARIANTS restricts it (comma-separated, e.g. "slide" or "full,slide").
+  # GAM7_SLIDE=1 and GAM7_DZ_SIG are kept as shorthands for the same thing so
+  # existing invocations still work.
+  all_variants <- list(
+    list(id = "full",       mode = "full", dz = TRUE,  slide = FALSE),
+    list(id = "band",       mode = "band", dz = TRUE,  slide = FALSE),
+    list(id = "alldz",      mode = "full", dz = FALSE, slide = FALSE),
+    list(id = "band_alldz", mode = "band", dz = FALSE, slide = FALSE),
+    list(id = "slide",      mode = "full", dz = TRUE,  slide = TRUE))
+  variants <- all_variants
+  if (identical(Sys.getenv("GAM7_SLIDE", "0"), "1"))
+    variants <- Filter(function(v) v$slide, all_variants)
+  if (nzchar(Sys.getenv("GAM7_DZ_SIG", "")))
+    variants <- Filter(function(v) identical(v$dz, !identical(Sys.getenv("GAM7_DZ_SIG"), "0")), variants)
+  vwant <- Sys.getenv("GAM7_VARIANTS", "")
+  if (nzchar(vwant)) {
+    vv <- trimws(strsplit(vwant, ",")[[1]])
+    variants <- Filter(function(v) v$id %in% vv, all_variants)
   }
+  # Exported BEFORE the GAM7_REGIONS filter: section A2 ranks the whole region
+  # set against the genome, and a spot-render of one region must not silently
+  # redraw that figure with one bar in it.
+  gam12_region_list <<- regions
   only <- Sys.getenv("GAM7_REGIONS", "")
   if (nzchar(only)) {
     want <- trimws(strsplit(only, ",")[[1]])
     regions <- Filter(function(r) r[[4]] %in% want, regions)
     message("GAM7_REGIONS set: rendering ", length(regions), " of the region list")
   }
+  # Only some regions are worth a slide; the rest would be a 16:9 render nobody
+  # asked for. A region named explicitly overrides that, because naming it is
+  # the request.
+  slide_regions <- c("chr11_1-25Mb_lostblock", "chr11_100-125Mb", "chr16_full",
+                     "chr3_30-85Mb", "chr18_Pcdh",
+                     "chr13_71-97Mb_lostblock", "chr3_144-160Mb_gainedblock",
+                     "chr2_137-157Mb_lostblock", "chr5_47-66Mb_lostblock",
+                     "chr10_96-110Mb_gainedblock")
+  message("Rendering ", length(regions), " region(s) x ", length(variants),
+          " variant(s): ", paste(vapply(variants, `[[`, "", "id"), collapse = ", "))
   for (r in regions) {
-    # Slide mode renders the FULL extent only. The band variant exists to make a
-    # tall triangle compact, which slide mode achieves by dropping map rows
-    # instead; and chr18_Pcdh has no band at all (the md >= 0.9 * span guard
-    # skips it at 1.8 Mb), so insisting on bands would silently drop it.
-    for (mode in if (SLIDE) "full" else c("full", "band")) {
-      nm <- if (mode == "band") paste0(r[[4]], "_band") else r[[4]]
-      if (!gam12_dz_significant_only) nm <- paste0(nm, "_alldz")
-      if (SLIDE) nm <- paste0(nm, "_slide")
+    for (v in variants) {
+      if (v$slide && !nzchar(only) && !(r[[4]] %in% slide_regions)) next
+      nm <- r[[4]]
+      if (v$mode == "band") nm <- paste0(nm, "_band")
+      if (!v$dz)            nm <- paste0(nm, "_alldz")
+      if (v$slide)          nm <- paste0(nm, "_slide")
       md <- NULL
-      if (SLIDE) {
+      if (v$slide) {
         # Solve the band distance FROM the 16:9 constraint instead of picking one.
-        # A full triangle's map row is half the panel width tall (5.4 in here),
-        # which alone busts the budget. Total height is
-        #   1 map row + tracks + chrome, and we want it to equal width * 9/16.
-        # So: map_h = target - tracks - chrome, then invert band_maxdist()'s
-        # geometry, md = 2 * (map_h / panel_w) * span.
+        # A full triangle's map row is half the panel width tall, which alone
+        # busts the budget. Total height is 1 map row + tracks + chrome, and we
+        # want it to equal width * 9/16. So: map_h = target - tracks - chrome,
+        # then invert band_maxdist()'s geometry, md = 2 * (map_h / panel_w) * span.
         lim   <- region_span(r[[1]], r[[2]], r[[3]])
         span  <- lim[2] - lim[1]
-        # The insulation strips come out of the same height budget as everything
-        # else, which is precisely why the map ends up clipped to a band rather
-        # than a full triangle. ismap_n() must match what gam_region_plot() will
-        # actually draw, or the solved band and the saved height disagree.
+        # Every row that gam_region_plot() will actually draw has to be counted
+        # here, or the solved band and the saved height disagree and the figure
+        # overflows its canvas.
         trk   <- 0.75 + ismap_n(gam12_ismap_mode) * gam12_h_ismap +
                  gam12_h_hotcall + gam12_h_ctcf + gam12_h_lad + gam12_h_repeat +
                  2 * gam12_h_mark + gam12_h_gene
@@ -1554,8 +1633,7 @@ local({
         map_h <- max(1.2, 13.33 * 9 / 16 - trk -
                           gam12_h_chrome_slide(ismap_n(gam12_ismap_mode)))
         md    <- min(2 * (map_h / pw) * span, span)
-      }
-      if (mode == "band") {
+      } else if (v$mode == "band") {
         lim <- region_span(r[[1]], r[[2]], r[[3]])
         md  <- band_maxdist(lim[1], lim[2], max(2, FIGW - SIDE))
         # A "band" as tall as the full triangle is the full triangle. Emitting it
@@ -1569,22 +1647,22 @@ local({
       message("Plotting ", nm,
               if (is.null(md)) "" else sprintf(" (band %.1f Mb)", md / 1e6))
       p <- tryCatch(
-             if (SLIDE)
+             if (v$slide)
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
                                fig_width = 13.33, side_allow = SIDE,
-                               show_raw = FALSE,
+                               show_raw = FALSE, dz_sig = v$dz,
                                marks = c("H3K9me3", "H4K20me3"),
                                slide = TRUE, ismap = gam12_ismap_mode)
              else
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
                                fig_width = FIGW, side_allow = SIDE,
-                               npmi_cap = gam12_npmi_cap),
+                               dz_sig = v$dz, npmi_cap = gam12_npmi_cap),
              error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
       if (!is.null(p)) {
         a <- attr(p, "gam_map_in")
         h <- if (is.null(a)) 14 else a$total
         save_fig(p, nm, subdir = "regions",
-                 width = if (SLIDE) 13.33 else FIGW, height = h)
+                 width = if (v$slide) 13.33 else FIGW, height = h)
       }
     }
   }
@@ -1592,6 +1670,109 @@ local({
       "pass maxdist to set the band height.\n")
 })
 
+
+# ==============================================================================
+# SECTION A2 - the plotted regions, ranked, against a size-matched null
+# ==============================================================================
+# WHY THIS EXISTS. There are now fifteen region figures and no way to tell from
+# the set which of them is actually extreme. A bare ranking of our own picks
+# would be circular - we chose them, so of course they rank - so each region is
+# ALSO placed against every same-width window in the genome. That percentile is
+# the honest number: it is what makes "Pcdh decompacts" and "43.7% of 580 kb
+# windows lose more short-range contact than Pcdh does" both true statements,
+# and it is the one a collaborator will ask for.
+#
+# The statistic is mean NET differential contacts per bin (gained - lost), from
+# the delivered per-bin counts. Signed, so direction is visible; per bin, so a
+# 25 Mb block and a 1.8 Mb cluster are comparable.
+local({
+  fig_sub <- "regions"
+  msg <- function(...) cat(sprintf(...), "\n", sep = "")
+  # Self-contained: section A's X and region_span() live inside its own local(),
+  # so this block loads what it needs rather than reaching into that scope.
+  g1 <- file.path(rds_dir, "gam_bins_annotated.rds")
+  if (!file.exists(g1) || !exists("gam12_region_list")) {
+    msg("section A2 skipped - gam_bins_annotated.rds or the region list is missing")
+    return(invisible())
+  }
+  A2 <- as.data.table(readRDS(g1)$annot); setorder(A2, chr, start)
+  A2[, net := n_contacts_gained - n_contacts_lost]
+  rspan <- function(chrom, from = NULL, to = NULL) {
+    d <- A2[chr == chrom]
+    c(if (is.null(from)) min(d$start) else from,
+      if (is.null(to))   max(d$end)   else to)
+  }
+  R <- rbindlist(lapply(gam12_region_list, function(r) {
+    lim <- rspan(r[[1]], r[[2]], r[[3]])
+    d <- A2[chr == r[[1]] & start >= lim[1] & end <= lim[2]]
+    if (!nrow(d)) return(NULL)
+    nb <- nrow(d)
+    # Size-matched null: every contiguous nb-bin window on every autosome,
+    # stepped by a tenth of the window so the windows are not all independent
+    # but do cover the genome. frollmean over the per-chromosome ordering gives
+    # the same thing far more cheaply than an explicit loop.
+    step <- max(1L, nb %/% 10L)
+    nullv <- unlist(lapply(split(A2$net, A2$chr), function(v) {
+      if (length(v) < nb) return(numeric(0))
+      m <- frollmean(v, nb)
+      m <- m[seq(nb, length(m), by = step)]
+      m[is.finite(m)]
+    }), use.names = FALSE)
+    obs <- mean(d$net)
+    data.table(name = r[[4]], chr = r[[1]],
+               Mb = sprintf("%.0f-%.0f", lim[1] / 1e6, lim[2] / 1e6),
+               width_Mb = (lim[2] - lim[1]) / 1e6, n_bins = nb,
+               mean_net = obs,
+               mean_lost = mean(d$n_contacts_lost),
+               mean_gained = mean(d$n_contacts_gained),
+               pct = 100 * mean(nullv < obs), n_null = length(nullv))
+  }))
+  if (!nrow(R)) { msg("section A2 skipped - no regions resolved"); return(invisible()) }
+  fwrite(R, file.path(tables_dir, "gam12_region_ranking.tsv"), sep = "\t")
+  R[, lab := sprintf("%s  (%s Mb)", name, Mb)]
+  R[, dirn := fifelse(mean_net > 0, "gained in cKO", "lost in cKO")]
+  setorder(R, mean_net)
+  R[, lab := factor(lab, levels = lab)]
+  # Two panels on one row of labels: the effect, and where it sits in the genome.
+  # Separate panels rather than one axis because they are different units and a
+  # dual axis would invite reading one off the other.
+  p1 <- ggplot(R, aes(mean_net, lab, fill = dirn)) +
+    geom_col(width = 0.68) +
+    geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey40") +
+    scale_fill_manual(values = c(`gained in cKO` = "#B2182B",
+                                 `lost in cKO` = "#2166AC"), name = NULL) +
+    labs(x = "mean net differential contacts per 20 kb bin (gained - lost)", y = NULL,
+         subtitle = "Effect") +
+    theme_minimal(base_size = 9) +
+    theme(panel.grid.major.y = element_blank(), legend.position = "top")
+  p2 <- ggplot(R, aes(pct, lab)) +
+    geom_vline(xintercept = c(5, 50, 95), linetype = 2, linewidth = 0.25,
+               colour = "grey70") +
+    geom_segment(aes(x = 50, xend = pct, yend = lab), linewidth = 0.4,
+                 colour = "grey55") +
+    geom_point(aes(colour = dirn), size = 2.2) +
+    scale_colour_manual(values = c(`gained in cKO` = "#B2182B",
+                                   `lost in cKO` = "#2166AC"), guide = "none") +
+    scale_x_continuous(limits = c(0, 100), breaks = c(0, 5, 25, 50, 75, 95, 100)) +
+    labs(x = "percentile among same-width windows genome-wide", y = NULL,
+         subtitle = "How extreme is that, really?") +
+    theme_minimal(base_size = 9) +
+    theme(axis.text.y = element_blank(), panel.grid.major.y = element_blank())
+  pp <- (p1 | p2) + plot_layout(widths = c(1.35, 1)) +
+    plot_annotation(
+      title = "The plotted regions, ranked by magnitude of contact change",
+      subtitle = paste("Mean net differential contacts per 20 kb bin. Right panel places each region against every",
+                       "same-width window in the genome - a region we picked is not automatically an extreme one."),
+      caption = paste0("Counts are the delivered per-bin differential contacts within 5 Mb. Null windows are stepped by a tenth of the",
+                       " region width, so neighbouring windows overlap; this is a reference distribution, not an independent sample.",
+                       "\nTable: gam12_region_ranking.tsv"),
+      theme = theme(plot.title = element_text(face = "bold", size = 12),
+                    plot.subtitle = element_text(size = 8.5),
+                    plot.caption = element_text(hjust = 0, size = 7, colour = "grey35")))
+  save_fig(pp, "region_ranking", subdir = fig_sub, width = 11,
+           height = max(4.2, 0.30 * nrow(R) + 2.2))
+  msg("  region_ranking: %d regions, null n = %d", nrow(R), R$n_null[1])
+})
 
 # ==============================================================================
 # SECTION B0 - all 19 autosomes, by chromatin class and separation

@@ -572,9 +572,15 @@ parts$chrom <- sec("Per-chromosome characterisation",
 # chr18_Pcdh has no _band variant by design: at 1.8 Mb the full triangle is
 # already compact, so band_maxdist() skips it rather than writing a duplicate
 # under a misleading name.
+# Candidate-gene regions first, then the ones picked off gam6_large_blocks.tsv
+# by width rather than by hypothesis. chr13:71-97 is the largest block in the
+# genome and had no figure; chr3:144-160 is the widest GAINED block, and until
+# now every block figure in this report was a lost block - so the lost/gained
+# asymmetry was asserted in the tables and never shown.
 reg <- c("chr18_Pcdh", "chr18_Pcdh_context_band", "chr13_KRABZFP_band", "chr17_KRABZFP_band",
          "chr7_Vmn_band", "chr2_Olfr_band", "chr16_full_band", "chr11_1-25Mb_lostblock_band",
-         "chr3_30-85Mb_band")
+         "chr11_100-125Mb_band", "chr3_30-85Mb_band",
+         "chr13_71-97Mb_lostblock_band", "chr3_144-160Mb_gainedblock_band")
 parts$regions <- sec("Region plots",
   p_("Contact map, differential contacts, hotspot calls, LADs, the five marks and genes, on one coordinate axis.",
      "Conventions: raw NPMI is a sequential ramp with one cap shared by both genotypes; delta-z (the upstream caller&rsquo;s contact-change statistic, defined under methods below) is fixed at &plusmn;4;",
@@ -636,6 +642,14 @@ parts$regions <- sec("Region plots",
      "display columns these figures use, one block is roughly 14 &times; 14 native cells, so nearly every block contains",
      "significant cells and the masked map fills in exactly like the unmasked one. It is genuinely sparse only at native",
      "resolution, on regions of a few Mb."),
+  "<h3>Which of these regions actually matters</h3>",
+  p_("Sixteen region figures, ranked by mean net differential contacts per 20 kb bin. The right-hand panel is the",
+     "one to read: a ranking of regions <em>we chose</em> is circular, so each is also placed against every",
+     "same-width window in the genome. That percentile is what separates &ldquo;this region changes&rdquo; from",
+     "&ldquo;this region changes more than the genome does&rdquo;."),
+  embed_fig("regions/region_ranking.png",
+            "Ranked by effect, with the size-matched genome-wide percentile beside it."),
+  tbl("gam12_region_ranking.tsv", "The same numbers.", max_rows = 20L),
   "<h3>The regions</h3>",
   p_("The difference map shown here is <strong>masked to the significant contacts</strong>, which is now the default",
      "render. The unmasked map spends its colour range on cells near zero and the structure washes out &mdash; the",
@@ -1095,7 +1109,9 @@ parts$methods <- sec("How every comparison in this report is computed",
   "<ul>",
   "<li><strong>NPMI (normalised pointwise mutual information)</strong> is the delivered quantity, one 20 kb &times;",
   "20 kb matrix per chromosome per genotype, computed upstream at sigma 2.6 from the nuclear-profile segregation",
-  "table. It is a co-segregation frequency already normalised for how often each of the two windows is detected",
+  "table. It is a <em>normalised co-segregation statistic</em>, not a contact frequency: PMI compares how often two",
+  "windows appear in the same nuclear profile against how often they would by chance, and the normalisation bounds",
+  "it in [&minus;1, 1]. It already accounts for how often each of the two windows is detected",
   "at all, which is why <em>no further coverage or library-size normalisation is applied to it anywhere in this",
   "pipeline</em>. It is bounded in [&minus;1, 1] and mostly positive in cis.</li>",
   "<li><strong>Unmappable bins stay NA.</strong> All-NA rows and columns are dropped before any arithmetic. They",
@@ -1271,7 +1287,7 @@ parts$glossary <- sec("Glossary",
   "<dt><strong>mm39</strong></dt><dd>The GRCm39 mouse genome assembly, used by both assays.</dd>",
   "<dt><strong>NA</strong></dt><dd>Not available: a missing, unmeasured value. Never the same as zero, and it renders white in the contact maps.</dd>",
   "<dt><strong>NCBI / UCSC seqnames</strong></dt><dd>Two chromosome-naming conventions: <code>1</code> (NCBI, National Center for Biotechnology Information) versus <code>chr1</code> (UCSC, University of California, Santa Cruz). Mixing them gives zero overlaps, which reads as a clean null.</dd>",
-  "<dt><strong>NPMI</strong></dt><dd>Normalised pointwise mutual information: the delivered contact measure, a co-segregation frequency already normalised for how often each window is detected at all. Bounded in [&minus;1, 1]; 0 means chance.</dd>",
+  "<dt><strong>NPMI</strong></dt><dd>Normalised pointwise mutual information: the delivered contact measure. A normalised <em>co-segregation</em> statistic, <strong>not a contact frequency</strong> &mdash; it is how much more often two windows share a nuclear profile than chance would give, already accounting for how often each is detected at all. Bounded in [&minus;1, 1]; <strong>0 means chance, not &ldquo;no contact&rdquo;</strong>, which is why unmappable bins are never set to 0.</dd>",
   "<dt><strong>n_valid</strong></dt><dd>The count of usable (non-NA) contact values for a bin &mdash; the coverage diagnostic for a region plot.</dd>",
   "<dt><strong>nuclear profile</strong></dt><dd>One thin cryosection of a single nucleus, the unit GAM sequences. NPMI is computed across profiles.</dd>",
   "<dt><strong>O&minus;E</strong></dt><dd>Observed minus expected: the matrix with the mean of its own diagonal &mdash; the mean NPMI at that separation &mdash; subtracted, which removes the distance decay.</dd>",

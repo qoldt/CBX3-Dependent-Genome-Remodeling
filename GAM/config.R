@@ -465,10 +465,17 @@ load_hotspots <- function(chroms = gam_autosomes) {
 # reports them as unrelated.
 #
 # These blocks are called on the signed NET direction,
-#     net = log2((lost + 1) / (gained + 1)),
+#     net = log2((gained + 1) / (lost + 1)),
 # rather than on either density alone, because the feature is the IMBALANCE: a
 # block can be busy in both directions and still be unremarkable. net > 0 means
-# contacts are preferentially lost in the KO, net < 0 gained.
+# contacts are preferentially GAINED in the cKO, net < 0 lost.
+#
+# This was log2(lost/gained) until 2026-10-18 - the collaborators' WT-minus-KO
+# sign, and the only signed quantity in the repo pointing the opposite way to
+# the rule above. It made the genome-wide block figure shade lost blocks red
+# while every contact map uses red for gained. mean_net in
+# gam6_large_blocks.tsv changes sign from that date; dirn does not, being a
+# label rather than a number.
 #
 # Verified NOT to be a coverage artifact before building on it: the correlation
 # between net and the WT-minus-KO count of valid NPMI cells is +0.005 at 4 Mb

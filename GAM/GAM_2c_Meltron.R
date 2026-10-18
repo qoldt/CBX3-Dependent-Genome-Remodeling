@@ -30,7 +30,7 @@
 #    each sample and compare the two empirical cumulative distributions with a
 #    ONE-SIDED Kolmogorov-Smirnov test; Bonferroni-correct across regions;
 #    melting score = -log10(p_adj). Lower contact density in the test sample =
-#    melting; higher = condensation, reported as a negative score here so the two
+#    melting; higher = condensation. The derived net_score is condensation
 #    live on one axis.
 #
 # TWO DELIBERATE DEVIATIONS, both forced by the data
@@ -308,7 +308,7 @@ meltron_score <- function(x_wt, x_ko) {
   pm <- exp(-2 * ne * d_melt^2)
   pc <- exp(-2 * ne * d_cond^2)
   list(p_melt = pm, p_cond = pc, d_melt = d_melt, d_cond = d_cond,
-       D = max(d_melt, d_cond), D_signed = d_melt - d_cond,
+       D = max(d_melt, d_cond), D_signed = d_cond - d_melt,
        dir = if (d_melt >= d_cond) 1 else -1, n = sum(ok))
 }
 
@@ -416,7 +416,20 @@ smooth3 <- function(v, k = gam2c_params$smooth_bins) {
 TR[, melting_score      := smooth3(melting_score), by = chr]
 TR[, condensation_score := smooth3(condensation_score), by = chr]
 # A single display axis, derived rather than primary. Both components are kept.
-TR[, net_score := melting_score - condensation_score]
+# KO-ORIENTED, like every other signed quantity in this repo: positive = MORE
+# contact density in the cKO = condensing. It was melting - condensation until
+# 2026-10-18, which made the IGV track and two figures colour melting red while
+# red means "more in the cKO" everywhere else - including the insulation heatmap
+# four hundred lines below in THIS FILE, whose subtitle already said "Red = the
+# cKO has MORE local contact density (condensing)". The script contradicted
+# itself.
+#
+# melting_score and condensation_score are MELTRONIC's own quantities and are
+# untouched; only this derived display axis is flipped. It also makes the
+# covariate figure legible: net_contacts is gained-minus-lost, so with both
+# axes KO-oriented a POSITIVE slope now means "more contacts gained, more
+# condensing" instead of a negative one meaning the same thing.
+TR[, net_score := condensation_score - melting_score]
 
 TR[, `:=`(melts = melting_score > gam2c_params$call_cut,
           condenses = condensation_score > gam2c_params$call_cut)]
@@ -607,8 +620,8 @@ local({
   p <- file.path(igv_dir, "gam_melting_score.bedgraph")
   lim <- as.numeric(quantile(abs(d$V4), 0.99, na.rm = TRUE))
   writeLines(sprintf(paste0('track type=bedGraph name="MELTRON net score" ',
-                            'description="melting_score minus condensation_score; ',
-                            '+ = melting, - = condensing; %d kb window, %d square sizes" ',
+                            'description="condensation_score minus melting_score; ',
+                            '+ = condensing (more contact in the cKO), - = melting; %d kb window, %d square sizes" ',
                             'visibility=full color=178,24,43 altColor=33,102,172 ',
                             'viewLimits=%.2f:%.2f windowingFunction=mean'),
                      gam2c_params$win_bp / 1000,
@@ -642,7 +655,10 @@ local({
       geom_hline(yintercept = c(-1, 1) * gam2c_params$call_cut, linetype = 2,
                  colour = "grey55", linewidth = 0.3) +
       geom_area(colour = NA) +
-      scale_fill_manual(values = c(melting = "#b2182b", condensation = "#2166ac"),
+      # Blue = melting (contact density lost in the cKO), red = condensation
+      # (gained) - the repo convention, and the same way round as the insulation
+      # heatmap below.
+      scale_fill_manual(values = c(melting = "#2166ac", condensation = "#b2182b"),
                         name = NULL) +
       facet_wrap(~ chr, ncol = 1, scales = "free_x") +
       labs(x = "position (Mb)", y = "-log10 p (Bonferroni)",
@@ -695,7 +711,7 @@ local({
       geom_text(aes(y = pmax(ks_D, null_D_median) + 0.012,
                     label = sprintf("p=%.3f", p_empirical_D)),
                 hjust = 0, size = 2.9, colour = "grey25") +
-      scale_fill_manual(values = c("melting" = "#b2182b", "condensing" = "#2166ac"),
+      scale_fill_manual(values = c("melting" = "#2166ac", "condensing" = "#b2182b"),
                         name = NULL, na.value = "grey70") +
       scale_y_continuous(expand = expansion(mult = c(0, 0.22))) +
       coord_flip() +
@@ -807,7 +823,7 @@ local({
         geom_boxplot(outlier.shape = NA, fill = "grey88", linewidth = 0.3) +
         facet_wrap(~ grp, scales = "free_x", nrow = 1) +
         coord_cartesian(ylim = as.numeric(quantile(D2$v, c(0.01, 0.99), na.rm = TRUE))) +
-        labs(x = NULL, y = "net melting score  (+ melting, - condensing)",
+        labs(x = NULL, y = "net MELTRON score  (+ condensing, - melting)",
              title = "Melting against the project's own annotations",
              subtitle = paste0("Per 20 kb bin. If melting carried no information beyond ",
                                "the existing tracks these would all sit on zero.")) +
