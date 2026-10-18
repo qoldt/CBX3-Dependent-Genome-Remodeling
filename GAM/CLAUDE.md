@@ -393,13 +393,57 @@ the cKO; this repo is positive = more in the cKO everywhere. Our maps are
 colour-inverted relative to their slides on purpose, and every panel says
 "cKO - WT" in its subtitle.
 
-**The raw NPMI cap is fixed at 0.25, theirs - but only where that transfers.**
-Pooling both genotypes over the pairs each figure draws, chr16 full length has
-q99 = 0.421 with 5.9% of cells above 0.25; the 2.4 Mb Pcdh window has q99 =
-0.694 with 60.1% above it, because a short region draws only short separations.
-At 0.25 it is a solid red triangle. So `npmi_cap_own` names the six few-Mb
-cluster regions that keep their own q99. Named, not thresholded on width, so
-moving a region's coordinates cannot silently reclassify it.
+**The raw NPMI cap is data-driven, and forcing theirs was tried and reverted.**
+Their fixed 0-0.25 bar makes our panels read solid warm with a thick saturated
+near-diagonal wedge, because 5.9% of chr16 cells clear 0.25 and all of them clip
+to one red. Two explanations were tried and both are wrong, recorded so nobody
+re-tries them:
+
+- *"our display bin makes the wedge too thick"* - measured the other way. Going
+  from a 280 kb display bin to 60 kb took the saturated-pixel share from 8.6%
+  **up** to 11.0%: coarse blocks average the near-diagonal peak **down**, so
+  aggregation was hiding the clipping, not causing it. Block-averaging also
+  *cools* the map overall (cells above the ramp midpoint 37.3% -> 28.1%).
+- *"match their figure pixel for pixel"* - invalid. Their panel is a screenshot
+  of a slide at ~42 kb per pixel, so its wedge is blended away by downscaling
+  before we ever measure it. Tuning a cap against a resampled JPEG is how the
+  first wrong answer was reached.
+
+The cap is `gam12_npmi_qcap` = **q97** of what each figure draws (0.299 on chr16,
+near their 0.25, but it adapts per region). q99 was too wide - 0.413 against a
+chr16 median of 0.098, which turns the map blue. Chosen by rendering 0.25 / 0.30
+/ 0.42 side by side, not by argument.
+
+## The display bin comes from the output raster, not a magic number
+
+`fac` used to be `round(n / 350)`. These figures save at 300 dpi over an ~8.4 in
+panel, so the panel is ~2520 px wide and 350 columns made every display block
+**seven pixels across** - a factor of 7 of resolution thrown away in a file that
+was already paying for it. On chr16 that was a 280 kb display bin against a
+20 kb native grid.
+
+It is now `min(panel_in * gam12_dpi, gam12_map_cols_max)`. The cap is a **tile
+budget, not a resolution choice**: `geom_tile` emits one rect per cell into the
+PDF as well as the PNG, so an uncapped native triangle on a large chromosome
+produces a vector file nothing will open. At 1600 columns chr16's PDF is ~32 MB.
+If that becomes a problem the real fix is to draw the map as one raster layer
+instead of millions of tiles, which would remove the budget entirely.
+
+`gam12_dpi` must track `save_fig()`'s dpi in `shared/common.R`.
+
+## The masked difference map is the default now
+
+`gam12_dz_significant_only` defaults to TRUE and the **suffix moved**: the masked
+map carries the plain name, `GAM7_DZ_SIG=0` writes the unmasked one to
+`*_alldz`. The unmasked map spends its colour range on cells near zero and the
+structure washes out - the same contrast the collaborators' own figure shows
+between its pale delta-z panel and its significant panel.
+
+The old argument for keeping the mask off was that at ~350 display columns a
+block is ~14x14 native cells, so almost every block contains a significant cell
+and the mask fills in like the unmasked map. That was an argument about the
+display bin, not the mask, and it expired when the bin started tracking the
+output raster.
 
 ## Region plots: three variants, and the slide one carries the Pombo strips
 

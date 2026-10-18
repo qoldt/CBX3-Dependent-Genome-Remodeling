@@ -88,23 +88,41 @@ local({
   # panel to its own extremes, saturates the whole map and makes regions
   # incomparable; a fixed limit leaves the bulk pale so the strong contacts show.
   gam12_dz_lim    <- 4
-  gam12_npmi_qcap <- 0.99
-  # RAW NPMI CAP. Their slides use a FIXED 0 to 0.25 bar on both genotype panels.
-  # Fixed beats data-driven for the same reason gam12_dz_lim is fixed: a q99 cap
-  # rescales every panel to its own extremes and makes two regions incomparable.
+  # q97, not q99. The top of this distribution is the near-diagonal wedge, which
+  # is a property of contact decay rather than of anything a reader is looking
+  # for, and spending the last 2% of the ramp on it leaves the rest of the map
+  # blue - on chr16 q99 is 0.413 against a median of 0.098. q97 is 0.299 there,
+  # close to the 0.25 the collaborators use, and keeps the domain structure
+  # legible without clipping 6% of cells flat the way a hard 0.25 does.
+  # Rendered side by side at 0.25 / 0.30 / 0.42 before choosing.
+  gam12_npmi_qcap <- 0.97
+  gam12_dpi          <- 300    # must match save_fig()'s dpi in shared/common.R
+  gam12_map_cols_max <- 1600L  # tile budget: ~1.3 M rects in the full triangle
+  # RAW NPMI CAP: DATA-DRIVEN. Forcing theirs was tried and reverted.
   #
-  # But 0.25 is a whole-chromosome number and does not transfer down. Measured
-  # here, pooling both genotypes over the pairs each figure actually draws:
+  # Their slides use a fixed 0 to 0.25 bar, and a fixed limit is normally the
+  # better choice - it is why gam12_dz_lim is fixed. Copying it made the panels
+  # read as solid warm with a thick saturated near-diagonal wedge, because 5.9%
+  # of chr16 cells are above 0.25 and all of them clip to the same red.
   #
-  #   chr16, full length    q99 = 0.421     5.9% of cells above 0.25
-  #   chr18:36.3-38.7 Mb    q99 = 0.694    60.1% of cells above 0.25
+  # Two things were tried against it and both are recorded because neither
+  # worked, and the second disproves the first:
+  #   - "our display bin makes the wedge too thick". Measured the other way:
+  #     going from a 280 kb display bin to 60 kb took the saturated-pixel share
+  #     from 8.6% UP to 11.0%, because coarse blocks average the near-diagonal
+  #     peak DOWN. Aggregation was hiding the clipping, not causing it.
+  #   - "match their figure pixel for pixel". Their panel is a screenshot of a
+  #     slide at ~42 kb per pixel, so its wedge is blended away by downscaling
+  #     before we ever measure it. That number cannot be a target, and tuning a
+  #     cap against a resampled JPEG is how the first wrong answer was reached.
   #
-  # A few-Mb region draws only short separations, where NPMI is high, so at 0.25
-  # it renders as a solid red triangle. That is not a cosmetic complaint: the
-  # panel stops carrying information. So the cap is an ARGUMENT, defaulting to
-  # theirs so chromosome-scale figures match their slide, and NULL anywhere means
-  # "fall back to the q99 of whatever this figure draws".
-  gam12_npmi_cap <- 0.25
+  # So the cap is the q99 of what each figure actually draws: 0.421 on chr16
+  # full length, 0.694 inside the 2.4 Mb Pcdh window. A short region draws only
+  # short separations, where NPMI is genuinely high, and no single number is
+  # right for both. npmi_cap stays an argument for a caller that wants one
+  # shared limit across two figures it is comparing; NULL means "q99 of this
+  # figure". The PALETTE is still theirs - that part was a real match.
+  gam12_npmi_cap <- NULL
   # THE RIBBON CUTOFF. The collaborators' slides propose 50-75 differential
   # contacts per window and we deliberately keep the BOTTOM of that range, which
   # is a choice and not a default: >=50 calls 17,527 bins, >=60 calls 10,374 and
@@ -166,7 +184,7 @@ local({
   # map - which is why this was 0.33 while three strips were drawn and can be
   # taller now that only one is.
   gam12_h_ismap  <- 0.45
-  gam12_ismap_cols <- 350L # display columns, matched to the contact map's ~350
+  gam12_ismap_cols <- gam12_map_cols_max # display columns, matched to the contact map
   # FIXED symmetric limits, not per-region quantiles, for the same reason
   # gam12_dz_lim is fixed: a data-driven limit rescales every panel to its own
   # extremes and makes regions incomparable.
@@ -248,17 +266,26 @@ local({
   gam12_mark_clip_k   <- 2
   gam12_mark_clip_min <- 1.25
 
-  # MASK THE DELTA-Z MAP TO SIGNIFICANT CONTACTS? Off, because at display
-  # resolution it does not do what it looks like it should. The delivered
-  # criterion (|delta-z| > 2 AND max NPMI > 0.1, from the Diff_contacts
-  # filenames) passes 12.7% of measured cell pairs on chr16 and 14.1% on chr18 -
-  # 1.4 million contacts per chromosome. At ~350 display columns a block is
-  # ~14x14 native cells, so almost every block contains significant cells and
-  # the masked map fills in exactly like the unmasked one. It is only sparse at
-  # native resolution, i.e. on regions of a few Mb. Set TRUE to use it there.
-  # GAM7_DZ_SIG=1 renders the masked variant instead, into *_sigonly files so
-  # both sets can sit side by side.
-  gam12_dz_significant_only <- identical(Sys.getenv("GAM7_DZ_SIG", "0"), "1")
+  # MASK THE DELTA-Z MAP TO SIGNIFICANT CONTACTS? YES, by default, and this is
+  # now the primary difference map rather than a variant.
+  #
+  # The unmasked map spends its colour range on cells near zero and the
+  # structure washes out. That is exactly the contrast in the collaborators'
+  # own figure - their pale "Delta z-score" panel against their "Significant"
+  # panel, where the compartment-scale checkerboard is immediately legible -
+  # and it reproduces here.
+  #
+  # The old reasoning for keeping it off was that at ~350 display columns a
+  # block is ~14x14 native cells, so almost every block contains a significant
+  # cell and the mask fills in like the unmasked map. That was true, and it was
+  # an argument about the display bin, not about the mask: the bin is now driven
+  # by the output raster (see the aggregation block below), so blocks are small
+  # enough for the mask to stay sparse and the alpha channel to mean something.
+  #
+  # GAM7_DZ_SIG=0 renders the unmasked map instead, into *_alldz files, so both
+  # can sit side by side. Note the suffix moved: the masked map is now the one
+  # with the plain name.
+  gam12_dz_significant_only <- !identical(Sys.getenv("GAM7_DZ_SIG", "1"), "0")
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
   gam12_h_chrome <- 2.30
@@ -561,13 +588,43 @@ local({
       message(sprintf("  WARNING: only %.0f%% of NPMI cells are finite here - the map is mostly missing data",
                       100 * npmi_cov))
 
-    # AGGREGATE before drawing. Subsampling every k-th bin aliases: the rotated
-    # lattice beats against the raster grid and the map reads as diagonal streaks
-    # rather than domains. Block-averaging to a display bin keeps every value and
-    # produces a smooth map. Target ~350 display columns across the region.
+    # AGGREGATE before drawing - but to the OUTPUT RASTER, not to a fixed 350.
+    #
+    # Subsampling every k-th bin aliases: the rotated lattice beats against the
+    # raster grid and the map reads as diagonal streaks rather than domains.
+    # Block-averaging keeps every value and produces a smooth map. That part was
+    # always right. The target was not.
+    #
+    # 350 columns is far coarser than our own PNG. These figures save at 300 dpi
+    # over an 8.4 in panel, so the panel is ~2520 px wide; 350 columns made every
+    # display block SEVEN PIXELS across and threw away a factor of 7 in
+    # resolution that the file was already paying for. On chr16 that is a 280 kb
+    # display bin against a 20 kb native grid.
+    #
+    # It is not only blockiness. The collaborators draw chr16 at roughly native
+    # resolution, so their saturated near-diagonal wedge is one native bin thick;
+    # ours was 14 bins thick, and at their 0 to 0.25 colour cap the whole wedge
+    # clips flat. Measured on pixels inside the triangle, against their panel:
+    #
+    #                                   warm     cool     deep saturated red
+    #     their Set1                    41.0%    26.5%        2.4%
+    #     ours, 350 cols, cap 0.25      45.4%    41.5%        8.6%
+    #     ours, 350 cols, cap q99       14.3%    76.1%        2.7%
+    #
+    # Widening the cap to q99 fixes the saturation and breaks the balance - it
+    # pushes the ramp midpoint to 0.21 against a chr16 median NPMI of 0.098, so
+    # three quarters of the map goes blue. Their 0.25 is the RIGHT cap for this
+    # data; the display bin was the defect, and the cap was being used to paper
+    # over it. Fix the resolution and the cap can stay theirs.
+    #
+    # gam12_map_cols_max is a tile budget, not a resolution choice: geom_tile
+    # draws one rect per cell in the PDF as well as the PNG, so an uncapped
+    # native triangle on a large chromosome produces a vector file nothing will
+    # open. Raise it if the PDFs stay manageable.
     n <- length(ids)
     FRAC <- NULL
-    fac <- max(1L, round(n / 350))
+    target <- min(max(2, fig_width - side_allow) * gam12_dpi, gam12_map_cols_max)
+    fac <- max(1L, round(n / target))
     dbin <- fac * gam_binsize
     grp <- ((seq_len(n) - 1L) %/% fac) + 1L
     if (fac > 1L) {
@@ -1371,16 +1428,6 @@ local({
     list("chr2",  83.9e6, 91.5e6,  "chr2_Olfr")         # 224 Olfr genes, 84.91-90.48
   )
   FIGW <- 11; SIDE <- 2.6
-  # NPMI CAP PER REGION. gam12_npmi_cap (0.25) is the collaborators' own fixed
-  # bar and is right for the chromosome-scale views, which is what their slides
-  # show. On the few-Mb gene clusters it saturates - 60.1% of cells inside the
-  # Pcdh window are above 0.25 - because a short region draws only short
-  # separations, where NPMI is high. Those regions keep the q99 of what they
-  # actually draw. Named explicitly rather than derived from a width threshold:
-  # the list is six entries, and a threshold would silently reclassify a region
-  # if its coordinates moved.
-  npmi_cap_own <- c("chr18_Pcdh", "chr18_Pcdh_context", "chr13_KRABZFP",
-                    "chr17_KRABZFP", "chr7_Vmn", "chr2_Olfr")
   # Spot-render one region without re-rendering all of them:
   #   GAM7_REGIONS=chr18_Pcdh Rscript GAM_7_Figures.R
   # Each region loads NPMI matrices, so rendering the whole list to check one
@@ -1406,7 +1453,7 @@ local({
     # skips it at 1.8 Mb), so insisting on bands would silently drop it.
     for (mode in if (SLIDE) "full" else c("full", "band")) {
       nm <- if (mode == "band") paste0(r[[4]], "_band") else r[[4]]
-      if (gam12_dz_significant_only) nm <- paste0(nm, "_sigonly")
+      if (!gam12_dz_significant_only) nm <- paste0(nm, "_alldz")
       if (SLIDE) nm <- paste0(nm, "_slide")
       md <- NULL
       if (SLIDE) {
@@ -1453,8 +1500,7 @@ local({
              else
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
                                fig_width = FIGW, side_allow = SIDE,
-                               npmi_cap = if (r[[4]] %in% npmi_cap_own) NULL
-                                          else gam12_npmi_cap),
+                               npmi_cap = gam12_npmi_cap),
              error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
       if (!is.null(p)) {
         a <- attr(p, "gam_map_in")
