@@ -65,10 +65,26 @@ source("config.R")
 
 msg <- function(fmt, ...) message(sprintf(fmt, ...))
 
+# Per-bin balancing before the correlation matrix, exactly as GAM_2 does before
+# its own PCA. See results/BIN_BALANCING.md for the model and the estimator.
+#
+# WHY IT IS HERE TOO. The shared axis had the same pathology GAM_2 had: measured
+# on the v1 output, the compartment landed on PC1 for 0 of 18 determined
+# chromosomes (PC2 x8, PC3 x8, PC4 x2). That is the signature of a strong per-bin
+# detectability component sitting in the leading eigenvector and pushing the
+# compartment down the spectrum - in GAM_2 removing it took PC1 from 2 of 24 to
+# 16 of 27. The shared axis was already the better ruler on |rho| (median 0.423
+# against 0.358) while still hunting for its eigenvector, so the two effects are
+# separable and this is the one left to fix.
+gam2b_balance_before_pca <- TRUE
+
 gam2b_params <- list(
-  version      = 1L,
+  version      = 2L,
+  balance      = gam2b_balance_before_pca,
   binsize      = gam_compartment_binsize,   # 100 kb, see config.R
-  k            = 4L,                        # eigenvectors offered to the selector
+  # Eigenvectors offered to the selector. Overridable for method checks:
+  #   GAM2B_K=6 Rscript GAM_2b_Shared_Axis.R
+  k            = as.integer(Sys.getenv("GAM2B_K", "4")),
   min_support  = 0.5,                       # coarse bin kept if >50% of its row is finite
   chunk        = 1000L                      # columns per block-mean chunk
 )
@@ -163,7 +179,23 @@ coarse_oe <- function(genotype, chr) {
 # avoids forming it) because at 100 kb it is a few thousand square and the whole
 # point of this stage is to AVERAGE the two genotypes' correlation matrices,
 # which needs both of them in hand.
+# Per-bin balancing: fit oe[i,j] ~ a[i] + a[j] and subtract it, so what reaches
+# the correlation is the part of the O-E map that is NOT explained by the two
+# bins' own detectability. Damped fixed point, mean(a) = 0 by construction.
+# Runs on the NA-aware matrix, BEFORE the zero-fill below - zeroing first would
+# feed missing cells into the row means as if they were measured zeros.
+balance_bins <- function(A) {
+  if (nrow(A) <= 9) return(A)
+  B <- A; diag(B) <- NA
+  aa <- rep(0, nrow(B))
+  for (.it in 1:60)
+    aa <- (aa + rowMeans(sweep(B, 2, aa, "-"), na.rm = TRUE)) / 2
+  aa[!is.finite(aa)] <- 0
+  A - outer(aa, aa, "+")
+}
+
 cor_mat <- function(oe) {
+  if (isTRUE(gam2b_balance_before_pca)) oe <- balance_bins(oe)
   oe[!is.finite(oe)] <- 0
   C <- suppressWarnings(stats::cor(oe))
   C[!is.finite(C)] <- 0

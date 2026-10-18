@@ -188,3 +188,56 @@ chromosome at |rho| 0.03-0.48.
 Until both are done, use the **shared axis** (`GAM_2b`), where both genotypes
 are scored on one vector, and treat per-genotype A/B as a coarse annotation on
 the chromosomes listed in `compartments_WT.bed` rather than as a measurement.
+
+## 4c. The shared axis now balances too — and it is a trade (2026-10-18)
+
+Section 4b fixed the **per-genotype** axes (`GAM_2`). But the BEDs,
+`compartment_switch`, `GAM_6`'s decompaction verdict and the figures all run off
+the **shared** axis (`GAM_2b`), and that one still formed its correlation matrix
+from the raw O-E map. It showed exactly the pathology section 3 describes: the
+compartment landed on PC1 for **0 of 18** determined chromosomes (PC2 x8,
+PC3 x8, PC4 x2).
+
+`gam2b_balance_before_pca` (params v2) applies the same estimator per genotype,
+before the two correlation matrices are averaged.
+
+**The mechanism is confirmed.** 15 of 16 chromosomes moved up *exactly one*
+eigenvector (3->2, 2->1, 4->3). One eigenvector was being spent on per-bin
+detectability; removing it shifts the whole spectrum by one.
+
+| | unbalanced (v1) | balanced (v2) |
+|---|---|---|
+| compartment on PC1 | 0 of 18 | **8 of 16** |
+| determined | **18 of 19** | 16 of 19 |
+| median \|rho\| vs active chromatin | **0.423** | 0.391 |
+| median \|frac_A - 0.5\| | 0.061 | **0.043** |
+| worst \|frac_A - 0.5\| | 0.198 | **0.117** |
+| bin coverage for the BEDs | **90.5%** | 82.7% |
+
+**It does not improve agreement with active chromatin.** On the 15 chromosomes
+determined in both versions: 8 up, 7 down, mean 0.383 -> 0.391, median
+0.422 -> 0.387. A wash. Same conclusion as 4b — the ceiling is the data. What
+balancing buys is which eigenvector carries the compartment, and a more even
+A/B split.
+
+**It costs chr8, chr14 and chr15**, which now fail the selector entirely
+(chr4 is recovered, so 18 -> 16). Not an eigenvector-budget problem: tested
+k = 6, all three still fail with "no balanced eigenvector among the top 6".
+
+**Why the loss is probably honest.** In Hi-C, balancing removes a near-pure
+technical bias. In GAM, detection frequency is *partly biological* — open
+chromatin is more detectable — so the per-bin term is part artefact and part
+compartment. A detectability vector therefore correlates with active chromatin
+on its own, and can pass an orientation check while not being the compartment.
+chr14 was "determined" before on **PC4** at |rho| 0.527, the second-best score
+in the genome, which is what that failure mode looks like. The balanced run
+refuses it instead. That reading is an inference, not a measurement, and it is
+the part of this change most worth disagreeing with.
+
+**To reverse:** `gam2b_balance_before_pca <- FALSE` in `GAM_2b_Shared_Axis.R`
+restores v1 exactly. `GAM2B_K=<n>` re-runs the k sensitivity test.
+
+**One thing to watch.** Shared-axis coverage fell to 82.7%, and `GAM_6` asserts
+`ov > 0.80`. That is 2.7 points of headroom. If another chromosome drops out,
+`GAM_6` will stop rather than quietly produce a verdict on two-thirds of the
+genome — which is the intended behaviour, but it will look like a crash.

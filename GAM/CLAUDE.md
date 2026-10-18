@@ -158,10 +158,19 @@ slightly *better* with active marks than the real compartment vector. Balance is
 now a precondition over 4 eigenvectors, not a tiebreak. Result: implausible
 `frac_A` 13/38 -> 0/38, PC1 chosen 2/38 instead of 19/38.
 
-**What is still wrong.** Usable axis (|rho| > 0.4) only **11 of 38** chromosome x
-genotype combinations; median |rho| 0.348. The switch table is near-symmetric
-(A->B 21,393 vs B->A 21,078); **do not read it as "no net shift"** - 36% of bins
-switching is what axis noise looks like.
+**What is still wrong (re-measured 2026-10-18 after balance-before-PCA, v8).**
+Only **27 of 38** chromosome x genotype combinations orient at all; of those,
+usable axis (|rho| > 0.4) is **8 of 27** and median |rho| is **0.356**. Both
+genotypes orient on just **10 of 19 autosomes**, and on **6 of those 10** they
+pick the same eigenvector. The switch table is near-symmetric; **do not read it
+as "no net shift"** - scores are median-centred per chromosome, so A->B and
+B->A are forced exactly equal BY CONSTRUCTION, and ~28% of bins switching is
+what axis noise looks like.
+
+Balancing before the PCA (v8) fixed the eigenvector hunt, not the agreement:
+PC1 now carries the compartment on **16 of 27** (was 2 of 24), while median
+|rho| moved only 0.340 -> 0.356. The ceiling is the data. See
+`results/COMPARTMENTS.md` section 4b and `results/BIN_BALANCING.md` section 5.
 
 **Usable without reservation** (none depend on the PC): insulation,
 `npmi_short` / `npmi_long`, `decay_slope`, and the raw NPMI.
@@ -241,15 +250,17 @@ switching is what axis noise looks like.
 
 **Cache gotcha:** `gam2_params$version` must be bumped whenever the compartment
 METHOD changes, not only its parameters - a cached per-chromosome reduction
-carries the PC it was computed with. Currently version 2.
+carries the PC it was computed with. Currently **version 8** (`GAM_2`) and
+**version 2** (`GAM_2b`); both now balance before the decomposition.
 
 ## The shared A/B axis (GAM_2b) supersedes pc1_delta for WT vs cKO
 
 `pc1_WT` and `pc1_HP1gKO` are each genotype's OWN selected eigenvector, and
-settled point 2 above says those are different objects. Now measured on all 19
-autosomes rather than the 5 originally tested: **the two genotypes select the
-same eigenvector on only 8 of 19**. `pc1_delta` is therefore a difference
-between two different vectors and must not be used for a genotype comparison.
+settled point 2 above says those are different objects. Measured on all 19
+autosomes after v8: both genotypes orient on only **10**, and on those they
+select the same eigenvector on **6 of 10**. `pc1_delta` is therefore a
+difference between two different vectors on most of the genome, and is blank on
+the rest; it must not be used for a genotype comparison.
 
 `GAM_2b_Shared_Axis.R` implements settled point 3. One axis from the AVERAGED
 correlation matrix at 100 kb, phased once against `active_chromatin_ref()`, then
@@ -261,13 +272,45 @@ asserted.** Against the same active-chromatin reference, autosomes only:
 
 | axis | median rho | reaches rho > 0.4 |
 |---|---|---|
-| WT's own | 0.315 | 5 of 19, either genotype |
-| cKO's own | 0.254 | |
-| **shared** | **0.422** | **10 of 19** |
+| WT's own | 0.174 | |
+| cKO's own | 0.173 | |
+| **shared (balanced, v2)** | **0.391** | **7 of 19** |
 
-The shared axis beats BOTH per-genotype axes on **16 of 19** autosomes
-(exceptions chr3, chr8, chr13). Per chromosome in
-`gam2b_shared_axis_summary.tsv`.
+The shared axis still beats both per-genotype axes by a wide margin. Per
+chromosome in `gam2b_shared_axis_summary.tsv`.
+
+**`GAM_2b` also balances before the decomposition now (params v2, 2026-10-18),
+and the result is a TRADE, not a win.** Read it before quoting the table above.
+
+| | unbalanced (v1) | balanced (v2) |
+|---|---|---|
+| compartment on **PC1** | 0 of 18 | **8 of 16** |
+| determined | **18 of 19** | 16 of 19 |
+| median \|rho\| | **0.423** | 0.391 |
+| median \|frac_A - 0.5\| | 0.061 | **0.043** |
+| worst \|frac_A - 0.5\| | 0.198 | **0.117** |
+
+**15 of 16 chromosomes moved up EXACTLY ONE eigenvector** (3->2, 2->1, 4->3) -
+the signature of a single eigenvector having been spent on per-bin
+detectability, which is the same thing balancing removes from the region maps.
+
+On the 15 chromosomes determined in BOTH versions, |rho| is a wash: 8 up, 7
+down, mean 0.383 -> 0.391, median 0.422 -> 0.387. So balancing does not make
+the axis agree better with active chromatin; it changes WHICH eigenvector
+carries the compartment and evens out the A/B split.
+
+**The cost is coverage: chr8, chr14 and chr15 drop out entirely** (chr4 comes
+in, so 18 -> 16). This is NOT an eigenvector-budget problem - tested k = 6 and
+all three still fail with "no balanced eigenvector". The likely reading is that
+their old calls were the detectability vector, which correlates with active
+chromatin because detectability in GAM is partly biological (settled point 7);
+chr14 was "determined" on **PC4** at rho 0.527 before, which fits that reading.
+Balancing converts three confident-but-suspect calls into honest refusals.
+**If you disagree with that reading, `gam2b_balance_before_pca <- FALSE`
+restores v1 exactly.** The BED exporter now names excluded chromosomes rather
+than silently shipping a shorter genome, and shared-axis bin coverage fell
+90.5% -> 82.7%, which leaves `GAM_6`'s `stopifnot(ov > 0.80)` only 2.7 points
+of headroom.
 
 **The track is SHAPE ONLY.** Each genotype's score is median-centred and scaled
 to RMS 1 per chromosome. Deliberate: lambda1 falls ~20% in the cKO, but that is
@@ -277,7 +320,8 @@ Amplitude is kept in `rayleigh_WT` / `rayleigh_HP1gKO` / `lambda1_ratio` in the
 summary, where it reads as what it is. **This stage does not re-answer the
 strength question** - that is settled and null on two external axes.
 
-Still weak evidence: 10 of 19 is better, not good. Report the quality numbers
+Still weak evidence: 7 of 19 usable, 16 of 19 determined. Better than the
+per-genotype axes, not good in absolute terms. Report the quality numbers
 with any compartment claim, as before.
 
 **`GAM_6`'s decompaction verdict now uses `shared_delta`.** The earlier table

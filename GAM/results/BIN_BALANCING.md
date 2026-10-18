@@ -163,17 +163,54 @@ Read the pair:
 
 ## 5. Scope
 
-Applied in `gam_region_plot()` to the display matrix `D` only, after
-aggregation and before the tile data is built.
+Balancing is applied in **two** places, for two different reasons. When this
+document was first written it was only the first, and the list below said no
+statistic used it. That stopped being true on 2026-10-18 and the claim is
+corrected here.
 
-**Not touched:**
+**(a) Figures — `gam_region_plot()`**, to the display matrix `D` only, after
+aggregation and before the tile data is built. Purely cosmetic: it removes the
+criss-cross plaid lattice so the region maps are readable.
+
+**(b) Compartments — before the PCA, in `GAM_2_NPMI_Compartments.R`
+(`gam2_balance_before_pca`, params v8) and `GAM_2b_Shared_Axis.R`
+(`gam2b_balance_before_pca`, params v2).** This one is not cosmetic and it does
+change results. The same per-bin term that draws the plaid also loads onto the
+leading eigenvector of the O-E correlation matrix, which pushes the compartment
+down the spectrum and makes the A/B axis a mixture of compartment and
+detectability. Removing it first takes the compartment back to PC1 on much of
+the genome: in `GAM_2`, PC1 went from 2 of 24 to 16 of 27; in `GAM_2b`, from
+0 of 18 to 8 of 16, with 15 of 16 chromosomes moving up by exactly one
+eigenvector — the signature of one eigenvector having been spent on
+detectability.
+
+**Read the trade honestly.** Balancing does not make the axis agree better with
+active chromatin. On the chromosomes determined both with and without it, median
+|rho| moves 0.423 -> 0.387 and the sign test is 8 up / 7 down: a wash. What it
+buys is *which* eigenvector carries the compartment and a more even A/B split
+(median |frac_A - 0.5| 0.061 -> 0.043, worst case 0.198 -> 0.117). The ceiling
+is the data, as `COMPARTMENTS.md` section 4b says. There is also a cost in
+coverage, recorded there.
+
+**A specific caveat for GAM.** In Hi-C, balancing targets a near-pure technical
+bias. In GAM, detection frequency is *itself partly biological* — open chromatin
+is more detectable — so `a[i] + a[j]` is part artefact and part compartment, and
+subtracting it removes some real signal along with the bias. `GAM/CLAUDE.md`
+settled point 7 records a leading eigenvector tracking per-bin `n_valid` at
+|rho| 0.34-0.47 on chr7 and chr11. This is the most likely reason balancing
+helps the eigenvector ordering while leaving |rho| flat.
+
+**Still not touched:**
 
 - the delivered `Diff_contacts` files and their significance criterion
   (`|delta-z| > 2` and `max NPMI > 0.1`), which are the collaborators' and are
   used exactly as delivered;
 - the per-bin differential-contact counts and the hotspot bins and domains
   derived from them;
-- every statistic in `results/tables/`;
+- every statistic in `results/tables/` **except** the compartment outputs named
+  in (b) above and anything downstream of them (`npmi_compartment_*`,
+  `gam2b_shared_axis_summary`, the compartment BEDs, `compartment_switch` and
+  its consumers in `GAM_3` and `GAM_6`);
 - the `_sigonly` maps, and the slide figures, which use `_sigonly`.
 
 Only the `_allcells_binbalanced` variant sets `balance = TRUE`, and that variant
