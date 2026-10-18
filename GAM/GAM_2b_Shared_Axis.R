@@ -310,7 +310,7 @@ if (file.exists(og)) {
   # genotype's A and B are swapped on that chromosome. abs() here erased exactly
   # two such cases - chr15 (-0.061) and chr19 (-0.134), both cKO - so the table
   # that exists to catch the inversion was hiding it.
-  W <- dcast(O[, .(chr, genotype, rho = rho_h3k4me3)], chr ~ genotype,
+  W <- dcast(O[, .(chr, genotype, rho = rho_check)], chr ~ genotype,
              value.var = "rho")
   setnames(W, c("WT", "HP1gKO"), c("rho_pergeno_WT", "rho_pergeno_HP1gKO"),
            skip_absent = TRUE)

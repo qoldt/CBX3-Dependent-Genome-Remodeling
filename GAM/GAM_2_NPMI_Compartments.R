@@ -73,11 +73,18 @@ stopifnot(all(gam2_chroms %in% gam_npmi_chroms))
 # version bump is what makes the invalidation obvious to a reader, and a run
 # that silently reuses v2 reductions would never execute either change. That
 # happened once on the first attempt at this patch.
-gam2_params <- list(version = 6L, binsize = gam_binsize, sigma = gam_sigma,
+# Balance the O-E matrix before the correlation and PCA. See the long note at
+# the call site and results/COMPARTMENTS.md. FALSE reproduces the pre-2026-10-18
+# behaviour, which is kept only so the change can be measured against it.
+gam2_balance_before_pca <- TRUE
+
+gam2_params <- list(version = 8L, binsize = gam_binsize, sigma = gam_sigma,
                     ins_kb = gam2_ins_kb, short_max = gam2_short_max_bins,
                     long_min = gam2_long_min_bins, shells = gam2_shell_edges,
                     K = gam2_K, min_frac = gam2_min_frac, oe = "subtract",
                     comp_binsize = gam_compartment_binsize,
+                    balance = gam2_balance_before_pca,
+                    orient = "both genotypes on the external active-chromatin ruler",
                     comp_select = sprintf(
                       "balance-first, k=4, frac_A in [0.2,0.8], margin>=%.2f, anti-corr=undetermined",
                       gam_compartment_pc_margin))
@@ -97,6 +104,23 @@ stopifnot(all(c("signal", "stats") %in% names(gam1)))
 # defined there because GAM_2b phases the SHARED axis with the same ruler, and
 # the two must not drift apart.
 h3k4_wt <- active_chromatin_ref(gam1)
+
+# INDEPENDENT ORIENTATION CHECK: TSS density per bin, from the annotation.
+# Needed because both genotypes are now oriented on h3k4_wt (see the genotype
+# loop), which would make a check against h3k4_wt vacuous - it would be
+# checking the reference against itself. TSS density involves no ChIP at all,
+# so it is a genuinely external test of whether "A" came out on the
+# gene-rich side.
+tss_ref <- local({
+  a <- as.data.table(gam1$annot)
+  if (!"n_tss" %in% names(a)) {
+    warning("n_tss not in gam_bins_annotated.rds - orientation check disabled",
+            call. = FALSE)
+    return(h3k4_wt)
+  }
+  v <- as.numeric(a$n_tss)
+  setNames((v - mean(v, na.rm = TRUE)) / stats::sd(v, na.rm = TRUE), a$bin_id)
+})
 rm(gam1); invisible(gc())
 
 # ---------------------------------------------------------------
@@ -273,9 +297,14 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
 
   # --- PC1 + orientation + saddle ----------------------------------------------
   sad <- NULL
+  # rho_check is the correlation with check_ref, which is TSS DENSITY - not
+  # H3K4me3. It was called rho_h3k4me3 while check_ref really was H3K4me3; when
+  # check_ref was repointed to an independent ChIP-free ruler the name became a
+  # false claim about the source, and it briefly fooled a before/after
+  # comparison in this very session. The column says what it is.
   summ <- data.table(chr = chr, genotype = genotype, n_bins = n, n_mappable = sum(V),
                      oriented = FALSE, flip = NA, rho_orient = NA_real_,
-                     rho_h3k4me3 = NA_real_, eig1 = NA_real_, eig_gap = NA_real_,
+                     rho_check = NA_real_, eig1 = NA_real_, eig_gap = NA_real_,
                      frac_A = NA_real_, which_pc = NA_integer_, pc_margin = NA_real_,
                      rho_pc1 = NA_real_, rho_pc2 = NA_real_)
   if (can_orient && sum(V) > 2 * gam2_K) {
@@ -311,6 +340,36 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
     cmap <- rep(NA_integer_, ngrp); cmap[keep_c] <- seq_len(sum(keep_c))
     agg_of_bin <- cmap[grp]
 
+    # BALANCE BEFORE THE PCA. Without this the leading eigenvector is a per-bin
+    # DETECTABILITY component rather than compartments: measured on the
+    # unbalanced O-E matrix, PC1's frac_A is 0.033 on chr19 and 0.983 on chr3 -
+    # 97-98% of the chromosome on one side, which is not an A/B split whatever
+    # it correlates with. That is why the compartment axis was PC2-4 on nearly
+    # every chromosome and why select_compartment_pc() had to hunt for a
+    # balanced candidate at all.
+    #
+    # Fitting oe[i,j] ~ a[i] + a[j] and subtracting removes it. Measured effect
+    # (WT): frac_A of PC1 goes to 0.48-0.56 everywhere, and on chr11 PC1 BECOMES
+    # the compartment at |rho| 0.507 with no hunt needed. It does not invent a
+    # compartment where there is none - chr3 and chr19 stay at |rho| <= 0.32 -
+    # which is the honest outcome and is what the margin then rejects.
+    #
+    # Additive rather than multiplicative (ICE/Knight-Ruiz) because oe_c is
+    # already a difference, not a count. normGAM provides the multiplicative
+    # forms for raw GAM matrices. Full reasoning: results/COMPARTMENTS.md.
+    #
+    # The selection machinery is KEPT, not replaced: with balanced input it
+    # should now land on PC1 wherever a compartment exists, so which_pc becomes
+    # a diagnostic - a chromosome still selecting PC3 is telling you something.
+    if (gam2_balance_before_pca && nrow(oe_c) > 9) {
+      Ab <- oe_c; diag(Ab) <- NA
+      aa <- rep(0, nrow(Ab))
+      for (.it in 1:60)
+        aa <- (aa + rowMeans(sweep(Ab, 2, aa, "-"), na.rm = TRUE)) / 2
+      aa[!is.finite(aa)] <- 0
+      oe_c <- oe_c - outer(aa, aa, "+")
+      rm(Ab, aa)
+    }
     pc <- pc1_corr(oe_c)
     sel <- select_compartment_pc(pc, agg_ids, orient_ref)
     # Expand the coarse-bin PC back onto the native 20 kb bins: every 20 kb bin
@@ -370,7 +429,7 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
       # it visibly backwards, because nothing downstream looks twice at a row
       # that says oriented.
       summ[, `:=`(oriented = !anti, flip = o$sign < 0, rho_orient = o$rho,
-                  rho_h3k4me3 = ck$rho, eig1 = pc$val, eig_gap = pc$gap,
+                  rho_check = ck$rho, eig1 = pc$val, eig_gap = pc$gap,
                   frac_A = mean(p > 0),
                   # which eigenvector carried the compartment signal, and how
                   # clearly - if which_pc is often 2, the leading eigenvector is
@@ -421,14 +480,25 @@ for (chr in gam2_chroms) {
   for (g in gam2_genos) {
     if (!is.null(read_cache(chr, g))) { message(chr, " ", g, ": cached"); next }
     message(chr, " ", g, ": parsing ", format(Sys.time(), "%H:%M:%S"))
-    if (g == "WT") {
-      ref <- h3k4_wt
-    } else {
-      wt <- read_cache(chr, "WT")
-      ref <- if (!is.null(wt)) setNames(wt$feat$pc1, wt$feat$bin_id) else NULL
-      stopifnot(!can_orient || !is.null(ref))
-    }
-    res <- reduce_npmi(g, chr, orient_ref = ref, check_ref = h3k4_wt, can_orient = can_orient)
+    # BOTH GENOTYPES ARE SELECTED AND ORIENTED ON THE SAME EXTERNAL RULER.
+    #
+    # Until 2026-10-18 the cKO was passed WT's OWN eigenvector as its reference,
+    # so select_compartment_pc() ranked the cKO's candidates by how well they
+    # correlated with WT's compartment axis. Three consequences, all bad:
+    #   - the cKO's axis was chosen for RESEMBLING WT's, a bias toward agreement
+    #     baked into the method, and the two still disagreed on 11 of 19;
+    #   - "the genotypes select the same eigenvector on only 8 of 19" was
+    #     therefore an UNDERSTATEMENT, not a neutral observation;
+    #   - the cKO could never be called where WT failed - measured at 0 of 19
+    #     chromosomes - because an undetermined WT axis is all NA, so every
+    #     candidate correlation came back NA and the cKO inherited the failure
+    #     regardless of its own data quality.
+    # h3k4_wt is WT ChIP, but it is the same fixed ruler for both genotypes and
+    # both marks are unchanged in the KO (median log2FC +0.000 and -0.052), so
+    # it does not privilege either. That is what makes a difference between the
+    # two axes mean something.
+    ref <- h3k4_wt
+    res <- reduce_npmi(g, chr, orient_ref = ref, check_ref = tss_ref, can_orient = can_orient)
     res$params <- gam2_params
     saveRDS(res, cache_file(chr, g))
     # Release this chromosome's matrices before the next parse.
@@ -521,10 +591,10 @@ message("Wrote ", out_path, " (", nrow(features), " bins, ", length(done), " chr
 # cKO had A and B swapped), then as an axis blanked to NA while still flagged
 # oriented. Assert it so a third variant of the same bug cannot reach a table.
 {
-  bad <- summ[oriented == TRUE & is.finite(rho_h3k4me3) & rho_h3k4me3 < 0]
+  bad <- summ[oriented == TRUE & is.finite(rho_check) & rho_check < 0]
   if (nrow(bad))
     stop("oriented rows anti-correlate with the orientation check: ",
-         paste(sprintf("%s/%s (rho=%.3f)", bad$chr, bad$genotype, bad$rho_h3k4me3),
+         paste(sprintf("%s/%s (rho=%.3f)", bad$chr, bad$genotype, bad$rho_check),
                collapse = ", "), call. = FALSE)
 }
 fwrite(summ, file.path(tables_dir, "npmi_compartment_orientation.tsv"), sep = "\t")

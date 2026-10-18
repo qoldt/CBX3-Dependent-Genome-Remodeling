@@ -123,12 +123,49 @@ Problems traced to the salvage, all fixed or documented 2026-10-18:
   now requires the winner to beat the runner-up. Result: 24 of 38 combos
   oriented, 10 chromosomes with both genotypes.
 - **Two chromosomes shipped inverted.** chr15 and chr19 cKO had A and B swapped
-  (rho -0.061 and -0.134 against the independent H3K4me3 check). It was a
-  warning nobody acted on, and `GAM_2b:309` stored `abs(rho_h3k4me3)`, so the
-  table that exists to catch it was hiding it. Both fixed, plus an assertion at
-  the point the table is written.
+  (rho -0.061 and -0.134 against the independent check). It was a warning
+  nobody acted on, and `GAM_2b` stored the ABSOLUTE value of that correlation,
+  so the table that exists to catch it was hiding it. Both fixed, plus an
+  assertion at the point the table is written.
 - **`pc1_delta` is not a usable genotype comparison** and its three figures were
   removed from the report.
+
+## 4b. Both root-cause fixes are now implemented (2026-10-18)
+
+**Balancing before the PCA** (`gam2_balance_before_pca`) and **both genotypes
+selected on the same external ruler** (the cKO no longer gets WT's own
+eigenvector). Measured against the previous state:
+
+| | before | after |
+|---|---|---|
+| compartment axis is PC1 | 2 of 24 | **16 of 27** |
+| oriented | 24 of 38 | 27 of 38 |
+| WT median \|rho\| vs the active ruler | 0.340 | 0.358 |
+| cKO called on a chromosome where WT fails | **0 of 19** | **3** |
+
+Read these carefully, because two of them say less than they appear to.
+
+- **The eigenvector hunt is largely gone.** PC1 carries the compartment on 16 of
+  27 rather than 2 of 24. This is the fix working: the detectability component
+  is out of the decomposition, so the leading eigenvector is the compartment.
+  `which_pc` is now a DIAGNOSTIC - a chromosome still selecting PC3 is saying
+  something about itself.
+- **The cKO is genuinely independent.** `WT fails / cKO succeeds` was
+  structurally impossible before (0 of 19) because an undetermined WT axis is
+  all NA and the cKO had nothing to correlate against. It is now 3.
+- **|rho| barely moved**, 0.340 -> 0.358. Balancing did NOT make the axis agree
+  better with active chromatin; it made the right eigenvector carry it. The
+  ceiling is the data. Compartment structure in this GAM dataset is weak, and
+  no amount of better decomposition will change that - which is what the margin
+  is for.
+
+**`rho_check`, not `rho_h3k4me3`.** The orientation check is now TSS density
+from the annotation, which involves no ChIP at all. It had to change: once both
+genotypes are oriented on the active-chromatin ruler, a check against that same
+ruler is checking the reference against itself, which is the flaw the WT path
+already had. The column was renamed because keeping the old name would have
+been a false claim about the source - it briefly fooled a before/after
+comparison during this very session.
 
 ## 5. What to do next
 
