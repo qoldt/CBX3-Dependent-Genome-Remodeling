@@ -49,6 +49,7 @@ GAM/Hotspots/
 # XML included) are all written by code and must not be committed.
 GAM/results/*
 !GAM/results/METHODS.md
+!GAM/results/BIN_BALANCING.md
 GAM/results_*/
 
 # stray base-R plot device output
