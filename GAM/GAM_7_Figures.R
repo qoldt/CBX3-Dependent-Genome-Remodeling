@@ -162,6 +162,9 @@ local({
   gam12_h_mark   <- 0.525
   gam12_h_gene   <- 0.80
   gam12_h_ctcf   <- 0.26   # CTCF strip, same height as the LAD ribbon
+  # REPEAT PANEL. Taller than a ribbon because it carries three lines and a
+  # numbered y axis, shorter than a mark panel because it needs only two breaks.
+  gam12_h_repeat <- 0.42
 
   # INSULATION-SCORE MAP STRIPS - the Pombo lab's own display of melting.
   # One strip per genotype plus their difference, drawn directly under the
@@ -453,6 +456,11 @@ local({
                               fig_width = 11, side_allow = 2.6,
                               diff_mode = c("deltaz", "raw"),
                               npmi_cap = gam12_npmi_cap,
+                              # Repeat composition. Defaults to the slide variant
+                              # only: the full figure already carries five mark
+                              # tracks and a gene panel, and this is an annotation
+                              # rather than a result. Pass TRUE to force it on.
+                              repeats = slide,
                               # SLIDE MODE. The full figure is ~1.09:1 - essentially
                               # square - because three map rows, five mark tracks and
                               # a ten-line caption stack up to ~10.1 in at 11 in wide.
@@ -895,6 +903,70 @@ local({
                         panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
     }
 
+    # --- repeat composition -----------------------------------------------------
+    # LINE, SINE and LTR as the fraction of each bin they cover, from
+    # gam_bins_annotated.rds (RepeatMasker, already on the 20 kb grid) - so this
+    # is a display of an annotation that was always there, not a new measurement.
+    #
+    # ONE PANEL ON ONE SHARED Y AXIS, not three stacked tracks. The three are
+    # fractions of the same bin, and the comparison a reader wants is which class
+    # dominates where - the hotspot result is that domains losing contacts are
+    # LINE-rich (1.25x) and SINE-DEPLETED (0.80x), which is a statement about
+    # LINE against SINE and is invisible if each gets its own auto-scaled axis.
+    # This repo has already made that mistake once and recorded it: the mark
+    # tracks used to draw a ratio on a per-mark symmetric axis and every mark
+    # filled its panel equally whatever the size of its effect. Same trap.
+    #
+    # The axis ceiling is the largest drawn value across all three classes, so
+    # the panel is scaled by what is actually in this region. SINE is genome-wide
+    # the smallest (median 0.055 against 0.120 LINE, 0.091 LTR), so a fixed 0-1
+    # axis would flatten it to the baseline everywhere.
+    p_rep <- if (!isTRUE(repeats)) NULL else local({
+      cols <- c("frac_LINE", "frac_SINE", "frac_LTR")
+      if (!all(cols %in% names(reg))) {
+        message("  repeat tracks: frac_LINE/SINE/LTR not in gam_bins_annotated.rds - omitted")
+        return(NULL)
+      }
+      d <- reg[, c("start", "end", cols), with = FALSE]
+      # Same display bin as the mark tracks, so the three panels line up column
+      # for column and a feature at one x is at the same x in all of them.
+      fac <- max(1L, round(((to - from) / gam12_mark_target_bins) / gam_binsize))
+      d[, grp := ((seq_len(.N) - 1L) %/% fac) + 1L]
+      d <- d[, .(x = (min(start) + max(end)) / 2e6,
+                 LINE = mean(frac_LINE, na.rm = TRUE),
+                 SINE = mean(frac_SINE, na.rm = TRUE),
+                 LTR  = mean(frac_LTR,  na.rm = TRUE)), by = grp]
+      m <- melt(d, id.vars = "x", measure.vars = c("LINE", "SINE", "LTR"),
+                variable.name = "class", value.name = "frac")
+      m <- m[is.finite(frac)]
+      if (!nrow(m)) return(NULL)
+      # ROBUST CEILING, the same rule as the mark panels and for the same reason:
+      # a single repeat-pileup bin must not flatten the whole region. Twice the
+      # 99th percentile of the values actually drawn, never above the maximum
+      # (and a fraction cannot exceed 1). The first version of this panel used
+      # the plain maximum and Pcdh came out scaled to 0.94 by one LINE spike,
+      # with every other feature squashed into the bottom third - which is the
+      # failure the mark-panel ceiling exists to prevent.
+      top <- min(max(m$frac, na.rm = TRUE),
+                 2 * stats::quantile(m$frac, 0.99, na.rm = TRUE), 1)
+      if (!is.finite(top) || top <= 0) return(NULL)
+      m[, frac := pmin(frac, top)]
+      ggplot(m, aes(x, frac, colour = class)) +
+        geom_line(linewidth = 0.3) +
+        scale_colour_manual(values = c(LINE = "#8c510a", SINE = "#01665e",
+                                       LTR = "#762a83"), name = NULL) +
+        scale_x_continuous(expand = c(0, 0)) +
+        scale_y_continuous(expand = c(0, 0), limits = c(0, top * 1.04),
+                           breaks = c(0, signif(top, 2))) +
+        coord_cartesian(xlim = c(from, to) / 1e6) +
+        labs(y = "repeats\n(frac. of bin)") +
+        theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                        axis.text.y = element_text(size = 5),
+                        axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
+                                                    size = 7, lineheight = 0.95),
+                        panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
+    })
+
     # --- ChIP tracks ------------------------------------------------------------
     # Mark tracks: a smoothed profile, not one bar per 20 kb bin.
     #
@@ -1281,7 +1353,8 @@ local({
     lad_h   <- if (is.null(p_lad)) numeric(0) else gam12_h_lad
     ismap_h <- if (is.null(ismap_panels)) numeric(0)
                else rep(gam12_h_ismap, length(ismap_panels))
-    track_h <- c(ismap_h, hot_h, ctcf_h, lad_h,
+    rep_h   <- if (is.null(p_rep)) numeric(0) else gam12_h_repeat
+    track_h <- c(ismap_h, hot_h, ctcf_h, lad_h, rep_h,
                  rep(gam12_h_mark, length(panels)), gam12_h_gene)
     heights <- grid::unit(c(rep(map_h_in, n_tri), track_h), "in")
     # guides = "collect" is essential here, not cosmetic. Without it every panel
@@ -1291,6 +1364,7 @@ local({
     wrap_plots(c(tri, ismap_panels, hot_panels,
                  if (is.null(p_ctcf)) NULL else list(p_ctcf),
                  if (is.null(p_lad))  NULL else list(p_lad),
+                 if (is.null(p_rep))  NULL else list(p_rep),
                  panels, list(p_gene)), ncol = 1, heights = heights) +
       plot_layout(guides = "collect") +
       plot_annotation(
@@ -1306,10 +1380,14 @@ local({
           # the insulation sentence spelled out separately did. The colour
           # convention is the same for the map and the strips (red = more
           # contact in the cKO), so one clause covers both.
-          "GAM %s, HP1g cKO vs WT, 20 kb. Map: delta-z (cKO - WT)%s. Red = more contact in the cKO%s, blue = less. Mark tracks: mean coverage per genotype. NPMI cells measured here: %.0f%%.",
+          # ONE LINE, AND IT MUST FIT. ggplot never wraps plot.caption, so every
+          # addition here costs characters somewhere else - adding the repeat
+          # sentence overflowed it and cut the measured fraction mid-number.
+          # Keep this under ~210 characters at 13.33 in.
+          "GAM %s, cKO vs WT, 20 kb. Map: delta-z (cKO - WT)%s; red = more contact in cKO%s. Repeats: LINE/SINE/LTR fraction per bin. Marks: mean coverage. NPMI measured: %.0f%%.",
           chrom,
           if (is.null(ismap_panels)) "" else
-            sprintf("; %s: insulation score by square size (240-1040 kb)",
+            sprintf("; %s: insulation by square size (240-1040 kb)",
                     if (length(ismap_panels) > 1) "strips" else "strip"),
           if (is.null(ismap_panels)) "" else " (condensing)",
           100 * npmi_cov) else paste0(
@@ -1470,7 +1548,7 @@ local({
         # than a full triangle. ismap_n() must match what gam_region_plot() will
         # actually draw, or the solved band and the saved height disagree.
         trk   <- 0.75 + ismap_n(gam12_ismap_mode) * gam12_h_ismap +
-                 gam12_h_hotcall + gam12_h_ctcf + gam12_h_lad +
+                 gam12_h_hotcall + gam12_h_ctcf + gam12_h_lad + gam12_h_repeat +
                  2 * gam12_h_mark + gam12_h_gene
         pw    <- max(2, 13.33 - SIDE)
         map_h <- max(1.2, 13.33 * 9 / 16 - trk -

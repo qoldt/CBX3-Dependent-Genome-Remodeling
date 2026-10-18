@@ -431,6 +431,37 @@ instead of millions of tiles, which would remove the budget entirely.
 
 `gam12_dpi` must track `save_fig()`'s dpi in `shared/common.R`.
 
+## The slide variant carries a repeat-composition panel
+
+LINE, SINE and LTR as the fraction of each 20 kb bin they cover, straight from
+`frac_LINE` / `frac_SINE` / `frac_LTR` in `gam_bins_annotated.rds` - a display of
+an annotation that was always there, not a new measurement. `repeats` defaults to
+`slide`, so only the 16:9 variant gets it; the full figure already carries five
+mark tracks and a gene panel.
+
+**One panel on one shared y axis, not three stacked tracks.** The three are
+fractions of the same bin and the comparison that matters is which class
+dominates where - the hotspot result is that domains losing contacts are
+LINE-rich (1.25x) and SINE-*depleted* (0.80x), which is a statement about LINE
+against SINE and is invisible once each gets its own auto-scaled axis. This repo
+has already made that mistake once, in the mark tracks that used to draw a ratio
+on a per-mark symmetric axis.
+
+**The ceiling is robust, twice the q99 of the values drawn, capped at 1** - the
+same rule as the mark panels. The first version used the plain maximum and Pcdh
+came out scaled to 0.94 by a single LINE spike with everything else squashed into
+the bottom third.
+
+**Cost to the contact map.** The panel is 0.42 in, which comes out of the same
+16:9 budget as everything else: the Pcdh band goes 0.69 -> 0.5 Mb and chr11
+9.1 -> 7.3 Mb. Verified after rendering that nothing clips - 17 px of margin top
+and bottom on all four slides.
+
+**It also cost caption characters.** ggplot never wraps `plot.caption`, so adding
+the repeat sentence overflowed the line and cut the measured-NPMI fraction
+mid-number. The caption is now ~211 characters and ends at 76% of the width.
+Anything added there has to be taken out somewhere else.
+
 ## The masked difference map is the default now
 
 `gam12_dz_significant_only` defaults to TRUE and the **suffix moved**: the masked
