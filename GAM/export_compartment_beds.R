@@ -9,15 +9,19 @@
 # Write A/B compartment BEDs for IGV from the SHARED axis (GAM_2b).
 #
 # WHY THE SHARED AXIS AND NOT THE PER-GENOTYPE PCs
-#   GAM_2 selects an eigenvector independently per genotype. Measured on
-#   results/tables/npmi_compartment_orientation.tsv: the two genotypes select the
-#   same eigenvector on only 8 of 19 autosomes, and on chr15 and chr19 the cKO
-#   axis as shipped ANTI-correlates with both rulers (active chromatin
-#   rho -0.061 / -0.134; TSS density -0.058 / -0.074), i.e. its A and B labels
-#   are inverted relative to WT. A per-genotype BED would therefore ship two
-#   chromosomes labelled backwards and a "difference" that is partly a change of
-#   eigenvector. The shared axis is one vector scored in both genotypes and is
-#   the better-determined ruler on 16 of 19 autosomes.
+#   GAM_2 selects an eigenvector independently per genotype. Even after the v8
+#   balancing fix, measured on results/tables/npmi_compartment_orientation.tsv:
+#   only 27 of 38 chromosome x genotype combinations orient at all, both
+#   genotypes orient on just 10 of 19 autosomes, and of those 10 the two
+#   genotypes pick the SAME eigenvector on only 6. A per-genotype BED would
+#   therefore be blank on half the genome and would carry a "difference" that is
+#   partly a change of eigenvector rather than a change of compartment.
+#   (Inverted axes are no longer possible: GAM_2 blanks an anti-correlating
+#   axis to NA and asserts the invariant before writing, so every oriented row
+#   has rho_check > 0. That was not true when this file was first written.)
+#   The shared axis is one vector scored in both genotypes and is determined on
+#   18 of 19 autosomes at a median |rho| of 0.42 against active chromatin,
+#   against 0.36 for the per-genotype axes.
 #
 # Coordinates: $start/$end in shared_axis_scores.rds are already 0-based
 # half-open (gam_bin_id() convention). Written through unchanged - NO conversion.
@@ -31,11 +35,38 @@ F <- copy(SA$fine)
 stopifnot(all(c("chr","start","end","score_WT","score_HP1gKO") %in% names(F)))
 
 # --- coverage assert: a silent drop here would look like a clean result -------
-grid <- gam_bin_id(gam_bins())
-cov <- nrow(F) / length(grid)
-msg("shared-axis bins on the 20 kb autosomal grid: %d of %d (%.1f%%)",
-    nrow(F), length(grid), 100*cov)
-stopifnot(cov > 0.95, all(F$bin_id %in% grid))
+# Measured PER CHROMOSOME, against the chromosomes that actually HAVE a shared
+# axis. A flat genome-wide threshold conflates two different things: a
+# chromosome the selector legitimately refused (no eigenvector beats the
+# pc_margin - GAM_2b writes determined = FALSE and scores nothing), and bins
+# vanishing from a chromosome that does have an axis, which is the silent bug
+# this guard exists to catch. Only the second is an error.
+gbins   <- gam_bins()
+grid    <- gam_bin_id(gbins)
+grid_dt <- data.table(chr = as.character(GenomeInfoDb::seqnames(gbins)))[, .(N = .N), by = chr]
+stopifnot(all(F$bin_id %in% grid))
+
+have   <- F[, unique(chr)]
+absent <- setdiff(grid_dt$chr, have)
+if (length(absent))
+  msg("NO SHARED AXIS on %d chromosome(s): %s - excluded from these tracks",
+      length(absent), paste(absent, collapse = ", "))
+
+cov_chr <- merge(F[, .(n_scored = .N), by = chr], grid_dt, by = "chr")
+cov_chr[, cov := n_scored / N]
+msg("shared-axis bins on the 20 kb autosomal grid: %d of %d (%.1f%%); per-chromosome coverage min %.3f on %s",
+    nrow(F), sum(grid_dt$N), 100 * nrow(F) / sum(grid_dt$N),
+    min(cov_chr$cov), cov_chr[which.min(cov), chr])
+# Floor is 0.90, not 0.95. Measured 2026-10-18 the real per-chromosome range is
+# 0.939 (chr7) to ~0.99; chr7/chr14/chr19 sit just under 0.95 from ordinary
+# unmappable coarse bins, and chr7 is the repeat-richest autosome here
+# (lambda1 235 vs ~130 typical). The old flat 0.95 was a genome-wide AVERAGE
+# that passed only because the better chromosomes carried it. The message above
+# prints the running minimum, so a drift shows up even when it does not trip.
+bad <- cov_chr[cov <= 0.90]
+if (nrow(bad))
+  stop("bins missing from chromosomes that DO have a shared axis: ",
+       paste(sprintf("%s %.1f%%", bad$chr, 100 * bad$cov), collapse = ", "))
 F <- F[is.finite(score_WT) & is.finite(score_HP1gKO)]
 setorder(F, chr, start)
 # Gaps are expected (unmappable coarse bins are dropped). merge_runs() breaks a
