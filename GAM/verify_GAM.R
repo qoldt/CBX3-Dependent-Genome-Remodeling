@@ -54,9 +54,14 @@ rd <- function(p) if (file.exists(p)) fread(p) else NULL
 # appear in prose. A fact passes when EVERY file listed contains at least one.
 # ---------------------------------------------------------------
 facts <- list()
-fact <- function(id, value, matcher, quoted_in, note = "") {
+# `src` is the table the value was computed FROM. Recording it lets family B
+# derive the report's dependencies instead of relying on a hand-kept list -
+# which is what failed: a GAM_4 re-run rewrote gam4_hotspot_annotation_
+# enrichment.tsv AFTER the report was built, and nothing noticed, because the
+# report's dependency list named three tables and that was not one of them.
+fact <- function(id, value, matcher, quoted_in, note = "", src = NULL) {
   facts[[id]] <<- list(id = id, value = value, matcher = matcher,
-                       quoted_in = quoted_in, note = note)
+                       quoted_in = quoted_in, note = note, src = src)
 }
 
 # --- matchers: given a file's text and the current value, did it say it? ------
@@ -104,20 +109,20 @@ if (!is.null(O)) {
 
   fact("compartment.oriented", n_ori, m_n_of_m(n_all),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
-       "oriented chromosome x genotype combinations")
+       "oriented chromosome x genotype combinations", src = "npmi_compartment_orientation.tsv")
   fact("compartment.pc1", n_pc1, m_n_of_m(n_ori),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md",
          "results/BIN_BALANCING.md"),
-       "combinations whose compartment is on PC1")
+       "combinations whose compartment is on PC1", src = "npmi_compartment_orientation.tsv")
   fact("compartment.both_genotypes", length(both), m_n_of_m(length(gam_autosomes)),
        c("CLAUDE.md", "make_report.R", "export_compartment_beds.R"),
-       "autosomes where BOTH genotypes orient")
+       "autosomes where BOTH genotypes orient", src = "npmi_compartment_orientation.tsv")
   fact("compartment.same_pc", same, m_n_of_m(length(both)),
        c("CLAUDE.md", "make_report.R", "export_compartment_beds.R"),
-       "of those, where both pick the same eigenvector")
+       "of those, where both pick the same eigenvector", src = "npmi_compartment_orientation.tsv")
   fact("compartment.median_rho", med, m_near(0.002),
        c("CLAUDE.md", "make_report.R"),
-       "median |rho| of the per-genotype axes vs active chromatin")
+       "median |rho| of the per-genotype axes vs active chromatin", src = "npmi_compartment_orientation.tsv")
 }
 
 S <- rd(file.path(tables_dir, "gam2b_shared_axis_summary.tsv"))
@@ -125,14 +130,14 @@ if (!is.null(S)) {
   det <- S[determined == TRUE]
   fact("shared.determined", nrow(det), m_n_of_m(nrow(S)),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
-       "autosomes with a shared axis")
+       "autosomes with a shared axis", src = "gam2b_shared_axis_summary.tsv")
   fact("shared.pc1", sum(det$which_pc == 1, na.rm = TRUE), m_n_of_m(nrow(det)),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md",
          "results/BIN_BALANCING.md"),
-       "shared axes carried by PC1")
+       "shared axes carried by PC1", src = "gam2b_shared_axis_summary.tsv")
   fact("shared.median_rho", median(abs(det$rho_ref), na.rm = TRUE), m_near(0.002),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
-       "median |rho| of the shared axis vs active chromatin")
+       "median |rho| of the shared axis vs active chromatin", src = "gam2b_shared_axis_summary.tsv")
 }
 
 # --- the ChIP effect sizes the whole study is conditioned on ------------------
@@ -141,12 +146,13 @@ if (!is.null(L)) {
   fact("grid.n_bins", L$n_bins[1], function(txt, v)
          grepl(format(v, big.mark = ","), txt, fixed = TRUE) ||
          grepl(format(v), txt, fixed = TRUE),
-       c("make_report.R"), "20 kb autosomal bins")
+       c("make_report.R"), "20 kb autosomal bins", src = "gam_bins_l2fc_summary.tsv")
   for (mk in L$mark) {
     v <- L[mark == mk, median_log2FC]
     fact(sprintf("chip.median_l2fc.%s", mk), v, m_near(0.0015),
          c("make_report.R"),
-         sprintf("%s median log2FC on the GAM 20 kb grid", mk))
+         sprintf("%s median log2FC on the GAM 20 kb grid", mk),
+         src = "gam_bins_l2fc_summary.tsv")
   }
 }
 
@@ -157,12 +163,12 @@ if (!is.null(CC) && all(c("cls", "band", "pct") %in% names(CC))) {
   if (length(v) == 1)
     fact("contacts.het_het_short", v, m_near(0.06),
          c("make_report.R", "CLAUDE.md"),
-         "het-het (different domains) below 0.2 Mb, % change in mean NPMI")
+         "het-het (different domains) below 0.2 Mb, % change in mean NPMI", src = "gam10_class_change.tsv")
   v2 <- CC[cls == "eu_eu" & band == ">10Mb", pct]
   if (length(v2) == 1)
     fact("contacts.eu_eu_long", v2, m_near(0.06),
          c("make_report.R"),
-         "eu-eu beyond 10 Mb, % change in mean NPMI")
+         "eu-eu beyond 10 Mb, % change in mean NPMI", src = "gam10_class_change.tsv")
 }
 
 # --- hotspot domains ----------------------------------------------------------
@@ -174,7 +180,7 @@ for (d in list(list(f = "hotspot_domains_lost_adj.tsv",   id = "hotspot.n_lost",
   if (!is.null(H))
     fact(d$id, nrow(H), function(txt, v)
            grepl(sprintf("\\b%d\\b", v), txt, perl = TRUE),
-         c("make_report.R"), d$nm)
+         c("make_report.R"), d$nm, src = d$f)
 }
 
 E <- rd(file.path(tables_dir, "gam4_hotspot_annotation_enrichment.tsv"))
@@ -184,7 +190,8 @@ if (!is.null(E) && "fold_rotated" %in% names(E)) {
     v <- E[domain_set == "lost_adj" & annotation == a$key, fold_rotated]
     if (length(v) == 1)
       fact(a$id, v, m_near(0.006), c("make_report.R"),
-           sprintf("lost domains vs rotation null: %s", a$key))
+           sprintf("lost domains vs rotation null: %s", a$key),
+           src = "gam4_hotspot_annotation_enrichment.tsv")
   }
 }
 
@@ -194,12 +201,12 @@ if (!is.null(CS)) {
   v <- CS[mark == "H4K20me3" & variant == "raw" & direction == "lost", rho]
   if (length(v) == 1)
     fact("coupling.h4k20me3_raw_lost", v, m_near(0.0006),
-         c("make_report.R"), "the headline coupling rho")
+         c("make_report.R"), "the headline coupling rho", src = "coupling_spearman.tsv")
   n <- CS[mark == "H4K20me3" & variant == "raw" & direction == "lost", n]
   if (length(n) == 1)
     fact("coupling.n", n, function(txt, v)
            grepl(format(v, big.mark = ","), txt, fixed = TRUE),
-         c("make_report.R"), "bins behind the coupling rho")
+         c("make_report.R"), "bins behind the coupling rho", src = "coupling_spearman.tsv")
 }
 
 message("\n== A. quoted statistics match the tables they cite ==")
@@ -244,6 +251,10 @@ for (f in facts) {
 # the repo rule that results/ must stay fully regenerable from committed code.
 # A warning here would be ignored, which is how the BEDs went four hours stale.
 # ---------------------------------------------------------------
+fact_srcs <- function()
+  c(unique(file.path(tables_dir,
+      Filter(Negate(is.null), lapply(facts, `[[`, "src")))), "make_report.R")
+
 message("\n== B. derived files are newer than their inputs ==")
 mt <- function(p) if (file.exists(p)) file.mtime(p) else NA
 deps <- list(
@@ -255,13 +266,10 @@ deps <- list(
        ins = file.path(rds_dir, "shared_axis_scores.rds")),
   list(out = file.path(tables_dir, "gam2b_shared_axis_summary.tsv"),
        ins = file.path(rds_dir, "gam_bins_annotated.rds")),
-  list(out = file.path(results_dir, "GAM_REPORT.html"),
-       ins = c(file.path(tables_dir, "npmi_compartment_orientation.tsv"),
-               file.path(tables_dir, "gam2b_shared_axis_summary.tsv"),
-               "make_report.R")),
-  list(out = file.path(results_dir, "GAM_REPORT_artifact.html"),
-       ins = c(file.path(tables_dir, "npmi_compartment_orientation.tsv"),
-               "make_report.R")),
+  # Derived, not hand-listed: the report must post-date every table any fact is
+  # computed from, plus its own source.
+  list(out = file.path(results_dir, "GAM_REPORT.html"),       ins = fact_srcs()),
+  list(out = file.path(results_dir, "GAM_REPORT_artifact.html"), ins = fact_srcs()),
   # NOTE the name is misleading: gam6_block_characterisation.tsv is written by
   # GAM_4_Large_Scale.R, not GAM_6, and it does NOT read the shared axis - it
   # reads gam_bins_annotated.rds and npmi_bin_features.rds. Listing the shared
