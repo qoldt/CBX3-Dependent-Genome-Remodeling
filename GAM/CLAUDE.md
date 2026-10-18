@@ -362,6 +362,45 @@ predicts - lost D 0.171 / 0.129 against null medians 0.032 / 0.031, gained 0.198
 that never touches the differential-contact calls they were built from. The
 derepressed gene families, protocadherin included, sit BELOW their own nulls.
 
+## The contact-map palettes are theirs, recovered from a screenshot
+
+`npmi_cols` and `diff_cols` in `GAM_7_Figures.R` are **not** `ltc` palettes and
+that is deliberate: these panels exist to be comparable cell-for-cell with the
+figures the collaborators circulate, so the palette is a fact about their figure
+rather than a design choice of ours. Both are 9-class ColorBrewer:
+
+| panel | palette | fit to their bar | the old hand-made ramp |
+|---|---|---|---|
+| delta-z | `rev(RdBu, 9)` | RMS 0.051 | 0.138 |
+| raw NPMI | `rev(RdYlBu, 9)` | RMS 0.044 | 0.056 |
+
+**If you ever sample a palette off a macOS screenshot, convert Display P3 to
+sRGB first.** Read uncorrected, their `#b2182b` measures as `(164,61,60)` and
+every candidate palette fits badly; after conversion it is `#AE2C36` and the
+answer falls out immediately. The first fit attempt here failed entirely for
+this reason.
+
+**The thing to understand about why ours looked wrong.** The old 5-stop ramp
+reached `#d6604d` at 75% of the way out; RdBu-9 is still at `#f4a582` there. At
+the shared +-4 limit that turns delta-z = +2 from a blush into a firm red, and
+14.1% of chr16 cells are beyond |delta-z| = 2. The numbers were never in
+question: checked against their own `deltaz` column on chr16, our independently
+computed value is identical - rho 1.000, slope 1.000 on 1.41 M called contacts.
+A palette can misstate an effect size as badly as a wrong statistic can.
+
+**The sign stays ours.** Their delta-z is WT - cKO, so their red means lost in
+the cKO; this repo is positive = more in the cKO everywhere. Our maps are
+colour-inverted relative to their slides on purpose, and every panel says
+"cKO - WT" in its subtitle.
+
+**The raw NPMI cap is fixed at 0.25, theirs - but only where that transfers.**
+Pooling both genotypes over the pairs each figure draws, chr16 full length has
+q99 = 0.421 with 5.9% of cells above 0.25; the 2.4 Mb Pcdh window has q99 =
+0.694 with 60.1% above it, because a short region draws only short separations.
+At 0.25 it is a solid red triangle. So `npmi_cap_own` names the six few-Mb
+cluster regions that keep their own q99. Named, not thresholded on width, so
+moving a region's coordinates cannot silently reclassify it.
+
 ## Region plots: three variants, and the slide one carries the Pombo strips
 
 `GAM_7_Figures.R` section A renders each region as `<name>` (full triangle) and

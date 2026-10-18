@@ -42,23 +42,69 @@ local({
   gam12_maxdist   <- NULL
   gam12_hotline   <- 5e6     # where the hotspot integration window ends
 
-  # RAW NPMI panels: blue (low) - white - yellow - orange - red (high), spanning
-  # 0 to roughly the 99th percentile. Matching the collaborators' own figures:
-  # their scale bar runs 0.0 to ~0.35 with blue at the BOTTOM, i.e. it is a
-  # sequential ramp over the positive range, NOT a diverging scale centred on
-  # zero. Centring at zero (an earlier attempt here) pushes nearly every value
-  # into the warm half and flattens the structure, because almost all NPMI in a
-  # cis matrix is positive.
-  npmi_cols <- c("#3a6daa", "#73a8cd", "#c8e0ee", "#ffffff",
-                 "#ffe9a8", "#fdc266", "#f08a3c", "#cf4b28")
-  # DIFFERENCE panel: plain two-sided blue/red on a FIXED symmetric limit.
-  diff_cols <- c("#2166ac", "#6ba3cd", "#ffffff", "#d6604d", "#b2182b")
+  # PALETTES: THE COLLABORATORS' OWN, RECOVERED FROM THEIR FIGURE.
+  #
+  # These were hand-matched by eye until 2026-10-18, when their chr16 full-length
+  # slide was sampled directly. The screenshot is a macOS capture and therefore
+  # carries a Display P3 profile, so its raw RGB has to be converted to sRGB
+  # before anything is compared - read uncorrected, every colour looks washed out
+  # and the match is meaningless. After that conversion both of their colourbars
+  # fit a 9-class ColorBrewer ramp almost exactly (RMS over the whole bar, in
+  # [0,1] RGB):
+  #
+  #   their delta-z bar   rev(RdBu, 9)     0.051     the old hand-made ramp: 0.138
+  #   their NPMI bar      rev(RdYlBu, 9)   0.044     the old hand-made ramp: 0.056
+  #
+  # Both being 9-class is the giveaway that one routine drew both.
+  #
+  # WHY THE DIFFERENCE PANEL LOOKED "STRONGER" THAN THEIRS. The old 5-stop ramp
+  # put #d6604d at 75% of the way out, where RdBu-9 is still at the pale salmon
+  # #F4A582 and does not reach #d6604d until 87.5%. On the +-4 limit both use,
+  # that is the difference between delta-z = +2 reading as a firm red and reading
+  # as a faint blush - and most of a difference map lives between -2 and +2. Same
+  # numbers, same limits, a map that looks about twice as changed.
+  #
+  # These are literal ColorBrewer hex rather than an `ltc` palette, which is the
+  # repo rule elsewhere. The rule is deliberately set aside for these two: the
+  # point of these panels is to be comparable cell-for-cell with the figures the
+  # collaborators circulate, so the palette is a fact about their figure, not a
+  # design choice of ours.
+  #
+  # NOT COPIED: the sign. Their delta-z is set1 - set2 = WT - cKO, so their red
+  # means lost in the cKO. This repo is positive = MORE in the cKO throughout and
+  # stays that way, so our maps are colour-inverted relative to theirs by design.
+  # The panel subtitle says "cKO - WT" on every figure for exactly this reason.
+  #
+  # RAW NPMI is a sequential ramp over the positive range, NOT a diverging scale
+  # centred on zero. Centring at zero (an earlier attempt here) pushes nearly
+  # every value into the warm half and flattens the structure, because almost all
+  # NPMI in a cis matrix is positive.
+  npmi_cols <- c("#4575B4", "#74ADD1", "#ABD9E9", "#E0F3F8", "#FFFFBF",
+                 "#FEE090", "#FDAE61", "#F46D43", "#D73027")   # rev(RdYlBu, 9)
+  diff_cols <- c("#2166AC", "#4393C3", "#92C5DE", "#D1E5F0", "#F7F7F7",
+                 "#FDDBC7", "#F4A582", "#D6604D", "#B2182B")   # rev(RdBu, 9)
   # Fixed delta-z limit, again matching their figures (scale bar -4 to +4). A
   # data-driven limit (we used the 99th percentile of |delta-z|) rescales every
   # panel to its own extremes, saturates the whole map and makes regions
   # incomparable; a fixed limit leaves the bulk pale so the strong contacts show.
   gam12_dz_lim    <- 4
   gam12_npmi_qcap <- 0.99
+  # RAW NPMI CAP. Their slides use a FIXED 0 to 0.25 bar on both genotype panels.
+  # Fixed beats data-driven for the same reason gam12_dz_lim is fixed: a q99 cap
+  # rescales every panel to its own extremes and makes two regions incomparable.
+  #
+  # But 0.25 is a whole-chromosome number and does not transfer down. Measured
+  # here, pooling both genotypes over the pairs each figure actually draws:
+  #
+  #   chr16, full length    q99 = 0.421     5.9% of cells above 0.25
+  #   chr18:36.3-38.7 Mb    q99 = 0.694    60.1% of cells above 0.25
+  #
+  # A few-Mb region draws only short separations, where NPMI is high, so at 0.25
+  # it renders as a solid red triangle. That is not a cosmetic complaint: the
+  # panel stops carrying information. So the cap is an ARGUMENT, defaulting to
+  # theirs so chromosome-scale figures match their slide, and NULL anywhere means
+  # "fall back to the q99 of whatever this figure draws".
+  gam12_npmi_cap <- 0.25
   # THE RIBBON CUTOFF. The collaborators' slides propose 50-75 differential
   # contacts per window and we deliberately keep the BOTTOM of that range, which
   # is a choice and not a default: >=50 calls 17,527 bins, >=60 calls 10,374 and
@@ -379,6 +425,7 @@ local({
                               smooth_map = TRUE, show_raw = TRUE,
                               fig_width = 11, side_allow = 2.6,
                               diff_mode = c("deltaz", "raw"),
+                              npmi_cap = gam12_npmi_cap,
                               # SLIDE MODE. The full figure is ~1.09:1 - essentially
                               # square - because three map rows, five mark tracks and
                               # a ten-line caption stack up to ~10.1 in at 11 in wide.
@@ -1046,7 +1093,7 @@ local({
     # One cap from the pooled values of both genotypes, so the two raw panels are
     # directly comparable and patchwork can collect their now-identical scales
     # into a single legend instead of drawing two.
-    npmi_cap <- if (!show_raw) NULL else local({
+    npmi_cap <- if (!show_raw) NULL else if (!is.null(npmi_cap)) npmi_cap else local({
       kk <- CJ(i = seq_len(nrow(W0)), j = seq_len(nrow(W0)))[j > i]
       kk <- kk[pos[j] - pos[i] <= maxdist]
       v  <- c(W0[cbind(kk$i, kk$j)], K0[cbind(kk$i, kk$j)])
@@ -1324,6 +1371,16 @@ local({
     list("chr2",  83.9e6, 91.5e6,  "chr2_Olfr")         # 224 Olfr genes, 84.91-90.48
   )
   FIGW <- 11; SIDE <- 2.6
+  # NPMI CAP PER REGION. gam12_npmi_cap (0.25) is the collaborators' own fixed
+  # bar and is right for the chromosome-scale views, which is what their slides
+  # show. On the few-Mb gene clusters it saturates - 60.1% of cells inside the
+  # Pcdh window are above 0.25 - because a short region draws only short
+  # separations, where NPMI is high. Those regions keep the q99 of what they
+  # actually draw. Named explicitly rather than derived from a width threshold:
+  # the list is six entries, and a threshold would silently reclassify a region
+  # if its coordinates moved.
+  npmi_cap_own <- c("chr18_Pcdh", "chr18_Pcdh_context", "chr13_KRABZFP",
+                    "chr17_KRABZFP", "chr7_Vmn", "chr2_Olfr")
   # Spot-render one region without re-rendering all of them:
   #   GAM7_REGIONS=chr18_Pcdh Rscript GAM_7_Figures.R
   # Each region loads NPMI matrices, so rendering the whole list to check one
@@ -1395,7 +1452,9 @@ local({
                                slide = TRUE, ismap = gam12_ismap_mode)
              else
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
-                               fig_width = FIGW, side_allow = SIDE),
+                               fig_width = FIGW, side_allow = SIDE,
+                               npmi_cap = if (r[[4]] %in% npmi_cap_own) NULL
+                                          else gam12_npmi_cap),
              error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
       if (!is.null(p)) {
         a <- attr(p, "gam_map_in")
