@@ -54,19 +54,40 @@ rd <- function(p) if (file.exists(p)) fread(p) else NULL
 # appear in prose. A fact passes when EVERY file listed contains at least one.
 # ---------------------------------------------------------------
 facts <- list()
-fact <- function(id, value, render, quoted_in, note = "") {
-  facts[[id]] <<- list(id = id, value = value, render = render,
+fact <- function(id, value, matcher, quoted_in, note = "") {
+  facts[[id]] <<- list(id = id, value = value, matcher = matcher,
                        quoted_in = quoted_in, note = note)
 }
 
-# "N of M", tolerating "N/M", an intervening markup tag or newline, and the
-# short filler words that read naturally in prose ("6 of the 10 where both
-# orient"). Kept deliberately loose: a checker that fails on phrasing rather
-# than on content gets ignored, which is worse than not having it.
-n_of_m <- function(n, m)
-  sprintf("%d\\s*(of|/|out of)\\s*(<[^>]*>|the|only|just|\\*\\*|\\s)*%d", n, m)
-# a number to 2 and 3 decimal places, e.g. 0.356 also matches "0.36"
-dp <- function(x) sprintf("(%.3f|%.2f)", x, x)
+# --- matchers: given a file's text and the current value, did it say it? ------
+#
+# Two kinds, because counts and measurements fail differently.
+
+# COUNTS are exact, and the surrounding "of M" is what makes them checkable:
+# "27" alone appears everywhere, "27 of 38" does not. Tolerates "N/M", an
+# intervening markup tag, and the filler that reads naturally in prose ("6 of
+# the 10 where both orient"). Deliberately loose about phrasing - a checker
+# that fails on wording rather than content gets ignored, which is worse than
+# not having one.
+m_n_of_m <- function(m) function(txt, v) {
+  rx <- sprintf("%d\\s*(of|/|out of)\\s*(<[^>]*>|the|only|just|\\*\\*|\\s)*%d", v, m)
+  grepl(rx, txt, perl = TRUE)
+}
+
+# MEASUREMENTS cannot be string-matched, because how a number is rendered is a
+# writing decision, not a fact. The report prints median H4K20me3 log2FC of
+# -0.4975 as "-0.497" - truncated, not rounded - so sprintf("%.3f") produces
+# "-0.498" and would fail on prose that is perfectly correct. So: pull every
+# numeric token out of the file and ask whether ANY of them is within `tol` of
+# the value. The risk is a coincidental match; the defence is that `tol` is
+# small relative to the quantity, and that the failure actually being guarded
+# against is a number wrong by a lot (38 against 27), not in its last digit.
+m_near <- function(tol) function(txt, v) {
+  nums <- suppressWarnings(as.numeric(unlist(regmatches(
+    txt, gregexpr("-?[0-9]+\\.?[0-9]*", txt)))))
+  nums <- nums[is.finite(nums)]
+  length(nums) && min(abs(nums - v)) <= tol
+}
 
 O <- rd(file.path(tables_dir, "npmi_compartment_orientation.tsv"))
 if (!is.null(O)) {
@@ -81,20 +102,20 @@ if (!is.null(O)) {
                   w <- ori[chr == c, which_pc]; length(unique(w)) == 1 }, TRUE))
   med    <- median(abs(ori$rho_orient), na.rm = TRUE)
 
-  fact("compartment.oriented", n_ori, function(v) n_of_m(v, n_all),
+  fact("compartment.oriented", n_ori, m_n_of_m(n_all),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
        "oriented chromosome x genotype combinations")
-  fact("compartment.pc1", n_pc1, function(v) n_of_m(v, n_ori),
+  fact("compartment.pc1", n_pc1, m_n_of_m(n_ori),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md",
          "results/BIN_BALANCING.md"),
        "combinations whose compartment is on PC1")
-  fact("compartment.both_genotypes", length(both), function(v) n_of_m(v, length(gam_autosomes)),
+  fact("compartment.both_genotypes", length(both), m_n_of_m(length(gam_autosomes)),
        c("CLAUDE.md", "make_report.R", "export_compartment_beds.R"),
        "autosomes where BOTH genotypes orient")
-  fact("compartment.same_pc", same, function(v) n_of_m(v, length(both)),
+  fact("compartment.same_pc", same, m_n_of_m(length(both)),
        c("CLAUDE.md", "make_report.R", "export_compartment_beds.R"),
        "of those, where both pick the same eigenvector")
-  fact("compartment.median_rho", med, dp,
+  fact("compartment.median_rho", med, m_near(0.002),
        c("CLAUDE.md", "make_report.R"),
        "median |rho| of the per-genotype axes vs active chromatin")
 }
@@ -102,28 +123,100 @@ if (!is.null(O)) {
 S <- rd(file.path(tables_dir, "gam2b_shared_axis_summary.tsv"))
 if (!is.null(S)) {
   det <- S[determined == TRUE]
-  fact("shared.determined", nrow(det), function(v) n_of_m(v, nrow(S)),
+  fact("shared.determined", nrow(det), m_n_of_m(nrow(S)),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
        "autosomes with a shared axis")
-  fact("shared.pc1", sum(det$which_pc == 1, na.rm = TRUE), function(v) n_of_m(v, nrow(det)),
+  fact("shared.pc1", sum(det$which_pc == 1, na.rm = TRUE), m_n_of_m(nrow(det)),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md",
          "results/BIN_BALANCING.md"),
        "shared axes carried by PC1")
-  fact("shared.median_rho", median(abs(det$rho_ref), na.rm = TRUE), dp,
+  fact("shared.median_rho", median(abs(det$rho_ref), na.rm = TRUE), m_near(0.002),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
        "median |rho| of the shared axis vs active chromatin")
+}
+
+# --- the ChIP effect sizes the whole study is conditioned on ------------------
+L <- rd(file.path(tables_dir, "gam_bins_l2fc_summary.tsv"))
+if (!is.null(L)) {
+  fact("grid.n_bins", L$n_bins[1], function(txt, v)
+         grepl(format(v, big.mark = ","), txt, fixed = TRUE) ||
+         grepl(format(v), txt, fixed = TRUE),
+       c("make_report.R"), "20 kb autosomal bins")
+  for (mk in L$mark) {
+    v <- L[mark == mk, median_log2FC]
+    fact(sprintf("chip.median_l2fc.%s", mk), v, m_near(0.0015),
+         c("make_report.R"),
+         sprintf("%s median log2FC on the GAM 20 kb grid", mk))
+  }
+}
+
+# --- the central contact result ----------------------------------------------
+CC <- rd(file.path(tables_dir, "gam10_class_change.tsv"))
+if (!is.null(CC) && all(c("cls", "band", "pct") %in% names(CC))) {
+  v <- CC[cls == "inter_het" & band == "<0.2Mb", pct]
+  if (length(v) == 1)
+    fact("contacts.het_het_short", v, m_near(0.06),
+         c("make_report.R", "CLAUDE.md"),
+         "het-het (different domains) below 0.2 Mb, % change in mean NPMI")
+  v2 <- CC[cls == "eu_eu" & band == ">10Mb", pct]
+  if (length(v2) == 1)
+    fact("contacts.eu_eu_long", v2, m_near(0.06),
+         c("make_report.R"),
+         "eu-eu beyond 10 Mb, % change in mean NPMI")
+}
+
+# --- hotspot domains ----------------------------------------------------------
+for (d in list(list(f = "hotspot_domains_lost_adj.tsv",   id = "hotspot.n_lost",
+                    nm = "merged hotspot domains that LOSE contacts"),
+               list(f = "hotspot_domains_gained_adj.tsv", id = "hotspot.n_gained",
+                    nm = "merged hotspot domains that GAIN contacts"))) {
+  H <- rd(file.path(tables_dir, d$f))
+  if (!is.null(H))
+    fact(d$id, nrow(H), function(txt, v)
+           grepl(sprintf("\\b%d\\b", v), txt, perl = TRUE),
+         c("make_report.R"), d$nm)
+}
+
+E <- rd(file.path(tables_dir, "gam4_hotspot_annotation_enrichment.tsv"))
+if (!is.null(E) && "fold_rotated" %in% names(E)) {
+  for (a in list(list(key = "constitutive LAD",                  id = "hotspot.fold_lad"),
+                 list(key = "repeat: LINE-high (top quartile)",  id = "hotspot.fold_line"))) {
+    v <- E[domain_set == "lost_adj" & annotation == a$key, fold_rotated]
+    if (length(v) == 1)
+      fact(a$id, v, m_near(0.006), c("make_report.R"),
+           sprintf("lost domains vs rotation null: %s", a$key))
+  }
+}
+
+# --- coupling -----------------------------------------------------------------
+CS <- rd(file.path(tables_dir, "coupling_spearman.tsv"))
+if (!is.null(CS)) {
+  v <- CS[mark == "H4K20me3" & variant == "raw" & direction == "lost", rho]
+  if (length(v) == 1)
+    fact("coupling.h4k20me3_raw_lost", v, m_near(0.0006),
+         c("make_report.R"), "the headline coupling rho")
+  n <- CS[mark == "H4K20me3" & variant == "raw" & direction == "lost", n]
+  if (length(n) == 1)
+    fact("coupling.n", n, function(txt, v)
+           grepl(format(v, big.mark = ","), txt, fixed = TRUE),
+         c("make_report.R"), "bins behind the coupling rho")
 }
 
 message("\n== A. quoted statistics match the tables they cite ==")
 if (!length(facts)) skip("all fact checks", "no compartment tables on disk")
 for (f in facts) {
-  rx <- f$render(f$value)
   miss <- character()
   for (fp in f$quoted_in) {
     if (!file.exists(fp)) { miss <- c(miss, sprintf("%s (absent)", fp)); next }
     txt <- paste(readLines(fp, warn = FALSE), collapse = "\n")
-    if (!any(vapply(rx, function(r) grepl(r, txt, perl = TRUE), TRUE)))
-      miss <- c(miss, fp)
+    # make_report.R writes minus signs as the HTML entity, so a raw read sees
+    # "&minus;0.497" and a numeric scan pulls out +0.497 - the right magnitude
+    # with the wrong sign, which is exactly the kind of near-miss that looks
+    # like a finding. Normalise the MINUS entity and U+2212 only. Deliberately
+    # NOT &ndash;, which is a range dash: turning "0.2&ndash;1 Mb" into
+    # "0.2-1 Mb" would manufacture a -1 that was never written.
+    txt <- gsub("&minus;|\u2212", "-", txt)
+    if (!isTRUE(f$matcher(txt, f$value))) miss <- c(miss, fp)
   }
   lab <- sprintf("%s = %s", f$id,
                  if (f$value %% 1 == 0) format(f$value) else sprintf("%.3f", f$value))
@@ -138,6 +231,18 @@ for (f in facts) {
 # B. FRESHNESS: a derived file must be newer than everything it is built from.
 # This is what made the BEDs wrong - they were correct for an input that had
 # since been replaced, so nothing in them was detectably false on its own.
+#
+# KNOWN FALSE POSITIVE, and why it is left in. This compares mtimes, so a stage
+# re-run that produces IDENTICAL content still marks every consumer stale -
+# GAM_2 re-run from cache to record its method version rewrote
+# npmi_bin_features.rds with the same features, and that alone flagged GAM_3,
+# GAM_4 and the report. Content hashing would avoid it, but it would need a
+# record of what each output was built FROM, which nothing currently stores.
+#
+# Left as a FAIL rather than a warning because the resolution - re-run the
+# consumer - is cheap, is the honest way to make the claim true, and exercises
+# the repo rule that results/ must stay fully regenerable from committed code.
+# A warning here would be ignored, which is how the BEDs went four hours stale.
 # ---------------------------------------------------------------
 message("\n== B. derived files are newer than their inputs ==")
 mt <- function(p) if (file.exists(p)) file.mtime(p) else NA
@@ -153,7 +258,24 @@ deps <- list(
   list(out = file.path(results_dir, "GAM_REPORT.html"),
        ins = c(file.path(tables_dir, "npmi_compartment_orientation.tsv"),
                file.path(tables_dir, "gam2b_shared_axis_summary.tsv"),
-               "make_report.R")))
+               "make_report.R")),
+  list(out = file.path(results_dir, "GAM_REPORT_artifact.html"),
+       ins = c(file.path(tables_dir, "npmi_compartment_orientation.tsv"),
+               "make_report.R")),
+  # NOTE the name is misleading: gam6_block_characterisation.tsv is written by
+  # GAM_4_Large_Scale.R, not GAM_6, and it does NOT read the shared axis - it
+  # reads gam_bins_annotated.rds and npmi_bin_features.rds. Listing the shared
+  # axis here produced a false alarm on the first run of this check.
+  list(out = file.path(tables_dir, "gam6_block_characterisation.tsv"),
+       ins = c(file.path(rds_dir, "gam_bins_annotated.rds"),
+               file.path(rds_dir, "npmi_bin_features.rds"))),
+  # GAM_6 is the stage that joins the shared axis's score_delta.
+  list(out = file.path(tables_dir, "gam5_decompaction_verdict.tsv"),
+       ins = file.path(rds_dir, "shared_axis_scores.rds")),
+  list(out = file.path(tables_dir, "coupling_spearman.tsv"),
+       ins = file.path(rds_dir, "npmi_bin_features.rds")),
+  list(out = file.path(tables_dir, "gam4_compartment_switch.tsv"),
+       ins = file.path(rds_dir, "npmi_bin_features.rds")))
 for (d in deps) {
   to <- mt(d$out)
   if (is.na(to)) { skip(basename(d$out), "not built"); next }
@@ -242,6 +364,67 @@ if (length(wrong)) {
       paste("inverted in:", paste(wrong, collapse = ", ")))
 } else {
   ok("gained=red / lost=blue in fill scales", paste(length(sign_files), "files"))
+}
+
+# C3b. The quantity, not just the palette. The sign bug that actually occurred
+# was `net` computed WT-oriented while the legend said cKO - the colours were
+# right and the number was backwards, which no palette check can see. Every
+# definition of `net` must put GAINED in the numerator, so positive = gained =
+# more in the cKO = red, consistently with everything else.
+net_files <- c("GAM_3_Coupling.R", "GAM_4_Large_Scale.R")
+netbad <- character()
+for (fp in net_files) {
+  if (!file.exists(fp)) next
+  ln <- grep("net\\s*:=", readLines(fp, warn = FALSE), value = TRUE)
+  ln <- grep("log2", ln, value = TRUE)
+  if (!length(ln)) { netbad <- c(netbad, sprintf("%s (no net definition found)", fp)); next }
+  # gained must appear before lost inside the ratio
+  okf <- vapply(ln, function(l) {
+    g <- regexpr("gained", l, fixed = TRUE); o <- regexpr("lost", l, fixed = TRUE)
+    g > 0 && o > 0 && g < o }, TRUE)
+  if (!all(okf)) netbad <- c(netbad, fp)
+}
+if (length(netbad)) {
+  bad("net = log2((gained+1)/(lost+1)), i.e. positive = gained = cKO",
+      paste("wrong or missing in:", paste(netbad, collapse = ", ")))
+} else {
+  ok("net = log2((gained+1)/(lost+1)), i.e. positive = gained = cKO",
+     paste(length(net_files), "files"))
+}
+
+# C3c. Table prefix -> the stage that actually writes it.
+#
+# The gamN_ prefix on a table is a LEGACY SECTION number from a pre-consolidation
+# numbering, not the current stage: GAM_4 writes gam4_* AND gam6_*, GAM_5 writes
+# gam10_/gam11_/gam13_*, GAM_6 writes gam9_/gam14_*, GAM_7 writes gam12_/gam15_*.
+# The stage files still carry the old labels in their completion messages for
+# the same reason. This is a live trap - it made the first version of the
+# freshness check above list gam6_block_characterisation.tsv as a GAM_6 output
+# depending on the shared axis, which GAM_4 never reads, and that produced a
+# false alarm. Pinning the mapping here means the next person gets a failure
+# instead of a wrong assumption.
+writer_map <- list(
+  "gam6_block_characterisation.tsv" = "GAM_4_Large_Scale.R",
+  "gam4_hotspot_annotation_enrichment.tsv" = "GAM_4_Large_Scale.R",
+  "gam10_class_change.tsv"          = "GAM_5_Heterochromatin.R",
+  "gam12_block_ranking.tsv"         = "GAM_7_Figures.R",
+  "gam14_pcdh_tad_summary.tsv"      = "GAM_6_Targets.R",
+  "coupling_spearman.tsv"           = "GAM_3_Coupling.R",
+  "gam2b_shared_axis_summary.tsv"   = "GAM_2b_Shared_Axis.R")
+wrong_writer <- character()
+for (tb in names(writer_map)) {
+  src <- writer_map[[tb]]
+  if (!file.exists(src)) next
+  if (!any(grepl(tb, readLines(src, warn = FALSE), fixed = TRUE)))
+    wrong_writer <- c(wrong_writer, sprintf("%s not written by %s", tb, src))
+}
+if (length(wrong_writer)) {
+  bad("table prefixes map to the stage that writes them",
+      paste(wrong_writer, collapse = "; "))
+} else {
+  ok("table prefixes map to the stage that writes them",
+     sprintf("%d tables (prefix is a LEGACY section number, not the stage)",
+             length(writer_map)))
 }
 
 # C4. The BED tracks must not silently cover fewer chromosomes than they claim.

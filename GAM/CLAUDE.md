@@ -144,6 +144,30 @@ visibly fade. Also note the track FILL diverges from each mark's **genome
 median**, not from zero - blue means "above that median", which for a negative
 median is still a loss.
 
+## The gamN_ prefix on a table is NOT the stage that writes it
+
+A pre-consolidation numbering survives in the table filenames and in the stage
+files' own completion messages. The current mapping:
+
+| writes | tables |
+|---|---|
+| `GAM_3_Coupling.R` | `coupling_*` |
+| `GAM_4_Large_Scale.R` | `gam4_*` **and `gam6_*`** |
+| `GAM_5_Heterochromatin.R` | `gam10_*`, `gam11_*`, `gam13_*` |
+| `GAM_6_Targets.R` | `gam9_*`, `gam14_*` |
+| `GAM_7_Figures.R` | `gam12_*`, `gam15_*` |
+
+So `gam6_block_characterisation.tsv` is a **GAM_4** output and does not read the
+shared axis; `gam10_class_change.tsv` is **GAM_5**. The files print the old
+section number on completion for the same reason ("GAM_10 complete" inside
+`GAM_5_Heterochromatin.R`).
+
+**This is a live trap, not trivia.** It caused a wrong dependency in the first
+version of `verify_GAM.R`, which then reported a false alarm. The mapping is now
+pinned as a check (C3c) so a rename produces a failure rather than a silent
+wrong assumption. Do not renumber the tables to fix it - the prefixes are load
+bearing across the report, the figures and the skills.
+
 ## Before trusting any number here, run the consistency check
 
 ```sh
@@ -174,11 +198,38 @@ being necessary. A fact passes by CONTAINING the current value, not by lacking
 old ones, so a change-note that says "previously 38 of 38, now 27 of 38" passes
 - that is good documentation, not staleness.
 
-It also checks that derived files are newer than their inputs, that every
-oriented axis agrees with its orientation check, that a stored method version
-matches the script that would write it, that gained=red/lost=blue is not
-inverted in a fill scale, and that the compartment BEDs cover every chromosome
-with a shared axis.
+**What it covers.** Three families:
+
+- **A. Quoted statistics** - the compartment quality numbers, the five ChIP
+  median log2FCs on the GAM grid, the 20 kb grid size, both hotspot domain
+  counts, the LAD and LINE enrichment folds, the central het-het and eu-eu
+  contact changes, and the headline coupling rho with its n. Checked across
+  `CLAUDE.md`, `make_report.R`, `results/COMPARTMENTS.md`,
+  `results/BIN_BALANCING.md` and `export_compartment_beds.R`.
+- **B. Freshness** - every derived file newer than what it is built from.
+- **C. Invariants** - every oriented axis agrees with its orientation check; a
+  stored method version matches the script that would write it;
+  `net = log2((gained+1)/(lost+1))` so positive = gained = cKO = red; no fill
+  scale inverts gained/lost; the compartment BEDs cover every chromosome that
+  has a shared axis.
+
+**Two things worth knowing before you trust a failure.**
+
+*Counts are matched exactly, measurements by tolerance.* How a number is
+rendered is a writing decision, not a fact - the report prints a median of
+-0.4975 as "-0.497", truncated rather than rounded, so string-matching
+`sprintf("%.3f")` would fail on correct prose. Numeric facts therefore scan the
+file for any number within a tolerance. Counts keep exact matching, because the
+surrounding "of M" is what makes them checkable: "27" appears everywhere,
+"27 of 38" does not.
+
+*Family B compares mtimes, so it fires on a re-run that changed nothing.*
+Re-running GAM_2 from cache to record its method version rewrote
+`npmi_bin_features.rds` with identical features, and that alone flagged GAM_3,
+GAM_4 and the report. It is kept as a FAIL rather than a warning because the
+resolution - re-run the consumer - is cheap and exercises the repo rule that
+`results/` stays fully regenerable. A warning would be ignored, which is how
+the BEDs went four hours stale in the first place.
 
 ## A/B compartments: axis weakly determined; NO strength change (2026-10-17)
 

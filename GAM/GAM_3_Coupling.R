@@ -898,7 +898,7 @@ local({
   fwrite(a[, c("bin_id","chr","start","end","local_lost","local_gained",
                grep("^(lost|gained)_", names(a), value = TRUE)), with = FALSE],
          file.path(tables_dir, "gam7_local_contact_counts.tsv.gz"), sep = "\t")
-  cat("\nGAM_7 complete.\n")
+  cat("\nGAM_3 complete.\n")
 })
 
 
