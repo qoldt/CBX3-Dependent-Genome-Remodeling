@@ -690,6 +690,12 @@ active_chromatin_ref <- function(gam1 = NULL) {
 #
 # Returns the selected vector already sign-oriented so positive = A = active-high,
 # plus the diagnostics needed to judge the call per chromosome.
+# How much better than the runner-up the selected eigenvector must correlate
+# with the active-chromatin reference. 0.10 marks chr19 and chr3 undetermined
+# and keeps chr11, chr16 and chr7; below it the two halves of a chromosome do
+# not agree on which vector is the compartment, so there is nothing to call.
+gam_compartment_pc_margin <- 0.10
+
 select_compartment_pc <- function(pc, ids, ref, balance = c(0.2, 0.8)) {
   V <- pc$vecs
   rhos <- apply(V, 2, function(v) {
@@ -721,10 +727,30 @@ select_compartment_pc <- function(pc, ids, ref, balance = c(0.2, 0.8)) {
                 rho = NA_real_, rho_all = rhos, frac_all = fracs, sign = NA_real_,
                 frac_A = NA_real_, determined = FALSE))
   }
-  k <- cand[which.max(abs(rhos[cand]))]
+  # A MARGIN, NOT JUST AN ARGMAX. Taking the best |rho| among the balanced
+  # candidates with no margin requirement makes the answer depend on how many
+  # eigenvectors were offered: on chr19, widening the search from 4 to 6 changes
+  # the selection from PC3 to PC5, while chr11/chr16/chr7/chr3 are unchanged -
+  # i.e. it is unstable exactly where the margin is thin. A split-half test
+  # (derive the axis on a random half of the bins, again on the other half,
+  # correlate) gives rho 0.987 on chr11 and 0.975 on chr16, where the margin is
+  # 0.399 and 0.220 - and -0.039 on chr19, where it is 0.042. A thin margin does
+  # not mean "we picked the wrong one", it means THERE IS NO AXIS to pick.
+  #
+  # So require the winner to beat the runner-up by gam_compartment_pc_margin.
+  # Below that the chromosome is undetermined, which is the same outcome this
+  # function already returns when no candidate is balanced.
+  ord <- cand[order(abs(rhos[cand]), decreasing = TRUE)]
+  k <- ord[1]
+  margin <- if (length(ord) > 1) abs(rhos[ord[1]]) - abs(rhos[ord[2]]) else Inf
+  if (is.finite(margin) && margin < gam_compartment_pc_margin) {
+    return(list(vec = setNames(rep(NA_real_, length(ids)), ids), which_pc = NA_integer_,
+                rho = NA_real_, rho_all = rhos, frac_all = fracs, sign = NA_real_,
+                frac_A = NA_real_, determined = FALSE, margin = margin))
+  }
   v <- V[, k]; names(v) <- ids
   sgn <- if (is.finite(rhos[k]) && rhos[k] < 0) -1 else 1
-  list(vec = v * sgn, which_pc = k, rho = abs(rhos[k]),
+  list(vec = v * sgn, which_pc = k, rho = abs(rhos[k]), margin = margin,
        rho_all = rhos, frac_all = fracs, sign = sgn, determined = TRUE,
        # A/B from the SIGN of the selected eigenvector, with no median-centring.
        # Centring was previously needed only because the wrong (all-positive)

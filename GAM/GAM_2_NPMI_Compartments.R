@@ -59,12 +59,28 @@ stopifnot(all(gam2_chroms %in% gam_npmi_chroms))
 # change to eigenvector selection must invalidate it too. v2: compartments
 # called at gam_compartment_binsize with balance-first selection over 4
 # eigenvectors (see select_compartment_pc).
-gam2_params <- list(version = 2L, binsize = gam_binsize, sigma = gam_sigma,
+#
+# v3 (2026-10-18): TWO changes to the method, either of which alone would
+# require the bump.
+#   - select_compartment_pc() now requires the winner to beat the runner-up by
+#     gam_compartment_pc_margin; below that the chromosome is undetermined.
+#   - an axis that ANTI-correlates with the independent WT H3K4me3 check is no
+#     longer merely warned about, it is marked undetermined. chr15 and chr19
+#     shipped with the cKO's A and B swapped under v2.
+# v4: records pc_margin in the summary so the threshold can be chosen from the
+# observed distribution instead of guessed. No change to the maths.
+# comp_select below is part of the key, so it carries the margin too - but the
+# version bump is what makes the invalidation obvious to a reader, and a run
+# that silently reuses v2 reductions would never execute either change. That
+# happened once on the first attempt at this patch.
+gam2_params <- list(version = 4L, binsize = gam_binsize, sigma = gam_sigma,
                     ins_kb = gam2_ins_kb, short_max = gam2_short_max_bins,
                     long_min = gam2_long_min_bins, shells = gam2_shell_edges,
                     K = gam2_K, min_frac = gam2_min_frac, oe = "subtract",
                     comp_binsize = gam_compartment_binsize,
-                    comp_select = "balance-first, k=4, frac_A in [0.2,0.8]")
+                    comp_select = sprintf(
+                      "balance-first, k=4, frac_A in [0.2,0.8], margin>=%.2f, anti-corr=undetermined",
+                      gam_compartment_pc_margin))
 
 # ---------------------------------------------------------------
 # GAM_1 handoff: WT H3K4me3 per-bin signal, the orientation reference.
@@ -260,7 +276,7 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
   summ <- data.table(chr = chr, genotype = genotype, n_bins = n, n_mappable = sum(V),
                      oriented = FALSE, flip = NA, rho_orient = NA_real_,
                      rho_h3k4me3 = NA_real_, eig1 = NA_real_, eig_gap = NA_real_,
-                     frac_A = NA_real_, which_pc = NA_integer_,
+                     frac_A = NA_real_, which_pc = NA_integer_, pc_margin = NA_real_,
                      rho_pc1 = NA_real_, rho_pc2 = NA_real_)
   if (can_orient && sum(V) > 2 * gam2_K) {
     # --- aggregate to the compartment resolution (see gam_compartment_binsize) --
@@ -309,7 +325,7 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
       warning(chr, " ", genotype, ": no balanced compartment eigenvector among the",
               " top 4 (frac_A ", paste(sprintf("%.2f", sel$frac_all), collapse = "/"),
               ") - pc1/compartment left NA", call. = FALSE)
-      summ[, `:=`(which_pc = NA_integer_, rho_pc1 = sel$rho_all[1],
+      summ[, `:=`(which_pc = NA_integer_, pc_margin = sel$margin %||% NA_real_, rho_pc1 = sel$rho_all[1],
                   rho_pc2 = if (length(sel$rho_all) > 1) sel$rho_all[2] else NA_real_)]
     } else {
       p <- sel$vec[agg_of_bin]
@@ -333,9 +349,20 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
         warning(chr, " ", genotype, ": |rho| with the orientation reference is only ",
                 round(o$rho, 3), " - sign is weakly determined", call. = FALSE)
       ck <- orient_sign(p, check_ref)
-      if (!is.na(ck$rho) && ck$rho < 0)
-        warning(chr, " ", genotype, ": oriented PC1 anti-correlates with WT H3K4me3 (rho=",
-                round(ck$rho, 3), ")", call. = FALSE)
+      # AN ANTI-CORRELATED AXIS IS INVERTED, NOT MERELY SUSPICIOUS. This was a
+      # warning, and warnings do not stop a table being written: chr15 and chr19
+      # shipped with the cKO's A and B swapped (rho -0.061 and -0.134 against WT
+      # H3K4me3). Anything reading those rows as compartment calls was reading
+      # them backwards. We do NOT silently flip the sign - the axis disagreeing
+      # with an independent ruler is evidence the axis is wrong, not evidence of
+      # its direction - so the honest outcome is to mark it undetermined and let
+      # downstream code skip it, the same as a chromosome with no balanced
+      # candidate.
+      if (!is.na(ck$rho) && ck$rho < 0) {
+        warning(chr, " ", genotype, ": oriented PC1 ANTI-correlates with WT H3K4me3 (rho=",
+                round(ck$rho, 3), ") - marking the axis undetermined", call. = FALSE)
+        p[] <- NA_real_
+      }
       feat[match(names(p), bin_id), pc1 := p]
       summ[, `:=`(oriented = TRUE, flip = o$sign < 0, rho_orient = o$rho,
                   rho_h3k4me3 = ck$rho, eig1 = pc$val, eig_gap = pc$gap,
@@ -344,7 +371,7 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
                   # clearly - if which_pc is often 2, the leading eigenvector is
                   # structure rather than compartments and that belongs in the
                   # methods, not buried.
-                  which_pc = sel$which_pc, rho_pc1 = sel$rho_all[1],
+                  which_pc = sel$which_pc, pc_margin = sel$margin %||% NA_real_, rho_pc1 = sel$rho_all[1],
                   rho_pc2 = if (length(sel$rho_all) > 1) sel$rho_all[2] else NA_real_)]
 
       # Saddle: equal-count PC1 strata WITHIN the chromosome (rank-based) so it is a

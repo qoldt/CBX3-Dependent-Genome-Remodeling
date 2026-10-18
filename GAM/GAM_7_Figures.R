@@ -106,6 +106,9 @@ local({
   gam12_npmi_qcap <- 0.97
   gam12_dpi          <- 300    # must match save_fig()'s dpi in shared/common.R
   gam12_map_cols_max <- 1600L  # tile budget: ~1.3 M rects in the full triangle
+  # How many blocks from each end of gam12_block_ranking.tsv to render as region
+  # figures. 0 disables. They get band_sigonly only - see the region list.
+  gam12_block_regions_n <- 20L
   # RAW NPMI CAP: DATA-DRIVEN. Forcing theirs was tried and reverted.
   #
   # Their slides use a fixed 0 to 0.25 bar, and a fixed limit is normally the
@@ -1656,6 +1659,27 @@ local({
   # Exported BEFORE the GAM7_REGIONS filter: section A2 ranks the whole region
   # set against the genome, and a spot-render of one region must not silently
   # redraw that figure with one bar in it.
+  # TOP/BOTTOM N BLOCKS BY MAGNITUDE, generated from gam12_block_ranking.tsv
+  # rather than hardcoded, so the list tracks the data instead of a snapshot of
+  # it. These are exploratory, so they carry their own short variant list: at
+  # 4-26 Mb the full triangle is a sliver, and the masked band is the only
+  # render worth 40 figures. Add _slide for any that repay a closer look.
+  bank <- file.path(tables_dir, "gam12_block_ranking.tsv")
+  if (gam12_block_regions_n > 0 && file.exists(bank)) {
+    BK <- fread(bank)
+    BK[, mag := abs(net_per_bin)]
+    setorder(BK, -mag)
+    top <- rbind(head(BK[net_per_bin > 0], gam12_block_regions_n),
+                 head(BK[net_per_bin < 0], gam12_block_regions_n))
+    blockregs <- lapply(seq_len(nrow(top)), function(i) {
+      r <- top[i]
+      list(r$chr, r$start, r$end,
+           sprintf("blk_%s_%.0f-%.0fMb_%s", r$chr, r$start / 1e6, r$end / 1e6, r$dirn),
+           "band_sigonly")
+    })
+    regions <- c(regions, blockregs)
+    message("block regions: added ", length(blockregs), " from ", basename(bank))
+  }
   gam12_region_list <<- regions
   only <- Sys.getenv("GAM7_REGIONS", "")
   if (nzchar(only)) {
@@ -1674,7 +1698,10 @@ local({
   message("Rendering ", length(regions), " region(s) x ", length(variants),
           " variant(s): ", paste(vapply(variants, `[[`, "", "id"), collapse = ", "))
   for (r in regions) {
+    # A region may name its own variant subset as a 5th element.
+    rv <- if (length(r) >= 5 && nzchar(r[[5]])) trimws(strsplit(r[[5]], ",")[[1]]) else NULL
     for (v in variants) {
+      if (!is.null(rv) && !(v$id %in% rv)) next
       if (v$slide && !nzchar(only) && !(r[[4]] %in% slide_regions)) next
       nm <- paste0(r[[4]], "_", v$id)
       md <- NULL
@@ -1725,7 +1752,13 @@ local({
       if (!is.null(p)) {
         a <- attr(p, "gam_map_in")
         h <- if (is.null(a)) 14 else a$total
-        save_fig(p, nm, subdir = "regions",
+        # GROUPED BY CHROMOSOME. 16 hand-picked regions x 6 variants plus 40
+        # block regions is ~130 files, which is unreadable as one flat listing.
+        # One directory per chromosome puts a region next to its neighbours,
+        # which is also how you want to browse them. The published artifact
+        # flattens the path anyway (regions/chr18/x.png -> regions_chr18_x.png),
+        # so this costs nothing downstream.
+        save_fig(p, nm, subdir = file.path("regions", r[[1]]),
                  width = if (v$slide) 13.33 else FIGW, height = h)
       }
     }
@@ -1789,51 +1822,50 @@ local({
     B[chr == plotted$chr[k] & start < plotted$to[k] & end > plotted$from[k],
       drawn := TRUE]
 
-  setorder(B, net_per_bin)
-  B[, rank := .I]
-  B[, lab := sprintf("%s:%.0f-%.0f", chr, start / 1e6, end / 1e6)]
+  # ONE LABELLED BAR PER BLOCK, split by direction. The first version of this
+  # was a waterfall with rank on the x axis and labels only on the extremes -
+  # compact, and unreadable: you could not tell which block any bar was. A
+  # ranking you cannot read off is not a ranking. 63 lost and 60 gained fit in
+  # two columns at ~0.165 in per row.
+  B[, lab := sprintf("%s:%.0f-%.0f  (%.0f Mb)%s", chr, start / 1e6, end / 1e6,
+                     width_Mb, fifelse(drawn, "  *", ""))]
   fwrite(B[order(-abs(net_per_bin)),
            .(chr, start, end, width_Mb, dirn, n_bins, net_per_bin,
              lost_per_bin, gained_per_bin, mean_net, drawn)],
          file.path(tables_dir, "gam12_block_ranking.tsv"), sep = "\t")
-
-  ends <- rbind(head(B, 6), tail(B, 6))
-  pal  <- c(gained = "#B2182B", lost = "#2166AC")
-  p1 <- ggplot(B, aes(rank, net_per_bin, fill = dirn)) +
-    geom_col(width = 1) +
-    geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
-    geom_point(data = B[drawn == TRUE], aes(y = net_per_bin), shape = 21,
-               fill = "white", colour = "grey20", size = 1.5, stroke = 0.4) +
-    ggrepel::geom_text_repel(data = ends, aes(label = lab), size = 2.4,
-                             colour = "grey20", max.overlaps = 40,
-                             segment.size = 0.2, min.segment.length = 0) +
-    scale_fill_manual(values = pal, name = NULL) +
-    labs(x = sprintf("block, ranked (%d called genome-wide)", nrow(B)),
-         y = "net differential contacts\nper 20 kb bin (gained - lost)",
-         subtitle = "Every called block, ranked. White dots are blocks we have a region figure for.") +
-    theme_m + theme(legend.position = "top", panel.grid.major.x = element_blank())
-  p2 <- ggplot(B, aes(rank, width_Mb, colour = dirn)) +
-    geom_segment(aes(xend = rank, yend = 0), linewidth = 0.35) +
-    scale_colour_manual(values = pal, guide = "none") +
-    labs(x = NULL, y = "block width (Mb)",
-         subtitle = "Width, same order - so a big bar on a thin block is visible as such") +
-    theme_m + theme(axis.text.x = element_blank(),
-                    panel.grid.major.x = element_blank())
-  pp <- (p1 / p2) + plot_layout(heights = c(2.3, 1)) +
+  pal <- c(gained = "#B2182B", lost = "#2166AC")
+  mk <- function(d, ttl) {
+    d <- copy(d); setorder(d, net_per_bin); d[, lab := factor(lab, levels = lab)]
+    ggplot(d, aes(net_per_bin, lab, fill = dirn)) +
+      geom_col(width = 0.72) +
+      geom_text(aes(label = sprintf("%+.0f", net_per_bin),
+                    hjust = ifelse(net_per_bin > 0, -0.25, 1.25)), size = 2.5) +
+      geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey40") +
+      scale_fill_manual(values = pal, guide = "none") +
+      scale_x_continuous(expand = expansion(mult = 0.14)) +
+      labs(x = "net differential contacts per 20 kb bin (gained - lost)", y = NULL,
+           subtitle = ttl) +
+      theme_minimal(base_size = 8) +
+      theme(panel.grid.major.y = element_blank(),
+            axis.text.y = element_text(size = 6.4, family = "mono"))
+  }
+  L <- B[dirn == "lost"]; G <- B[dirn == "gained"]
+  pp <- (mk(L, sprintf("LOST in the cKO  (%d blocks)", nrow(L))) |
+         mk(G, sprintf("GAINED in the cKO  (%d blocks)", nrow(G)))) +
     plot_annotation(
-      title = "Large one-directional blocks, ranked by magnitude of contact change",
-      subtitle = paste("The companion to the genome-wide block figure: that one shows WHERE they are,",
-                       "this one shows WHICH ONES ARE BIG."),
-      caption = paste0("Blocks are called from the data (|net| > ", gam_block_net_cut,
-                       " sustained over >= ", gam_block_min_mb,
-                       " Mb), not chosen, so this is a genome-wide ranking rather than a restatement of which regions we picked",
-                       " to draw. Bars are the mean per-bin count of significant differential contacts, gained minus lost.",
-                       "\nThat count integrates out to 5 Mb, so it is still slightly generous to the narrowest blocks;",
-                       " every block here is at least ", gam_block_min_mb, " Mb. Table: gam12_block_ranking.tsv"),
-      theme = theme(plot.title = element_text(face = "bold", size = 12),
-                    plot.subtitle = element_text(size = 8.5),
+      title = "The large one-directional blocks, ranked",
+      subtitle = paste0("Every shaded block in large_blocks_genome_wide.png, ordered by magnitude. ",
+                        nrow(B), " blocks called genome-wide.  * = we have a region figure for it."),
+      caption = paste0("Bars are the mean per-bin count of significant differential contacts (gained - lost) inside the block. ",
+                       "Blocks are called from the data (|net| > ", gam_block_net_cut,
+                       " sustained over >= ", gam_block_min_mb, " Mb), not chosen.",
+                       "\nThat count integrates out to 5 Mb, so it is slightly generous to the narrowest blocks; every block here is at least ",
+                       gam_block_min_mb, " Mb. Table: gam12_block_ranking.tsv"),
+      theme = theme(plot.title = element_text(face = "bold", size = 13),
+                    plot.subtitle = element_text(size = 9),
                     plot.caption = element_text(hjust = 0, size = 7, colour = "grey35")))
-  save_fig(pp, "block_ranking", subdir = fig_sub, width = 11, height = 7.6)
+  save_fig(pp, "block_ranking", subdir = fig_sub, width = 13,
+           height = max(6, 0.165 * max(nrow(L), nrow(G)) + 1.9))
   msg("  block_ranking: %d blocks, %d of them drawn as region figures",
       nrow(B), sum(B$drawn))
 })

@@ -657,8 +657,10 @@ parts$regions <- sec("Region plots",
      "cannot remove it &mdash; that handles a per-<em>distance</em> offset, which is orthogonal &mdash; so it survives",
      "as the criss-cross plaid lattice visible once every cell is drawn. The significance mask hides it by dropping",
      "low-coverage cells."),
+  # Figures are grouped by chromosome on disk; the chromosome is the name's own
+  # prefix, so there is no second list to keep in step with this one.
   paste0(sapply(reg, function(r)
-      embed_fig(sprintf("regions/%s.png", r),
+      embed_fig(sprintf("regions/%s/%s.png", sub("^(chr[0-9XY]+).*$", "\\1", r), r),
                 paste0(esc(sub("_sigonly$", "", r)), " &mdash; difference map masked to significant contacts (grey = measured but not significant, white = not measured)"))
     ), collapse = ""),
 
@@ -707,7 +709,7 @@ parts$regions <- sec("Region plots",
           if (num$is_ok) sprintf("%.3f", num$is_q999) else "0.18"),
   paste0(sapply(c("chr18_Pcdh_slide", "chr11_1-25Mb_lostblock_slide",
                   "chr3_30-85Mb_slide", "chr16_full_slide"), function(r)
-    embed_fig(sprintf("regions/%s.png", r),
+    embed_fig(sprintf("regions/%s/%s.png", sub("^(chr[0-9XY]+).*$", "\\1", r), r),
               paste0(esc(r), " &mdash; 16:9 slide render; difference map, insulation difference strip, hotspot bins, CTCF, LADs, two marks, genes"))),
     collapse = ""))
 

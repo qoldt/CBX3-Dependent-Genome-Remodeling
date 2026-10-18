@@ -83,7 +83,13 @@ local({
   # fail loudly instead (same reasoning as the zero-overlap asserts elsewhere).
   stopifnot(sum(A$n_contacts_lost) > 0, sum(A$n_contacts_gained) > 0)
 
-  A[, net := log2((n_contacts_lost + 1) / (n_contacts_gained + 1))]
+  # KO-ORIENTED, matching config.R:468 and GAM_4. This file was last touched
+  # 2026-10-17 and was MISSED when the convention was flipped on 2026-10-18, so
+  # it shipped the collaborators' WT-minus-KO sign while everything else used
+  # ours. The symptom was two opposite numbers for one quantity on one page of
+  # the report: coupling_spearman.tsv gave rho(H4K20me3, net) = -0.0104 and the
+  # GAM_7 table gave +0.012.
+  A[, net := log2((n_contacts_gained + 1) / (n_contacts_lost + 1))]
   # Dominant ChromHMM state per bin = the state with the largest coverage fraction.
   # Chosen over "any overlap" membership because every 20 kb bin overlaps several
   # states, which would make the strata non-exclusive and double-count bins.
@@ -360,7 +366,7 @@ local({
                       sub_curve, "percentile of contact density (bin mean)"),
            "coupling_quantile_curves", subdir = "coupling", width = 10, height = 5)
   save_fig(curve_plot("net", "Mark change vs net contact remodelling",
-                      "net = log2((lost+1)/(gained+1)); positive = more contacts lost than gained",
+                      "net = log2((gained+1)/(lost+1)); positive = more contacts gained than lost (more in the cKO)",
                       "percentile of net measure (bin mean)"),
            "coupling_quantile_curves_net", subdir = "coupling", width = 6, height = 5)
 
@@ -610,13 +616,26 @@ local({
   sp <- strat[stratum != "<pooled within>"][, lab := ifelse(stratum == "<raw>", "raw",
                                                           paste0(confounder, ": ", stratum))]
   sp[, lab := factor(lab, levels = rev(unique(lab)))]
-  lim <- max(abs(sp$rho), na.rm = TRUE)
-  g_strat <- ggplot(sp, aes(mark, lab, fill = rho)) + geom_tile(colour = "white") +
+  # FIXED LIMIT, not max(abs(rho)). The data-driven limit was being set by the
+  # SMALLEST strata - ChromHMM Het is 666 bins, 0.54% of the genome - which
+  # painted every other tile near-white and made the panel read as "nothing
+  # couples anywhere".
+  lim <- 0.10
+  if (nrow(sp) && "n" %in% names(sp))
+    sp[, lab := sprintf("%s  (n=%s)", lab, format(n, big.mark = ","))]
+  sp[, lab := factor(lab, levels = rev(unique(lab)))]
+  g_strat <- ggplot(sp, aes(mark, lab, fill = pmax(-lim, pmin(lim, rho)))) +
+    geom_tile(colour = "white") +
     geom_text(aes(label = sprintf("%+.2f", rho)), size = 2.4) +
     facet_wrap(~ direction, nrow = 1) +
     scale_fill_heat0_div(limits = c(-lim, lim), name = "Spearman\nrho") +
-    labs(title = "Coupling within confounder strata", x = NULL, y = NULL,
-         subtitle = "rho of per-bin log2FC vs contact density; strata dropped below the minimum size") +
+    labs(title = "Does contact change predict mark change WITHIN matched chromatin?",
+         x = NULL, y = NULL,
+         subtitle = paste("NOT a map of where contacts change. Each tile is the rho between per-bin ChIP log2FC and",
+                          "per-bin contact count\nINSIDE one stratum, so any association that defines the stratum",
+                          "(LINE content, ChromHMM state) is removed by construction.\nContact loss IS strongly",
+                          "LINE-rich - mean lost counts rise 18.3 to 20.8 from LINE Q1 to Q4 - and that contrast is",
+                          "between rows, not within them.\nFill clipped at +-0.10; values printed in full.")) +
     theme_m + theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 30, hjust = 1))
   save_fig(g_strat, "coupling_stratified", subdir = "coupling", width = 10, height = 9)
 
@@ -1050,15 +1069,21 @@ local({
     # pc1_delta (A positive), i.e. a POSITIVE rho.
     ok <- is.finite(d$pc1_delta) & is.finite(d$h4_l2fc)
     ct <- suppressWarnings(cor.test(d$pc1_delta[ok], d$h4_l2fc[ok], method = "spearman"))
-    cor_tab <- data.table(n_bins = sum(ok), spearman_rho = unname(ct$estimate), p = ct$p.value)
+    # NO P-VALUE. cor.test treats the bins as independent draws; they are not -
+    # the differential-contact track has autocorrelation r = 0.59 at 20 kb, and
+    # GAM/CLAUDE.md forbids exactly this. The reported p was 8.4e-27 on 117,274
+    # bins for rho = -0.031, which is a statement about n, not about an effect.
+    # The effect size is the number; the chromosome bootstrap elsewhere in this
+    # file is what carries the uncertainty.
+    cor_tab <- data.table(n_bins = sum(ok), spearman_rho = unname(ct$estimate))
     # also within WT compartment: a genome-wide rho can be carried by A-vs-B baseline
     # differences in both variables, so stratify
     if ("compartment_WT" %in% names(d))
       cor_tab <- rbind(cor_tab, rbindlist(lapply(c("A", "B"), function(cp) {
         k <- ok & d$compartment_WT %in% cp
         cc <- suppressWarnings(cor.test(d$pc1_delta[k], d$h4_l2fc[k], method = "spearman"))
-        data.table(n_bins = sum(k), spearman_rho = unname(cc$estimate), p = cc$p.value,
-                   stratum = paste0("WT_", cp))
+        data.table(n_bins = sum(k), spearman_rho = unname(cc$estimate),
+                   stratum = paste0("WT_", cp))   # no p: see the genome_wide row
       })), fill = TRUE)
     cor_tab[is.na(stratum), stratum := "genome_wide"]
   }
