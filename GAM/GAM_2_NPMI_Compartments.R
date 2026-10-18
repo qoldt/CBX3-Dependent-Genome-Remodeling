@@ -576,7 +576,13 @@ meta <- list(n_pc1_bins = features[, sum(!is.na(pc1_WT) & !is.na(pc1_HP1gKO))],
              chroms_done = done, chroms_requested = gam2_chroms,
              unoriented_chroms = setdiff(done, gam_autosomes),
              decay_curve = genome_curve, orientation_summary = summ,
-             binsize = gam_binsize, sigma = gam_sigma, date = Sys.time())
+             binsize = gam_binsize, sigma = gam_sigma, date = Sys.time(),
+             # The METHOD version, carried on the combined output and not only
+             # on the per-chromosome caches. Without it the output records no
+             # trace of how it was computed, which is how a cache survived a
+             # method change once and produced a byte-identical table in 60 s.
+             # verify_GAM.R checks this against gam2_params$version.
+             params = gam2_params)
 
 # Only a full-genome run may overwrite the consumer interface; a single-chromosome
 # validation (GAM_2_CHROMS) writes alongside it so it can never masquerade as the real thing.

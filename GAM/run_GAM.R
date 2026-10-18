@@ -68,4 +68,18 @@ message("=== GAM_7: region plots and per-chromosome overviews ===")
 source("GAM_7_Figures.R")
 
 message("=== GAM pipeline complete ===")
+
+# Consistency check. Runs in a SEPARATE process on purpose: it must read the
+# tables as they now sit on disk, not as this session happens to hold them in
+# memory, and a non-zero exit here must not kill a pipeline that has already
+# produced its outputs. It is advisory at this point - the failure it reports is
+# always "a file quotes a number the tables no longer say", which is for a human
+# to fix, not for the pipeline to retry.
+message("=== verify: are the outputs and the prose that cites them consistent? ===")
+vrc <- system2("Rscript", "verify_GAM.R")
+if (!identical(vrc, 0L))
+  message("\n*** verify_GAM.R reported inconsistencies - see above. ***\n",
+          "The tables are right by definition; fix whatever quotes them.\n")
+
 message("Report:  Rscript make_report.R      ->  results/GAM_REPORT.html")
+message("Verify:  Rscript verify_GAM.R       ->  exit 1 if anything disagrees")

@@ -13,7 +13,7 @@
 #   balancing fix, measured on results/tables/npmi_compartment_orientation.tsv:
 #   only 27 of 38 chromosome x genotype combinations orient at all, both
 #   genotypes orient on just 10 of 19 autosomes, and of those 10 the two
-#   genotypes pick the SAME eigenvector on only 6. A per-genotype BED would
+#   genotypes pick the SAME eigenvector on only 6 of 10. A per-genotype BED would
 #   therefore be blank on half the genome and would carry a "difference" that is
 #   partly a change of eigenvector rather than a change of compartment.
 #   (Inverted axes are no longer possible: GAM_2 blanks an anti-correlating

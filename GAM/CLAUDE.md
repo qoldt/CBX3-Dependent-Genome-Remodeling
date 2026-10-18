@@ -144,6 +144,42 @@ visibly fade. Also note the track FILL diverges from each mark's **genome
 median**, not from zero - blue means "above that median", which for a negative
 median is still a loss.
 
+## Before trusting any number here, run the consistency check
+
+```sh
+cd GAM && Rscript verify_GAM.R     # exit 0 = consistent, 1 = something disagrees
+```
+
+It also runs at the end of `run_GAM.R`, advisory only.
+
+**Why it exists.** Every correction made on 2026-10-18 was the same defect: a
+number written in PROSE disagreeing with the TABLE it cites. Stale BEDs built
+from a since-replaced input; a header comment describing behaviour the code now
+forbids; `BIN_BALANCING.md` claiming no statistic used balancing two commits
+after one did; this file carrying pre-v8 quality numbers; `make_report.R`
+hard-coding "38 of 38" in prose so re-running the report could not fix it, which
+published a page contradicting a table cited in its own paragraph. **No
+`stopifnot()` catches any of these, because each stage was individually
+correct** - the inconsistency exists only BETWEEN files.
+
+**The rule it encodes:** `results/tables/*.tsv` is the single source of truth. A
+statistic is computed FROM the table and every file that quotes it must contain
+the current value. No expected value is stored anywhere, so the checker cannot
+itself go stale - change the analysis and the facts change with it, and the
+prose is what fails.
+
+**If you add a statistic to a document, add it to `facts` in `verify_GAM.R`**,
+naming the files that quote it. That is what keeps the next correction from
+being necessary. A fact passes by CONTAINING the current value, not by lacking
+old ones, so a change-note that says "previously 38 of 38, now 27 of 38" passes
+- that is good documentation, not staleness.
+
+It also checks that derived files are newer than their inputs, that every
+oriented axis agrees with its orientation check, that a stored method version
+matches the script that would write it, that gained=red/lost=blue is not
+inverted in a fill scale, and that the compartment BEDs cover every chromosome
+with a shared axis.
+
 ## A/B compartments: axis weakly determined; NO strength change (2026-10-17)
 
 The compartment call runs and is not artefactual, but it is **not reliable on
