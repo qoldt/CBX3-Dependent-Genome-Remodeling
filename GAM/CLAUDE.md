@@ -168,6 +168,29 @@ pinned as a check (C3c) so a rename produces a failure rather than a silent
 wrong assumption. Do not renumber the tables to fix it - the prefixes are load
 bearing across the report, the figures and the skills.
 
+### A stage's own "done" message is NOT the end of the stage
+
+The same legacy numbering means each consolidated file prints **one completion
+message per section**, so `GAM_4_Large_Scale.R` announces "GAM_6 complete" and
+then carries on for another twenty minutes. `GAM_3_Coupling.R` printed
+"GAM_7 complete" at line 901 while line 791 printed "GAM_3 complete" - the file
+contradicted itself - until that was fixed on 2026-10-18.
+
+Acting on one of those lines as if the stage had ended produced a `verify_GAM.R`
+pass and a push taken **while GAM_4 was still writing**; it went on to rewrite
+four more tables, two of which back statistics the report quotes.
+
+**The only reliable end-of-run signals:**
+
+```sh
+grep FINISHED <guard log>              # safe-local-alignment writes "FINISHED status=0"
+ps -eo comm | grep -cE 'exec/R$'       # 0 means nothing is left running
+```
+
+Note that `ps aux | grep Rscript` is *not* one of them: it matches the guard's
+own command string and the shell wrapper, so it reports live processes long
+after R has exited.
+
 ## Before trusting any number here, run the consistency check
 
 ```sh

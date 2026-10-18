@@ -11,9 +11,9 @@ it**; this file deliberately does not duplicate it.
 | Path | Assay | Status |
 |------|-------|--------|
 | `ChIP/` | Multiplexed ChIP-seq (MINUTE), 5 histone marks over called peaks | **Active** — 7 stages, documented in `ChIP/CLAUDE.md` |
-| `GAM/` | Genome Architecture Mapping, 20 kb NPMI | **Data only** — raw drop, no pipeline yet |
-| `shared/` | Cross-assay helpers (palettes, figure savers, permutation tests) | **Planned** — not yet created |
-| `scRNAseq/` | Single-cell RNA-seq | Planned |
+| `GAM/` | Genome Architecture Mapping, 20 kb NPMI | **Active** — 9 numbered stages (`GAM_1`–`GAM_7`, plus `GAM_2b`/`GAM_2c`), `run_GAM.R`, `make_report.R`, `verify_GAM.R`, and utilities; documented in `GAM/CLAUDE.md` |
+| `shared/` | Cross-assay helpers (`common.R`: seqname flips, `mm39_bins()`, GAM bin-id parsing; `setup.R`) | **Exists** — sourced by both assays' `config.R` |
+| `scRNAseq/` | Single-cell RNA-seq | Planned — directory does not exist yet |
 
 The headline result the other assays are being integrated against: HP1γ loss
 causes a **broad, near-genome-wide loss of H4K20me3** (median log2FC ≈ −0.68),
@@ -56,9 +56,28 @@ drawn from the palette. Figures save as both `.png` and `.pdf` via `save_fig()` 
 
 **Results trees are git-ignored in full and must stay fully regenerable** from the
 committed code plus the externally-hosted raw data. Nothing in `results/` is a
-source of truth except the hand-written `.md` files at its top level
-(`EXECUTIVE_SUMMARY.md`, `METHODS.md`, `COMPARTMENT_CUTOFFS.md`), which **are**
-committed.
+source of truth except the hand-written `.md` files at its top level, which
+**are** committed. Currently six, and each is named individually in the
+`.gitignore` except-list:
+
+- `ChIP/results/` — `EXECUTIVE_SUMMARY.md`, `METHODS.md`, `COMPARTMENT_CUTOFFS.md`
+- `GAM/results/` — `METHODS.md`, `COMPARTMENTS.md`, `BIN_BALANCING.md`
+
+**Add a new one to that list in the same commit that creates it.**
+`BIN_BALANCING.md` was silently git-ignored for a commit because the GAM
+except-list named only `METHODS.md`, and a committed methods document that is
+not actually committed looks identical to one that is.
+
+**A number written in prose is the most common stale thing in this repo**, and
+no `stopifnot()` catches it, because each stage is individually correct — the
+inconsistency exists only *between* files. The published GAM report once claimed
+"38 of 38" in a paragraph citing a table that said 27 of 38.
+`GAM/verify_GAM.R` enforces the rule that `results/tables/*.tsv` is the single
+source of truth: a statistic is computed *from* the table and every file quoting
+it must contain the current value, so the check cannot itself go stale. Run it
+before quoting any GAM number (`cd GAM && Rscript verify_GAM.R`); on a failure
+the **table is right by definition**. If another assay grows the same problem,
+copy the pattern rather than inventing a second one.
 
 **Large raw inputs are never committed** — bigWigs, RepeatMasker annotation, NPMI
 matrices, contact files. They are downloaded or staged locally per the assay
@@ -80,6 +99,19 @@ diverge.
   matrices) are sustained all-core work on an Apple Silicon Mac — run them under
   the `safe-local-alignment` skill, which handles thermal/swap protection and
   refuses silently-empty output.
+- **Check free disk before launching one.** That skill guards thermal pressure
+  and swap but *not* disk. On 2026-10-18 the data volume hit 100% (279 MB free
+  of 926 GB) while a pipeline was writing, and it surfaced as an unrelated
+  `ENOSPC`, not as a pipeline error — R exits 0 after a failed write, so a stage
+  can produce a truncated or empty table and still look successful.
+  `df -h /System/Volumes/Data`; treat under ~10 GB free as a reason to stop.
+- **A stage's own "done" message is not the end of the stage.** The GAM stage
+  files are consolidations of an older, finer numbering and print one completion
+  message per legacy section, so `GAM_4` announces "GAM_6 complete" and keeps
+  going. The reliable end-of-run signals are the thermal guard's
+  `FINISHED status=0` and an absent R process
+  (`ps -eo comm | grep -cE 'exec/R$'`). Verifying or publishing off a "done"
+  line once led to a push made while GAM_4 was still rewriting tables.
 - Don't invent data provenance. If the accession, replicate count or QC criterion
   isn't recoverable from the files, write the open question into that assay's
   `METHODS.md` and ask.
