@@ -691,10 +691,26 @@ active_chromatin_ref <- function(gam1 = NULL) {
 # Returns the selected vector already sign-oriented so positive = A = active-high,
 # plus the diagnostics needed to judge the call per chromosome.
 # How much better than the runner-up the selected eigenvector must correlate
-# with the active-chromatin reference. 0.10 marks chr19 and chr3 undetermined
-# and keeps chr11, chr16 and chr7; below it the two halves of a chromosome do
-# not agree on which vector is the compartment, so there is nothing to call.
-gam_compartment_pc_margin <- 0.10
+# with the active-chromatin reference. Below the margin the two halves of a
+# chromosome do not agree on which vector is the compartment, so there is
+# nothing to call.
+#
+# CHOSEN FROM THE OBSERVED DISTRIBUTION, not guessed. 10 of 38 autosomal
+# combos have NO balanced candidate at all and are undetermined at any
+# threshold, so the ceiling is 28, not 38. Of the 28 with a real choice the
+# median margin is 0.117, so:
+#
+#   margin   oriented / 38   chromosomes with BOTH genotypes
+#   0.00         28                      9
+#   0.05         21                      7      <- here
+#   0.10         15                      6
+#   0.15         11                      3
+#
+# 0.10 sits at the median of the distribution, i.e. it cuts half the
+# chromosomes that have a genuine choice. 0.05 keeps 21 and still removes
+# chr19, whose margin is 0.042 and whose two halves give uncorrelated axes
+# (split-half rho -0.039) - the case this check exists for.
+gam_compartment_pc_margin <- 0.05
 
 select_compartment_pc <- function(pc, ids, ref, balance = c(0.2, 0.8)) {
   V <- pc$vecs

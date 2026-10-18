@@ -73,7 +73,7 @@ stopifnot(all(gam2_chroms %in% gam_npmi_chroms))
 # version bump is what makes the invalidation obvious to a reader, and a run
 # that silently reuses v2 reductions would never execute either change. That
 # happened once on the first attempt at this patch.
-gam2_params <- list(version = 4L, binsize = gam_binsize, sigma = gam_sigma,
+gam2_params <- list(version = 6L, binsize = gam_binsize, sigma = gam_sigma,
                     ins_kb = gam2_ins_kb, short_max = gam2_short_max_bins,
                     long_min = gam2_long_min_bins, shells = gam2_shell_edges,
                     K = gam2_K, min_frac = gam2_min_frac, oe = "subtract",
@@ -358,13 +358,18 @@ reduce_npmi <- function(genotype, chr, orient_ref, check_ref, can_orient) {
       # its direction - so the honest outcome is to mark it undetermined and let
       # downstream code skip it, the same as a chromosome with no balanced
       # candidate.
-      if (!is.na(ck$rho) && ck$rho < 0) {
+      anti <- !is.na(ck$rho) && ck$rho < 0
+      if (anti) {
         warning(chr, " ", genotype, ": oriented PC1 ANTI-correlates with WT H3K4me3 (rho=",
                 round(ck$rho, 3), ") - marking the axis undetermined", call. = FALSE)
         p[] <- NA_real_
       }
       feat[match(names(p), bin_id), pc1 := p]
-      summ[, `:=`(oriented = TRUE, flip = o$sign < 0, rho_orient = o$rho,
+      # oriented must be FALSE when the axis was blanked above, or the row ships
+      # an all-NA vector flagged as a good call - which is worse than shipping
+      # it visibly backwards, because nothing downstream looks twice at a row
+      # that says oriented.
+      summ[, `:=`(oriented = !anti, flip = o$sign < 0, rho_orient = o$rho,
                   rho_h3k4me3 = ck$rho, eig1 = pc$val, eig_gap = pc$gap,
                   frac_A = mean(p > 0),
                   # which eigenvector carried the compartment signal, and how
@@ -511,6 +516,17 @@ saveRDS(list(features = features, insulation_windows = insulation_windows,
              saddle = saddle, meta = meta), out_path)
 message("Wrote ", out_path, " (", nrow(features), " bins, ", length(done), " chromosomes)")
 
+# INVARIANT: a row flagged oriented must not anti-correlate with the independent
+# ruler. This shipped twice - first as a warning nobody acted on (chr15 and chr19
+# cKO had A and B swapped), then as an axis blanked to NA while still flagged
+# oriented. Assert it so a third variant of the same bug cannot reach a table.
+{
+  bad <- summ[oriented == TRUE & is.finite(rho_h3k4me3) & rho_h3k4me3 < 0]
+  if (nrow(bad))
+    stop("oriented rows anti-correlate with the orientation check: ",
+         paste(sprintf("%s/%s (rho=%.3f)", bad$chr, bad$genotype, bad$rho_h3k4me3),
+               collapse = ", "), call. = FALSE)
+}
 fwrite(summ, file.path(tables_dir, "npmi_compartment_orientation.tsv"), sep = "\t")
 fwrite(features[, .N, by = compartment_switch][order(compartment_switch)],
        file.path(tables_dir, "npmi_compartment_switch_counts.tsv"), sep = "\t")

@@ -50,6 +50,7 @@ GAM/Hotspots/
 GAM/results/*
 !GAM/results/METHODS.md
 !GAM/results/BIN_BALANCING.md
+!GAM/results/COMPARTMENTS.md
 GAM/results_*/
 
 # stray base-R plot device output

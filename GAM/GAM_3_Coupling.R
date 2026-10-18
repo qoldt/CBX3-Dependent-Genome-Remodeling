@@ -8,10 +8,30 @@
 # Previously GAM_3, GAM_7 and GAM_4.
 #
 #   A (was GAM_3)  Per-bin Spearman of ChIP log2FC against differential-contact
-#                  count. A clean NULL: rho -0.015 raw, -0.046 partial on
-#                  coverage, flat under every variant. Bins losing the most
-#                  H4K20me3 (median -0.764) and the least (-0.222) have identical
-#                  contact densities. n = 119,952 - a powered negative.
+#                  count. rho -0.015 raw, -0.046 partial on coverage.
+#
+#                  THIS IS A SMALL EFFECT, NOT A CLEAN NULL, AND IT IS NOT A
+#                  POWERED NEGATIVE. The header said both until 2026-10-18 and
+#                  this file's own outputs contradict it:
+#                    - coupling_spearman.tsv, H4K20me3/lost/partial_covariates:
+#                      rho -0.0216, CI [-0.0372, -0.0049] - EXCLUDES ZERO, in
+#                      the predicted direction.
+#                    - coupling_stratified.tsv, pooled within ChromHMM:
+#                      rho -0.047, three times the raw value.
+#                    - "powered" was quoted against n = 119,952, but the unit of
+#                      independence is the chromosome, not the bin. This file's
+#                      own 19-chromosome bootstrap gives a CI half-width of
+#                      +-0.03 on the raw rho, and the effect implied by the
+#                      hotspot result (-0.028) sits INSIDE that interval. The
+#                      analysis cannot distinguish zero from the effect at
+#                      issue.
+#
+#                  What is true: expressed in units of the mark the dose-
+#                  response is real, monotone and tiny - median H4K20me3 log2FC
+#                  moves from -0.485 to -0.517 across the whole range of contact
+#                  loss, 0.032 log2 units against a genome-wide median of
+#                  -0.497. Architecture change accounts for roughly 6% of the
+#                  depth of the mark loss. Say that, not "no relationship".
 #   B (was GAM_7)  Retracts A's premise. The contact variable is integrated over
 #                  5 Mb while the ChIP variable varies at 20 kb, a ~250x scale
 #                  mismatch, so A cannot distinguish "no relationship" from "this
