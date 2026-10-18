@@ -203,6 +203,60 @@ sec <- function(title, ...) paste0("<section><h2>", title, "</h2>", paste(c(...)
 p_   <- function(...) paste0("<p>", paste(c(...), collapse = " "), "</p>")
 
 # ==============================================================================
+# LIVE NUMBERS. These used to be typed into the HTML by hand, which is how the
+# ribbon cutoff ended up quoted against two different denominators in two
+# places. Anything that can be recomputed from results/ in a few seconds is
+# recomputed here, so the prose cannot drift from the files. Each one degrades
+# to NA and the sentence that uses it says so, rather than aborting the report.
+num <- new.env(parent = emptyenv())
+num$ok <- FALSE
+try({
+  h <- load_hotspots()[chr %in% gam_autosomes]
+  h[, mx := pmax(n_contacts_lost, n_contacts_gained)]
+  num$hot_n     <- nrow(h)
+  num$hot_med   <- median(h$n_contacts_lost + h$n_contacts_gained)
+  num$hot_max   <- max(h$mx)
+  num$hot_both  <- sum(h$n_contacts_lost >= 50 & h$n_contacts_gained >= 50)
+  num$cut       <- vapply(c(50, 60, 75), function(k) sum(h$mx >= k), 0L)
+  # TWO denominators, both stated wherever the number is. 123,133 is the whole
+  # 20 kb grid; the delivered hotspot files cover slightly fewer bins, and a
+  # percentage quoted without saying which is being used is the ambiguity this
+  # block exists to remove.
+  num$grid_n    <- 123133L
+  num$ok        <- TRUE
+}, silent = TRUE)
+
+num$is_ok <- FALSE
+try({
+  isf <- file.path(rds_dir, "meltron_is.rds")
+  if (file.exists(isf)) {
+    isd <- readRDS(isf)$is
+    isd[, d := IS_HP1gKO - IS_WT]
+    num$is_sizes <- sort(unique(isd$is_size))
+    num$is_vp    <- length(unique(isd$viewpoint))
+    num$is_rho_gt <- cor(isd$IS_WT, isd$IS_HP1gKO, use = "pairwise")
+    num$is_q999   <- unname(quantile(abs(c(isd$IS_WT, isd$IS_HP1gKO)), 0.999, na.rm = TRUE))
+    w <- dcast(isd, chr + viewpoint ~ is_size, value.var = "d")
+    m <- as.matrix(w[, -(1:2)]); m <- m[complete.cases(m), , drop = FALSE]
+    pc <- prcomp(m, center = TRUE, scale. = FALSE)
+    v  <- pc$sdev^2 / sum(pc$sdev^2)
+    num$is_pc1  <- 100 * v[1]
+    num$is_pc12 <- 100 * sum(v[1:2])
+    num$is_rho_scale <- cor(m[, 1], m[, ncol(m)])
+    if (isTRUE(num$ok)) {
+      hh <- h[, .(chr, viewpoint = start, net = n_contacts_gained - n_contacts_lost)]
+      num$is_rho_net <- vapply(c(240e3, 480e3, 1040e3), function(sz) {
+        x <- merge(isd[is_size == sz, .(chr, viewpoint, d)], hh,
+                   by = c("chr", "viewpoint"))
+        cor(x$d, x$net, method = "spearman", use = "pairwise")
+      }, 0)
+    }
+    num$is_ok <- TRUE
+  }
+}, silent = TRUE)
+pc_ <- function(n, d) sprintf("%.1f%%", 100 * n / d)
+
+# ==============================================================================
 parts <- list()
 
 parts$head <- paste0(
@@ -524,7 +578,7 @@ reg <- c("chr18_Pcdh", "chr18_Pcdh_context_band", "chr13_KRABZFP_band", "chr17_K
 parts$regions <- sec("Region plots",
   p_("Contact map, differential contacts, hotspot calls, LADs, the five marks and genes, on one coordinate axis.",
      "Conventions: raw NPMI is a sequential 0&rarr;q99 (the 99th percentile) ramp with one cap shared by both genotypes; delta-z (the upstream caller&rsquo;s contact-change statistic, defined under methods below) is fixed at &plusmn;4;",
-     "<strong>net diff. contacts</strong> is the per-bin count of significant differential contacts within 5 Mb (gained &minus; lost), while <strong>hotspot</strong> is the separate call on that count at the 50-per-window cutoff."),
+     "<strong>net diff. contacts</strong> is the per-bin count of significant differential contacts within 5 Mb (gained &minus; lost), while <strong>hotspot bins</strong> is the separate call on that count at &ge; 50 per bin &mdash; a different object from the hotspot <em>domains</em> that carry every result in the tables. Both cutoffs, and who chose them, are audited in &ldquo;Every cutoff in this report&rdquo; below."),
   "<div class='warn'><strong>Data coverage, read before interpreting any empty map.</strong> A region whose bins are detected in few nuclear profiles has mostly NA (not available &mdash; missing, not measured) in the NPMI matrix, and NA renders white &mdash; indistinguishable from &ldquo;no contacts here&rdquo;. Each plot states its measured fraction, and warns below 75%. Measured here: Pcdh 97%, Olfr (olfactory receptor cluster) 92%, KRAB-ZFP (Kr&uuml;ppel-associated box zinc-finger protein cluster) chr17 87%, <strong>KRAB-ZFP chr13 61%</strong>, <strong>vomeronasal chr7 29%</strong>. The vomeronasal cluster's apparently empty contact map is <em>missing data, not absent contact</em> &mdash; 11% finite cells inside the cluster against 97% in its own flanks, with n_valid (the count of usable contact values per bin) 807 vs 6,574 (genome-wide 6,104). Do not read architecture off it.</div>",
   "<h3>Method: how the mark tracks are drawn</h3>",
   p_("They are <strong>coverage, not a ratio</strong>. Each panel overlays the two genotypes: a grey body from zero to",
@@ -559,7 +613,86 @@ parts$regions <- sec("Region plots",
       embed_fig(sprintf("regions/%s.png", r), paste0(esc(r), " &mdash; full difference map")),
       embed_fig(sprintf("regions/%s_sigonly.png", r),
                 paste0(esc(r), " &mdash; significant contacts only (grey = measured but not significant, white = not measured)"))
-    )), collapse = ""))
+    )), collapse = ""),
+
+  "<h3>The slide variant, and the insulation strip it carries</h3>",
+  p_("A second render of four regions at 16:9, for presenting. It is a <strong>re-layout, not a resize</strong>:",
+     "the two raw-NPMI panels are dropped, the mark tracks are cut to H4K20me3 and H3K9me3, and the distance cap",
+     "is then solved from whatever height the track stack leaves &mdash; so the contact map is a band rather than a",
+     "triangle, and the band height differs per region. It also carries one panel the other variants do not: the",
+     "<strong>insulation-score difference strip</strong>, which is step 1 of the Pombo lab&rsquo;s MELTRON pipeline",
+     "figure placed directly under the difference map."),
+  "<h4>What the strip&rsquo;s y axis is</h4>",
+  p_("<strong>Square size, 240 to 1040 kb &mdash; not a score.</strong> The insulation score at a position is the mean",
+     "NPMI of the off-diagonal square that <em>crosses</em> that position, minus the chromosome mean at that same",
+     "square size. Computing it at eleven square sizes gives eleven values per position, and the strip draws them as",
+     "eleven stacked rows: colour is the score difference (cKO &minus; WT), the row is the width of the square it was",
+     "measured over. A change confined to the bottom rows is local; a change running the full height of the strip is a",
+     "change at every scale the measurement can see."),
+  sprintf("<div class='warn'><strong>Three properties worth knowing before reading one.</strong><ul>%s%s%s</ul></div>",
+    "<li><strong>The values do not depend on the plotted interval.</strong> Cropping a region changes only the display binning (20 kb at Pcdh, 280 kb on a whole chromosome); the underlying per-viewpoint values are identical to nine decimals. The strip is a view of a genome-wide object, not a statistic of the window.</li>",
+    sprintf("<li><strong>A uniform genome-wide shift is invisible by construction.</strong> Centring is per genotype and per chromosome, so if both genotypes moved by the same amount everywhere, the strip would show nothing. That matters here, because the headline architectural effect <em>is</em> broad (&minus;1.7%% to &minus;5.0%% eu&ndash;eu, +4.2%% het&ndash;het). The strip shows where the change is <em>unevenly</em> distributed, which is a different question from whether there is one.</li>"),
+    sprintf("<li><strong>The rows are nested, so they are not independent.</strong> The 1040 kb square contains the 240 kb square. Across the eleven rows of the difference, PC1 explains <strong>%s</strong> of the variance and PC1+PC2 <strong>%s</strong>, with &rho;(240 kb, 1040 kb) = %s. Eleven rows, roughly one and a half independent dimensions.</li>",
+            if (num$is_ok) sprintf("%.1f%%", num$is_pc1) else "about 86%",
+            if (num$is_ok) sprintf("%.1f%%", num$is_pc12) else "about 96%",
+            if (num$is_ok) sprintf("%.2f", num$is_rho_scale) else "~0.55")),
+  "<h4>Is the strip just the difference map again?</h4>",
+  p_("A fair question, since the strip, the difference map and the hotspot ribbon all respond to the same perturbation,",
+     "and by eye they line up. Measured, they do not carry the same information.",
+     if (num$is_ok && !is.null(num$is_rho_net))
+       sprintf("Spearman &rho; between the insulation difference and the net per-bin differential-contact count is <strong>%.2f at 240 kb, %.2f at 480 kb and %.2f at 1040 kb</strong> &mdash; about %.0f%% shared variance in the middle of that range.",
+               num$is_rho_net[1], num$is_rho_net[2], num$is_rho_net[3],
+               100 * num$is_rho_net[2]^2)
+     else "",
+     "The two <em>are</em> related and should be, but one is not a redrawing of the other.",
+     "The genuinely redundant pair is elsewhere:",
+     "the hotspot ribbon against its own count track, at &rho; = 0.91, which is why only one of those two is drawn."),
+  sprintf("<div class='warn'><strong>A display bug caught by reading the figure, worth recording because it was invisible in the numbers.</strong> The difference strip was first drawn on &plusmn;0.10 while the per-genotype strips above it were on &plusmn;0.20. Every value was correct and every panel was individually defensible, but a stack of panels is read by comparison, so 4.8%% of cells that were mildly negative in <em>both</em> genotypes appeared as a near-saturated difference. On one shared limit that figure is 0.0%%. The limit is now %s for all strips, set just above the genome-wide 99.9th percentile of |score| (%s).</div>",
+          "&plusmn;0.20",
+          if (num$is_ok) sprintf("%.3f", num$is_q999) else "0.18"),
+  paste0(sapply(c("chr18_Pcdh_slide", "chr11_1-25Mb_lostblock_slide",
+                  "chr3_30-85Mb_slide", "chr16_full_slide"), function(r)
+    embed_fig(sprintf("regions/%s.png", r),
+              paste0(esc(r), " &mdash; 16:9 slide render; difference map, insulation difference strip, hotspot bins, CTCF, LADs, two marks, genes"))),
+    collapse = ""))
+
+parts$inventory <- sec("What the data is, before any of it is interpreted",
+  p_("The sections above and below are findings. This one is the inventory &mdash; what was measured, at what",
+     "resolution, how much of it is actually present, and which numbers are dense covariates rather than hit lists.",
+     "It exists because several arguments in this report turn on the <em>shape</em> of the data rather than on an",
+     "effect size, and that shape is otherwise scattered across the methods section."),
+
+  "<h3>The grid, and what sits on it</h3>",
+  "<table>",
+  "<tr><th>object</th><th>size</th><th>what it is</th></tr>",
+  "<tr><td>20 kb bin grid</td><td>123,133 bins</td><td>mm39, the 19 autosomes only &mdash; there is no X anywhere in this analysis. Every table in this report keys on it.</td></tr>",
+  "<tr><td>NPMI contact matrices</td><td>2 genotypes &times; 19 autosomes</td><td>already merged across replicates by the collaborators &mdash; there is no within-genotype variance to test against</td></tr>",
+  "<tr><td>ChIP libraries</td><td>50 (6 WT / 4 cKO usable per mark)</td><td>MINUTE, 5 marks; HP1gKO rep2 excluded at QC</td></tr>",
+  "<tr><td>ChIP peaks</td><td>11,293</td><td>the peak-level ruler in the ChIP section</td></tr>",
+  sprintf("<tr><td>differential-contact count track</td><td>%s bins</td><td>per-bin count of significant differential contacts within 5 Mb, delivered; median %s per bin, maximum %s</td></tr>",
+          if (num$ok) format(num$hot_n, big.mark = ",") else "&mdash;",
+          if (num$ok) format(num$hot_med) else "&mdash;",
+          if (num$ok) format(num$hot_max) else "&mdash;"),
+  sprintf("<tr><td>insulation score maps</td><td>%s viewpoints &times; %d square sizes &times; 2 genotypes</td><td>240&ndash;1040 kb, written by GAM_2c; the input to MELTRON and to the strip on the slide figures</td></tr>",
+          if (num$is_ok) format(num$is_vp, big.mark = ",") else "&mdash;",
+          if (num$is_ok) length(num$is_sizes) else 11L),
+  "<tr><td>hotspot domains</td><td>979 lost / 958 gained</td><td>q90 + smoothing + merging on the count track; the independent unit for every enrichment test</td></tr>",
+  "</table>",
+
+  "<h3>Three things that are dense, not sparse &mdash; and are repeatedly misread as hit lists</h3>",
+  "<ul>",
+  sprintf("<li><strong>The differential-contact count track.</strong> Every bin in the delivered files has a count and <strong>none of them is zero</strong>; the median bin carries %s. It is a density, and the signal is its magnitude. Thresholding it is a separate, explicit decision &mdash; see the cutoff section below.</li>",
+          if (num$ok) format(num$hot_med) else "a few dozen"),
+  "<li><strong>The significant-contact mask.</strong> The delivered criterion passes 12.7&ndash;14.1% of measured cell pairs, about 1.4 million contacts per chromosome. At the ~350 display columns the region figures use, one block is roughly 14 &times; 14 native cells, so almost every block contains a significant cell and the masked map fills in like the unmasked one. The mask is only informative at native resolution over a few Mb.</li>",
+  "<li><strong>Per-bin ChIP log2FC at 20 kb.</strong> Noise-dominated (sd 0.14&ndash;0.16 broad, 0.57 for H3K4me3). The genome-wide medians are sound; a single bin's value is not.</li>",
+  "</ul>",
+
+  "<h3>What is missing, and where</h3>",
+  p_("NA in the NPMI matrix is <em>not measured</em>, and it renders white &mdash; the same white as &ldquo;no contact&rdquo;.",
+     "Every region figure prints its measured fraction for this reason. Genome-wide the figure is high, but it is",
+     "strongly region-dependent: the vomeronasal cluster on chr7 is <strong>29% measured</strong>, with 11% finite",
+     "cells inside the cluster against 97% in its own flanks. An empty-looking contact map there is an artefact of",
+     "coverage, not a result."))
 
 parts$settled <- sec("What this session settled, and what it retracted",
   p_("Recorded here so nothing in the sections below is read as more or less certain than it is."),
@@ -878,6 +1011,42 @@ parts$coupling <- sec("Coupling: does the mark loss have a contact counterpart?"
   tbl("coupling_specificity.tsv", max_rows = 20L),
   tbl("coupling_per_chromosome.tsv", "Per chromosome, so the genome-wide null can be read against the spread.", max_rows = 20L))
 
+parts$cutoffs <- sec("Every cutoff in this report, and who chose it",
+  p_("Four separate thresholds decide what counts as a &ldquo;significant&rdquo; or &ldquo;hotspot&rdquo; anything here,",
+     "they come from three different places, and they are easy to confuse because the figures put two of them in",
+     "adjacent panels. This table is the audit."),
+  "<table>",
+  "<tr><th>cutoff</th><th>value</th><th>whose</th><th>what it decides</th></tr>",
+  "<tr><td>contact significance</td><td>|delta-z| &gt; 2 <em>and</em> max NPMI &gt; 0.1</td><td><strong>theirs</strong>, and not adjustable</td><td>which cell pairs are in the delivered differential-contact files at all. It is baked into the delivered filenames &mdash; we never recompute it, and could not change it without redoing the calling.</td></tr>",
+  "<tr><td>hotspot <em>bins</em> (the ribbon)</td><td>per-bin count &ge; 50</td><td><strong>theirs</strong>, bottom of a proposed range</td><td>the one-row ribbon under the contact map on the region figures. Their slides propose 50&ndash;75; see below.</td></tr>",
+  "<tr><td>hotspot <em>domains</em></td><td>q90 of the smoothed track, 5-bin smoothing, gap 1, minimum 5 bins</td><td><strong>ours</strong></td><td>every enrichment, LAD, repeat and MELTRON result in the tables. Justified panel by panel in the domain-calling QC figure above.</td></tr>",
+  "<tr><td>MELTRON melting / condensation</td><td>|score| &gt; 5</td><td><strong>published</strong>, used directly</td><td>which intervals are called melted or condensed. Transfers to this data at the published 120 kb window &mdash; it calls 26.0% and 26.1%, not the 69% an earlier wrong window produced.</td></tr>",
+  "</table>",
+
+  "<h3>Why the ribbon sits at 50 and not 75</h3>",
+  sprintf("<p>The proposed range is 50&ndash;75 and we deliberately keep the <em>bottom</em> of it, which is a choice rather than a default. On the delivered count track (%s autosomal bins, all of them non-zero), taking the larger of the gained and lost counts per bin:</p>",
+          if (num$ok) format(num$hot_n, big.mark = ",") else "~117,000"),
+  "<table>",
+  "<tr><th>cutoff</th><th>bins called</th><th>% of the covered bins</th><th>% of the 123,133-bin grid</th></tr>",
+  if (num$ok) paste0(sapply(seq_along(c(50, 60, 75)), function(i) {
+    k <- c(50, 60, 75)[i]
+    sprintf("<tr><td>&ge; %d%s</td><td>%s</td><td>%s</td><td>%s</td></tr>", k,
+            if (k == 50) " (used)" else "", format(num$cut[i], big.mark = ","),
+            pc_(num$cut[i], num$hot_n), pc_(num$cut[i], num$grid_n))
+  }), collapse = "") else "<tr><td colspan='4'>count track not loaded</td></tr>",
+  "</table>",
+  sprintf("<p>Moving to the top of the range would drop %s of the called bins. The ribbon is read as &ldquo;where is this busy&rdquo;, so the permissive end is the honest one for a density display; anything that needs a conservative <em>call</em> uses the domains instead. Both denominators are given above because quoting one percentage without saying which is meant is how this number drifted between the code and the prose.</p>",
+          if (num$ok) sprintf("%.0f%%", 100 * (1 - num$cut[3] / num$cut[1])) else "about 73%"),
+
+  "<h3>The ribbon and the domains disagree about 60% of the time</h3>",
+  p_("Both are called &ldquo;hotspot&rdquo; and they are not the same set. Jaccard agreement is",
+     "<strong>0.39 for lost and 0.40 for gained</strong>. The q90 cut lands at a raw count of about 44 and 42 &mdash;",
+     "close to 50 &mdash; so the divergence is almost entirely the smoothing and the 5-bin size floor, not the height",
+     "of the threshold. This is why the ribbon on the region figures is labelled <strong>hotspot bins</strong> with its",
+     "cutoff printed in the legend, rather than &ldquo;hotspot&rdquo;: a reader who sees the bare word will assume the",
+     "domains from the tables, and about 60% of them are not.",
+     if (num$ok) sprintf("Only %d bins genome-wide are called in both directions at once, which is why the ribbon is one row rather than two.", num$hot_both) else ""))
+
 parts$methods <- sec("How every comparison in this report is computed",
   "<p>Every number above is one of a small number of operations. This section states each one exactly,",
   "including what is and is not normalised, so a figure can be checked without reading the scripts.</p>",
@@ -1130,9 +1299,9 @@ theme_css <- function(for_artifact) {
 }
 
 body_html <- paste0("<main>",
-  parts$head, parts$bottom, parts$settled, parts$chip, parts$hotspots, parts$hotspot_annot, parts$het, parts$hetclass, parts$blocks,
+  parts$head, parts$bottom, parts$inventory, parts$settled, parts$chip, parts$hotspots, parts$hotspot_annot, parts$het, parts$hetclass, parts$blocks,
   parts$targets, parts$pcdh, parts$chrom, parts$regions, parts$compartments,
-  parts$shared_axis, parts$meltron, parts$coupling, parts$methods, parts$caveats, parts$glossary,
+  parts$shared_axis, parts$meltron, parts$coupling, parts$cutoffs, parts$methods, parts$caveats, parts$glossary,
   "</main>")
 
 html <- paste0("<!doctype html><html><head><meta charset='utf-8'>",

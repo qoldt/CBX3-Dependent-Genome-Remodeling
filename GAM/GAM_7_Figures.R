@@ -61,9 +61,11 @@ local({
   gam12_npmi_qcap <- 0.99
   # THE RIBBON CUTOFF. The collaborators' slides propose 50-75 differential
   # contacts per window and we deliberately keep the BOTTOM of that range, which
-  # is a choice and not a default: >=50 calls 17,527 bins (14.2% of the genome),
-  # >=60 calls 10,374 (8.4%) and >=75 calls 4,757 (3.9%), so moving to the top of
-  # the range would drop 73% of the called bins. The ribbon is read as "where is
+  # is a choice and not a default: >=50 calls 17,527 bins, >=60 calls 10,374 and
+  # >=75 calls 4,757, so moving to the top of the range would drop 73% of the
+  # called bins. As a percentage that is 14.9/8.8/4.1% of the 117,273 autosomal
+  # bins the delivered hotspot files cover, or 14.2/8.4/3.9% of the whole 123,133
+  # -bin grid - say which denominator is meant, because both get quoted. The ribbon is read as "where is
   # this busy", so the permissive end is the honest one for a density display.
   # Anything that needs a conservative CALL should use the domains instead.
   gam12_hot_cut   <- 50

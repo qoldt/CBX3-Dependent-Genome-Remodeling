@@ -32,7 +32,11 @@ utilities (not pipeline stages, run on their own):
   prepare_CTCF_annotation.R   fetch + liftOver ENCODE CTCF peaks to mm39 (BULK
                               hippocampus + cortex, NOT sorted CA1 - see its header)
   export_igv.R                refresh the minimal IGV session
-  make_report.R               assemble results/GAM_REPORT.html from whatever has run
+  make_report.R               assemble results/GAM_REPORT.html from whatever has run.
+                              Numbers that can be recomputed from results/ in a few
+                              seconds are recomputed in its `num` block rather than
+                              typed into the HTML - that is what keeps the ribbon
+                              cutoff from being quoted against two denominators.
   run_overnight.sh            run the batch under the thermal guard, checking outputs
 ```
 
