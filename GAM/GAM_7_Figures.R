@@ -95,6 +95,14 @@ local({
   # close to the 0.25 the collaborators use, and keeps the domain structure
   # legible without clipping 6% of cells flat the way a hard 0.25 does.
   # Rendered side by side at 0.25 / 0.30 / 0.42 before choosing.
+  # SMOOTH THE DIFFERENCE MAP? No. The 3x3 box filter was applied to the
+  # UNMASKED map only (the masked one needs no denoising, thresholding having
+  # done it), which made the two variants look like different resolutions when
+  # the geometry is identical - and it blurred the per-bin striping into broad
+  # plaid that reads as structure. Both maps now show what is actually there.
+  # The streak texture the filter was suppressing is real noise; it is just not
+  # ours to hide, and the display bin already averages over it.
+  gam12_smooth_diff <- FALSE
   gam12_npmi_qcap <- 0.97
   gam12_dpi          <- 300    # must match save_fig()'s dpi in shared/common.R
   gam12_map_cols_max <- 1600L  # tile budget: ~1.3 M rects in the full triangle
@@ -291,7 +299,19 @@ local({
   gam12_dz_significant_only <- !identical(Sys.getenv("GAM7_DZ_SIG", "1"), "0")
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
-  gam12_h_chrome <- 2.30
+  # MEASURED, by rendering with a deliberately oversized value and reading the
+  # leftover gap off the PNG - the same way the slide chrome was derived. 2.30
+  # was right for the caption as it stood; adding the repeat-panel paragraph
+  # overflowed it, and because every row of this figure has an absolute height,
+  # overflow does not shrink anything - it pushes the content off the canvas and
+  # takes the TITLE with it. The symptom was a bottom gap of 0 px and a clipped
+  # title, on every full-variant figure.
+  # Measured at 3.60: 142 px of slack top AND bottom at 300 dpi, so the content
+  # needs 3.60 - 2*0.473 = 2.65 in. Set to 3.00 rather than 2.70 because the
+  # caption is not a fixed height - a region below gam12_cov_warn coverage gains
+  # a DATA COVERAGE WARNING line (chr7_Vmn is 29% measured), and the figure must
+  # fit its longest caption, not its typical one.
+  gam12_h_chrome <- 3.00
   # SLIDE CHROME, MEASURED NOT GUESSED. Every panel row in this figure is an
   # absolute height, so a figure saved shorter than its content does not shrink
   # to fit - it overflows the canvas and the outer rows are silently cut off.
@@ -463,6 +483,10 @@ local({
                               # run - which is how the masked figures silently
                               # kept an old palette for half a day.
                               dz_sig = gam12_dz_significant_only,
+                              # Remove the additive per-bin (row/column) effect
+                              # from the difference map before drawing. Its own
+                              # variant, never a silent correction.
+                              balance = FALSE,
                               # Repeat composition, on every variant. It costs a
                               # 0.42 in row; on a slide that comes out of the
                               # contact band, on the full figure it just makes the
@@ -679,7 +703,7 @@ local({
     # box filter suppresses it while preserving domain-scale features. Display
     # only - every statistic elsewhere uses the unsmoothed values. (The Pombo
     # 2026 preprint applies a Gaussian filter for the same reason.)
-    if (smooth_map && nrow(D) > 9 && !dz_sig) {
+    if (gam12_smooth_diff && smooth_map && nrow(D) > 9 && !dz_sig) {
       Z <- D; nn <- is.finite(Z); Z[!nn] <- 0
       k <- 1L; mm <- nrow(Z)
       cs <- function(M) { M <- apply(M, 2, cumsum); rbind(0, M) }
@@ -693,6 +717,36 @@ local({
       num <- box(Z); den <- box(nn * 1)
       D <- num / pmax(den, 1); D[den == 0] <- NA
       rm(Z, nn, num, den); gc(FALSE)
+    }
+    # PER-BIN BALANCING. Roughly a fifth to a quarter of a difference map is an
+    # ADDITIVE PER-BIN term - a window detected in systematically more or fewer
+    # nuclear profiles in one genotype shifts its whole row and column. Measured
+    # by fitting Dz[i,j] ~ a[i] + a[j]: 22.8% of the variance at chr2 Olfr, 26.5%
+    # at Pcdh, 18.0% on the chr11 block, 27.9% in a plain chr3 control window.
+    # It is NOT a property of odd regions; it is everywhere.
+    #
+    # z-scoring within genomic distance cannot touch it - that removes a
+    # per-DISTANCE offset, which is orthogonal - so it survives into the map and
+    # draws the criss-cross plaid lattice. The significance mask hides it by
+    # dropping low-coverage cells; drawing every cell exposes it.
+    #
+    # This removes it the standard way, by fitting the row/column effect and
+    # subtracting. Off by default: it changes the displayed values, so it is its
+    # own variant rather than a silent correction of the others.
+    # Balancing a MASKED map would be meaningless: the row means would be fitted
+    # on a sparse, significance-SELECTED subset, so the per-bin term estimated
+    # would be a property of the selection and not of the bin. No variant does
+    # it, but the argument combination was reachable, so refuse it out loud.
+    if (isTRUE(balance) && dz_sig) {
+      message("  balance=TRUE ignored: it is only defined for the unmasked map")
+      balance <- FALSE
+    }
+    if (isTRUE(balance) && nrow(D) > 9) {
+      A <- D; diag(A) <- NA
+      aa <- rep(0, nrow(A))
+      for (it in 1:60) aa <- (aa + rowMeans(sweep(A, 2, aa, "-"), na.rm = TRUE)) / 2
+      aa[!is.finite(aa)] <- 0
+      D <- D - outer(aa, aa, "+")
     }
     m <- nrow(D)
     ij <- CJ(i = seq_len(m), j = seq_len(m))[j > i]
@@ -741,7 +795,9 @@ local({
       # collaborators', not ours - stated in the caption, which has room for the
       # provenance this line does not.
       labs(subtitle = if (identical(diff_mode, "deltaz"))
-             if (!dz_sig) "delta-z, cKO - WT - every measured cell drawn"
+             if (!dz_sig) sprintf("delta-z, cKO - WT - every measured cell drawn%s",
+                     if (isTRUE(balance)) ", per-bin (row/column) effect removed" else
+                       "  (unsmoothed; a per-bin effect is ~20-28% of this)")
              else sprintf("delta-z, cKO - WT, significant contacts only: |delta-z| > %s and max NPMI > %s%s",
                      format(gam_z), format(gam_npmi),
                      if (fac > 1L) "  (colour = mean delta-z of the significant cells; faded = few of them)"
@@ -1571,17 +1627,27 @@ local({
   # GAM7_VARIANTS restricts it (comma-separated, e.g. "slide" or "full,slide").
   # GAM7_SLIDE=1 and GAM7_DZ_SIG are kept as shorthands for the same thing so
   # existing invocations still work.
+  # EVERY FILENAME SAYS WHAT IT IS. There used to be a bare <name>.png whose
+  # meaning changed under people mid-project - it was the unmasked map, then the
+  # masked one - and an "_alldz" suffix that reads as "all" without hinting that
+  # the other file is the filtered one. Now no region figure has a bare name and
+  # every suffix is a word:
+  #
+  #   _sigonly              significant contacts only (the one to read)
+  #   _allcells             every measured cell drawn
+  #   _allcells_binbalanced every measured cell, per-bin row/column effect removed
+  #
+  # crossed with _band (clipped to a band) and _slide (16:9, re-laid-out).
   all_variants <- list(
-    list(id = "full",       mode = "full", dz = TRUE,  slide = FALSE),
-    list(id = "band",       mode = "band", dz = TRUE,  slide = FALSE),
-    list(id = "alldz",      mode = "full", dz = FALSE, slide = FALSE),
-    list(id = "band_alldz", mode = "band", dz = FALSE, slide = FALSE),
-    list(id = "slide",      mode = "full", dz = TRUE,  slide = TRUE))
+    list(id = "sigonly",     mode = "full", dz = TRUE,  bal = FALSE, slide = FALSE),
+    list(id = "allcells",    mode = "full", dz = FALSE, bal = FALSE, slide = FALSE),
+    list(id = "binbalanced", mode = "full", dz = FALSE, bal = TRUE,  slide = FALSE),
+    list(id = "band_sigonly",  mode = "band", dz = TRUE,  bal = FALSE, slide = FALSE),
+    list(id = "band_allcells", mode = "band", dz = FALSE, bal = FALSE, slide = FALSE),
+    list(id = "slide",       mode = "full", dz = TRUE,  bal = FALSE, slide = TRUE))
   variants <- all_variants
   if (identical(Sys.getenv("GAM7_SLIDE", "0"), "1"))
     variants <- Filter(function(v) v$slide, all_variants)
-  if (nzchar(Sys.getenv("GAM7_DZ_SIG", "")))
-    variants <- Filter(function(v) identical(v$dz, !identical(Sys.getenv("GAM7_DZ_SIG"), "0")), variants)
   vwant <- Sys.getenv("GAM7_VARIANTS", "")
   if (nzchar(vwant)) {
     vv <- trimws(strsplit(vwant, ",")[[1]])
@@ -1610,10 +1676,7 @@ local({
   for (r in regions) {
     for (v in variants) {
       if (v$slide && !nzchar(only) && !(r[[4]] %in% slide_regions)) next
-      nm <- r[[4]]
-      if (v$mode == "band") nm <- paste0(nm, "_band")
-      if (!v$dz)            nm <- paste0(nm, "_alldz")
-      if (v$slide)          nm <- paste0(nm, "_slide")
+      nm <- paste0(r[[4]], "_", v$id)
       md <- NULL
       if (v$slide) {
         # Solve the band distance FROM the 16:9 constraint instead of picking one.
@@ -1650,13 +1713,14 @@ local({
              if (v$slide)
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
                                fig_width = 13.33, side_allow = SIDE,
-                               show_raw = FALSE, dz_sig = v$dz,
+                               show_raw = FALSE, dz_sig = v$dz, balance = v$bal,
                                marks = c("H3K9me3", "H4K20me3"),
                                slide = TRUE, ismap = gam12_ismap_mode)
              else
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
                                fig_width = FIGW, side_allow = SIDE,
-                               dz_sig = v$dz, npmi_cap = gam12_npmi_cap),
+                               dz_sig = v$dz, balance = v$bal,
+                               npmi_cap = gam12_npmi_cap),
              error = function(e) { message("  skipped: ", conditionMessage(e)); NULL })
       if (!is.null(p)) {
         a <- attr(p, "gam_map_in")
@@ -1672,106 +1736,106 @@ local({
 
 
 # ==============================================================================
-# SECTION A2 - the plotted regions, ranked, against a size-matched null
+# SECTION A2 - the called blocks, ranked. Companion to the genome-wide figure.
 # ==============================================================================
-# WHY THIS EXISTS. There are now fifteen region figures and no way to tell from
-# the set which of them is actually extreme. A bare ranking of our own picks
-# would be circular - we chose them, so of course they rank - so each region is
-# ALSO placed against every same-width window in the genome. That percentile is
-# the honest number: it is what makes "Pcdh decompacts" and "43.7% of 580 kb
-# windows lose more short-range contact than Pcdh does" both true statements,
-# and it is the one a collaborator will ask for.
+# WHY THIS AND NOT A RANKING OF THE PLOTTED REGIONS. The first version of this
+# ranked the sixteen regions GAM_7 draws - Pcdh, Olfr, Vmn, the KRAB-ZFP
+# clusters and so on. That is circular: we chose those windows, so of course
+# they rank, and the ranking says more about our selection than about the
+# genome. It also was not width-fair, because each bin's count integrates
+# contacts out to 5 Mb and most of the plotted regions are narrower than that.
 #
-# The statistic is mean NET differential contacts per bin (gained - lost), from
-# the delivered per-bin counts. Signed, so direction is visible; per bin, so a
-# 25 Mb block and a 1.8 Mb cluster are comparable.
+# The large blocks are CALLED FROM THE DATA (|net| > 0.5 sustained over >= 4 Mb,
+# gam6_large_blocks.tsv), so ranking them is a genome-wide statement rather than
+# a restatement of our own choices - and it is the number you want next to
+# blocks/large_blocks_genome_wide.png, which shows where they are but not which
+# ones are big. Every block is at least 4 Mb, so the 5 Mb integration window is
+# much less of a problem than it was across 1.8-98 Mb regions.
+#
+# The plotted regions are marked rather than ranked, which answers the question
+# that actually matters about them: do our figures cover the top of the
+# distribution, or did we draw the middle of it?
 local({
-  fig_sub <- "regions"
+  fig_sub <- "blocks"
   msg <- function(...) cat(sprintf(...), "\n", sep = "")
-  # Self-contained: section A's X and region_span() live inside its own local(),
-  # so this block loads what it needs rather than reaching into that scope.
+  bf <- file.path(tables_dir, "gam6_large_blocks.tsv")
   g1 <- file.path(rds_dir, "gam_bins_annotated.rds")
-  if (!file.exists(g1) || !exists("gam12_region_list")) {
-    msg("section A2 skipped - gam_bins_annotated.rds or the region list is missing")
+  if (!file.exists(bf) || !file.exists(g1)) {
+    msg("section A2 skipped - needs gam6_large_blocks.tsv (run GAM_4) and GAM_1 output")
     return(invisible())
   }
+  B  <- fread(bf)
   A2 <- as.data.table(readRDS(g1)$annot); setorder(A2, chr, start)
   A2[, net := n_contacts_gained - n_contacts_lost]
-  rspan <- function(chrom, from = NULL, to = NULL) {
-    d <- A2[chr == chrom]
-    c(if (is.null(from)) min(d$start) else from,
-      if (is.null(to))   max(d$end)   else to)
-  }
-  R <- rbindlist(lapply(gam12_region_list, function(r) {
-    lim <- rspan(r[[1]], r[[2]], r[[3]])
-    d <- A2[chr == r[[1]] & start >= lim[1] & end <= lim[2]]
-    if (!nrow(d)) return(NULL)
-    nb <- nrow(d)
-    # Size-matched null: every contiguous nb-bin window on every autosome,
-    # stepped by a tenth of the window so the windows are not all independent
-    # but do cover the genome. frollmean over the per-chromosome ordering gives
-    # the same thing far more cheaply than an explicit loop.
-    step <- max(1L, nb %/% 10L)
-    nullv <- unlist(lapply(split(A2$net, A2$chr), function(v) {
-      if (length(v) < nb) return(numeric(0))
-      m <- frollmean(v, nb)
-      m <- m[seq(nb, length(m), by = step)]
-      m[is.finite(m)]
-    }), use.names = FALSE)
-    obs <- mean(d$net)
-    data.table(name = r[[4]], chr = r[[1]],
-               Mb = sprintf("%.0f-%.0f", lim[1] / 1e6, lim[2] / 1e6),
-               width_Mb = (lim[2] - lim[1]) / 1e6, n_bins = nb,
-               mean_net = obs,
-               mean_lost = mean(d$n_contacts_lost),
-               mean_gained = mean(d$n_contacts_gained),
-               pct = 100 * mean(nullv < obs), n_null = length(nullv))
+  # Per-bin net differential contacts inside each block. mean_net in the table is
+  # the smoothed log2 ratio the caller thresholds on; this is the raw count
+  # difference, which is what a reader can interpret directly.
+  B[, c("net_per_bin", "lost_per_bin", "gained_per_bin") := {
+      r <- A2[chr == .BY$chr & start >= .BY$start & end <= .BY$end]
+      .(mean(r$net), mean(r$n_contacts_lost), mean(r$n_contacts_gained))
+    }, by = .(chr, start, end)]
+  B <- B[is.finite(net_per_bin)]
+  if (!nrow(B)) { msg("section A2 skipped - no blocks resolved"); return(invisible()) }
+
+  # Which blocks do we actually have a region figure for?
+  plotted <- rbindlist(lapply(gam12_region_list, function(r) {
+    d <- A2[chr == r[[1]]]
+    data.table(chr = r[[1]],
+               from = if (is.null(r[[2]])) min(d$start) else as.numeric(r[[2]]),
+               to   = if (is.null(r[[3]])) max(d$end)   else as.numeric(r[[3]]))
   }))
-  if (!nrow(R)) { msg("section A2 skipped - no regions resolved"); return(invisible()) }
-  fwrite(R, file.path(tables_dir, "gam12_region_ranking.tsv"), sep = "\t")
-  R[, lab := sprintf("%s  (%s Mb)", name, Mb)]
-  R[, dirn := fifelse(mean_net > 0, "gained in cKO", "lost in cKO")]
-  setorder(R, mean_net)
-  R[, lab := factor(lab, levels = lab)]
-  # Two panels on one row of labels: the effect, and where it sits in the genome.
-  # Separate panels rather than one axis because they are different units and a
-  # dual axis would invite reading one off the other.
-  p1 <- ggplot(R, aes(mean_net, lab, fill = dirn)) +
-    geom_col(width = 0.68) +
-    geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey40") +
-    scale_fill_manual(values = c(`gained in cKO` = "#B2182B",
-                                 `lost in cKO` = "#2166AC"), name = NULL) +
-    labs(x = "mean net differential contacts per 20 kb bin (gained - lost)", y = NULL,
-         subtitle = "Effect") +
-    theme_minimal(base_size = 9) +
-    theme(panel.grid.major.y = element_blank(), legend.position = "top")
-  p2 <- ggplot(R, aes(pct, lab)) +
-    geom_vline(xintercept = c(5, 50, 95), linetype = 2, linewidth = 0.25,
-               colour = "grey70") +
-    geom_segment(aes(x = 50, xend = pct, yend = lab), linewidth = 0.4,
-                 colour = "grey55") +
-    geom_point(aes(colour = dirn), size = 2.2) +
-    scale_colour_manual(values = c(`gained in cKO` = "#B2182B",
-                                   `lost in cKO` = "#2166AC"), guide = "none") +
-    scale_x_continuous(limits = c(0, 100), breaks = c(0, 5, 25, 50, 75, 95, 100)) +
-    labs(x = "percentile among same-width windows genome-wide", y = NULL,
-         subtitle = "How extreme is that, really?") +
-    theme_minimal(base_size = 9) +
-    theme(axis.text.y = element_blank(), panel.grid.major.y = element_blank())
-  pp <- (p1 | p2) + plot_layout(widths = c(1.35, 1)) +
+  B[, drawn := FALSE]
+  for (k in seq_len(nrow(plotted)))
+    B[chr == plotted$chr[k] & start < plotted$to[k] & end > plotted$from[k],
+      drawn := TRUE]
+
+  setorder(B, net_per_bin)
+  B[, rank := .I]
+  B[, lab := sprintf("%s:%.0f-%.0f", chr, start / 1e6, end / 1e6)]
+  fwrite(B[order(-abs(net_per_bin)),
+           .(chr, start, end, width_Mb, dirn, n_bins, net_per_bin,
+             lost_per_bin, gained_per_bin, mean_net, drawn)],
+         file.path(tables_dir, "gam12_block_ranking.tsv"), sep = "\t")
+
+  ends <- rbind(head(B, 6), tail(B, 6))
+  pal  <- c(gained = "#B2182B", lost = "#2166AC")
+  p1 <- ggplot(B, aes(rank, net_per_bin, fill = dirn)) +
+    geom_col(width = 1) +
+    geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey40") +
+    geom_point(data = B[drawn == TRUE], aes(y = net_per_bin), shape = 21,
+               fill = "white", colour = "grey20", size = 1.5, stroke = 0.4) +
+    ggrepel::geom_text_repel(data = ends, aes(label = lab), size = 2.4,
+                             colour = "grey20", max.overlaps = 40,
+                             segment.size = 0.2, min.segment.length = 0) +
+    scale_fill_manual(values = pal, name = NULL) +
+    labs(x = sprintf("block, ranked (%d called genome-wide)", nrow(B)),
+         y = "net differential contacts\nper 20 kb bin (gained - lost)",
+         subtitle = "Every called block, ranked. White dots are blocks we have a region figure for.") +
+    theme_m + theme(legend.position = "top", panel.grid.major.x = element_blank())
+  p2 <- ggplot(B, aes(rank, width_Mb, colour = dirn)) +
+    geom_segment(aes(xend = rank, yend = 0), linewidth = 0.35) +
+    scale_colour_manual(values = pal, guide = "none") +
+    labs(x = NULL, y = "block width (Mb)",
+         subtitle = "Width, same order - so a big bar on a thin block is visible as such") +
+    theme_m + theme(axis.text.x = element_blank(),
+                    panel.grid.major.x = element_blank())
+  pp <- (p1 / p2) + plot_layout(heights = c(2.3, 1)) +
     plot_annotation(
-      title = "The plotted regions, ranked by magnitude of contact change",
-      subtitle = paste("Mean net differential contacts per 20 kb bin. Right panel places each region against every",
-                       "same-width window in the genome - a region we picked is not automatically an extreme one."),
-      caption = paste0("Counts are the delivered per-bin differential contacts within 5 Mb. Null windows are stepped by a tenth of the",
-                       " region width, so neighbouring windows overlap; this is a reference distribution, not an independent sample.",
-                       "\nTable: gam12_region_ranking.tsv"),
+      title = "Large one-directional blocks, ranked by magnitude of contact change",
+      subtitle = paste("The companion to the genome-wide block figure: that one shows WHERE they are,",
+                       "this one shows WHICH ONES ARE BIG."),
+      caption = paste0("Blocks are called from the data (|net| > ", gam_block_net_cut,
+                       " sustained over >= ", gam_block_min_mb,
+                       " Mb), not chosen, so this is a genome-wide ranking rather than a restatement of which regions we picked",
+                       " to draw. Bars are the mean per-bin count of significant differential contacts, gained minus lost.",
+                       "\nThat count integrates out to 5 Mb, so it is still slightly generous to the narrowest blocks;",
+                       " every block here is at least ", gam_block_min_mb, " Mb. Table: gam12_block_ranking.tsv"),
       theme = theme(plot.title = element_text(face = "bold", size = 12),
                     plot.subtitle = element_text(size = 8.5),
                     plot.caption = element_text(hjust = 0, size = 7, colour = "grey35")))
-  save_fig(pp, "region_ranking", subdir = fig_sub, width = 11,
-           height = max(4.2, 0.30 * nrow(R) + 2.2))
-  msg("  region_ranking: %d regions, null n = %d", nrow(R), R$n_null[1])
+  save_fig(pp, "block_ranking", subdir = fig_sub, width = 11, height = 7.6)
+  msg("  block_ranking: %d blocks, %d of them drawn as region figures",
+      nrow(B), sum(B$drawn))
 })
 
 # ==============================================================================
