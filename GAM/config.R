@@ -776,3 +776,57 @@ select_compartment_pc <- function(pc, ids, ref, balance = c(0.2, 0.8)) {
        frac_A = mean(v * sgn > 0, na.rm = TRUE))
 }
 
+
+# ------------------------------------------------------------------------------
+# The shared A/B axis, as bin-level columns          (added 2026-10-19)
+# ------------------------------------------------------------------------------
+# GAM_2 gives each genotype its OWN selected eigenvector. Those two vectors are
+# the same eigenvector on only 8 of 19 autosomes, so `compartment_switch`
+# ("A in WT, B in cKO") compares two different directions and a switch count
+# built from it is not a measurement - settled point 2 in CLAUDE.md. GAM_2b
+# fixes that by phasing ONE axis per chromosome against active_chromatin_ref()
+# and scoring both genotypes on it; a sign change of that single score is a real
+# crossing.
+#
+# Three stages need those columns (GAM_3's size-matched overlap, GAM_4's block
+# characterisation, GAM_6's target permutations) and each used to read the rds
+# itself, so "A to B" had three definitions that could drift. This is the one.
+#
+# Returns NULL - with a warning naming the stage to run - when GAM_2b has not
+# been run, so a caller can fall back and say so rather than fail.
+gam_shared_axis_bins <- function(what = c("scores", "flags")) {
+  what <- match.arg(what, several.ok = TRUE)
+  f <- file.path(rds_dir, "shared_axis_scores.rds")
+  if (!file.exists(f)) {
+    warning("shared axis not found: ", f,
+            "\n  Run it first:  cd GAM && Rscript GAM_2b_Shared_Axis.R", call. = FALSE)
+    return(NULL)
+  }
+  d <- as.data.table(readRDS(f)$fine)[, .(bin_id,
+                                          shared_WT     = score_WT,
+                                          shared_HP1gKO = score_HP1gKO,
+                                          shared_delta  = score_delta)]
+  if ("flags" %in% what) {
+    # A = positive score, because GAM_2b orients the axis so positive is
+    # active-high. These are 0/1 (not logical) so they can go straight into a
+    # numeric matrix of permutation metrics alongside the continuous ones.
+    d[, `:=`(in_A_shared_WT = as.numeric(shared_WT > 0),
+             shared_AB      = as.numeric(shared_WT > 0 & shared_HP1gKO < 0),
+             shared_BA      = as.numeric(shared_WT < 0 & shared_HP1gKO > 0))]
+    # A bin with no axis on its chromosome is NA in all three, not 0: scoring it
+    # as "did not switch" would silently count the 3 undetermined autosomes as
+    # evidence of stability.
+    d[!is.finite(shared_WT) | !is.finite(shared_HP1gKO),
+      `:=`(in_A_shared_WT = NA_real_, shared_AB = NA_real_, shared_BA = NA_real_)]
+    # READ THIS BEFORE QUOTING A SWITCH COUNT. GAM_2b median-centres each
+    # genotype's score per chromosome, so exactly half the bins on a chromosome
+    # are A in each genotype and the genome-wide shared_AB and shared_BA totals
+    # are EQUAL BY CONSTRUCTION (14,190 each at present). A symmetric total is
+    # therefore not a finding, and these flags cannot answer "does the genome
+    # shift toward A". They answer only "does this set cross more often than a
+    # matched draw", which is what the permutation nulls ask of them. Net
+    # direction comes from the continuous shared_delta, which keeps amplitude.
+  }
+  if (!"scores" %in% what) d[, c("shared_WT", "shared_HP1gKO", "shared_delta") := NULL]
+  d[]
+}

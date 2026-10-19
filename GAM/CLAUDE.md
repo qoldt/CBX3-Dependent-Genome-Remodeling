@@ -157,8 +157,10 @@ files' own completion messages. The current mapping:
 | `GAM_6_Targets.R` | `gam9_*`, `gam14_*` |
 | `GAM_7_Figures.R` | `gam12_*`, `gam15_*` |
 
-So `gam6_block_characterisation.tsv` is a **GAM_4** output and does not read the
-shared axis; `gam10_class_change.tsv` is **GAM_5**. The files print the old
+So `gam6_block_characterisation.tsv` is a **GAM_4** output; `gam10_class_change.tsv`
+is **GAM_5**. (GAM_4 *does* read the shared axis as of 2026-10-19 - see the
+A/B section below - so `GAM_2b` must run before it, as it already must before
+`GAM_6`.) The files print the old
 section number on completion for the same reason ("GAM_10 complete" inside
 `GAM_5_Heterochromatin.R`).
 

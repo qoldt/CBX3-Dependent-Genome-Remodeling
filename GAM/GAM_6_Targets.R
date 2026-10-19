@@ -60,8 +60,8 @@ local({
     if (all(paste0(v, c("_WT", "_HP1gKO")) %in% names(feat)))
       feat[, (paste0(v, "_delta")) := get(paste0(v, "_HP1gKO")) - get(paste0(v, "_WT"))]
   keep <- intersect(c("bin_id", "pc1_delta", "insulation_delta", "npmi_short_delta",
-                      "npmi_long_delta", "decay_slope_delta", "compartment_WT",
-                      "compartment_switch", "n_valid_WT", "n_valid_HP1gKO"), names(feat))
+                      "npmi_long_delta", "decay_slope_delta",
+                      "n_valid_WT", "n_valid_HP1gKO"), names(feat))
   d <- merge(d, feat[, ..keep], by = "bin_id", all.x = TRUE, sort = FALSE)
   # SHARED-AXIS compartment delta from GAM_2b, if it has been run. pc1_delta is
   # the difference between each genotype's OWN selected eigenvector, and the two
@@ -77,7 +77,14 @@ local({
               call. = FALSE)
       return(invisible(NULL))
     }
-    sa <- readRDS(f)$fine[, .(bin_id, shared_delta = score_delta)]
+    # Scores AND the binary A/B flags. The flags replace switch_AB / switch_BA /
+    # in_A_WT, which came from compartment_switch, i.e. WT's eigenvector compared
+    # with the cKO's - two different directions on 11 of 19 autosomes. On one
+    # shared axis a sign change is a real crossing. See gam_shared_axis_bins()
+    # in config.R for the one caveat: the per-chromosome median-centring pins the
+    # genome-wide A->B and B->A totals equal, so these support an enrichment
+    # question only, never a net-direction claim.
+    sa <- gam_shared_axis_bins(c("scores", "flags"))
     d <<- merge(d, sa, by = "bin_id", all.x = TRUE, sort = FALSE)
     ov <- mean(!is.na(d$shared_delta))
     message(sprintf("  shared-axis delta joined to %.1f%% of bins", 100 * ov))
@@ -250,15 +257,14 @@ local({
   d[, net_remodel := gained_log1p - lost_log1p]        # >0 : more contacts gained than lost
   d[, top_lost   := as.numeric(n_contacts_lost   >= quantile(n_contacts_lost,   0.9, na.rm = TRUE))]
   d[, top_gained := as.numeric(n_contacts_gained >= quantile(n_contacts_gained, 0.9, na.rm = TRUE))]
-  if ("compartment_WT" %in% names(d)) d[, in_A_WT := as.numeric(compartment_WT == "A")]
-  if ("compartment_switch" %in% names(d)) {
-    d[, switch_AB := as.numeric(compartment_switch == "A_B")]
-    d[, switch_BA := as.numeric(compartment_switch == "B_A")]
-  }
+  # in_A_shared_WT / shared_AB / shared_BA now arrive with the shared-axis join
+  # above. The per-genotype equivalents (compartment_WT == "A",
+  # compartment_switch == "A_B") are deliberately NOT built here any more.
   metric_cols <- intersect(c("lost_log1p", "gained_log1p", "net_remodel", "top_lost", "top_gained",
                              "pc1_delta", "shared_delta", "npmi_short_delta", "npmi_long_delta",
                              "decay_slope_delta",
-                             "insulation_delta", "in_A_WT", "switch_AB", "switch_BA"), names(d))
+                             "insulation_delta", "in_A_shared_WT", "shared_AB", "shared_BA"),
+                           names(d))
   M <- as.matrix(d[, ..metric_cols])
 
   NPERM <- 1000    # per set; stratified draws, p resolution 1e-3
@@ -299,7 +305,7 @@ local({
   # it is the coarser of the two nulls and is here to show the stratified result is not
   # an artefact of the stratification. A tiny jitter breaks the ties at 0.
   sp <- rbindlist(lapply(names(target_sets), function(s) {
-    rbindlist(lapply(intersect(c("top_lost", "switch_AB"), names(d)), function(fl) {
+    rbindlist(lapply(intersect(c("top_lost", "shared_AB"), names(d)), function(fl) {
       ok <- is.finite(d[[fl]]) & is.finite(d$rep_cov)
       qi <- cumsum(ok)[target_sets[[s]][ok[target_sets[[s]]]]]
       set.seed(42); cj <- d$rep_cov[ok] + runif(sum(ok), 0, 1e-6)
@@ -426,7 +432,7 @@ local({
   sub_dir <- "hush_contacts"
   shown <- c(metric_cols[metric_cols %in% c("lost_log1p", "gained_log1p", "net_remodel", "pc1_delta",
                                             "npmi_short_delta", "npmi_long_delta", "insulation_delta",
-                                            "switch_AB", "switch_BA")])
+                                            "shared_AB", "shared_BA")])
   # PLAIN-LANGUAGE COLUMN LABELS. The raw metric names said nothing about what was
   # measured or which direction is which, and the heatmap is the figure most likely
   # to be read without the script open. Each label states the quantity and, where
@@ -442,15 +448,17 @@ local({
     insulation_delta = "insulation\n+ = weaker boundary",
     pc1_delta        = "per-genotype PC1 delta\n(not a sound comparison)",
     shared_delta     = "shared compartment axis\n+ = toward A",
-    switch_AB        = "called A in WT,\nB in cKO",
-    switch_BA        = "called B in WT,\nA in cKO")
+    in_A_shared_WT   = "A in WT on the\nshared axis",
+    shared_AB        = "crosses A to B\non the shared axis",
+    shared_BA        = "crosses B to A\non the shared axis")
   grp <- c(lost_log1p = "differential contacts", gained_log1p = "differential contacts",
            net_remodel = "differential contacts",
            npmi_short_delta = "contact density (NPMI)", npmi_long_delta = "contact density (NPMI)",
            insulation_delta = "boundary",
            pc1_delta = "compartment call (see caveat)", shared_delta = "compartment axis",
-           switch_AB = "compartment call (see caveat)",
-           switch_BA = "compartment call (see caveat)")
+           in_A_shared_WT = "compartment axis",
+           shared_AB = "compartment axis",
+           shared_BA = "compartment axis")
   pd <- res[metric %in% shown]
   nb <- unique(res[, .(set, n_target_bins)])
   pd <- merge(pd, nb, by = c("set", "n_target_bins"))

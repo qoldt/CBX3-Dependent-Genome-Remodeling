@@ -241,3 +241,43 @@ restores v1 exactly. `GAM2B_K=<n>` re-runs the k sensitivity test.
 `ov > 0.80`. That is 2.7 points of headroom. If another chromosome drops out,
 `GAM_6` will stop rather than quietly produce a verdict on two-thirds of the
 genome — which is the intended behaviour, but it will look like a crash.
+
+## 6. The strength null does not regenerate from committed code (2026-10-19)
+
+Sections 3-5 are about how badly the A/B *axis* behaves. This section is about
+the one compartment result that does not depend on an axis at all - and it has a
+different problem.
+
+The strength test projects both genotypes onto rulers external to both contact
+matrices and finds nothing:
+
+| ruler | mean delta | 95% CI | p |
+|---|---|---|---|
+| active chromatin (WT H3K4me3 + H3K36me3 z) | -0.00018 | -0.00213 to +0.00186 | 0.62 |
+| TSS density | +0.00019 | -0.00057 to +0.00103 | 0.74 |
+
+Both over all 19 autosomes, bootstrap over chromosomes, paired Wilcoxon.
+Negative on 10 of 19 for the active-chromatin ruler.
+
+**This is the strongest compartment statement in the analysis and the least
+reproducible part of it.** It was computed on 2026-10-17 and recorded in `f5096fa`
+as prose in `CLAUDE.md` and `make_report.R`. It was never persisted:
+
+- no file in `results/tables/` contains it;
+- no committed script computes it (`grep -rn '0.00018' --include='*.R'` returns
+  `make_report.R` only, where it is a literal in a `<div class='warn'>`);
+- `verify_GAM.R` therefore cannot check it - its facts are computed *from*
+  tables, so a statistic with no table generates no fact and no failure. A
+  green 39/39 says nothing about this number.
+
+That breaks the repo rule that everything in `results/` regenerates from
+committed code plus the raw data, and it breaks it for exactly the number a
+reviewer is most likely to press on.
+
+**What closing it needs.** A stage - `GAM_2d`, or a section of `GAM_2b`, which
+already loads both correlation matrices and `active_chromatin_ref()` - that for
+each autosome scores both genotypes on each external ruler, computes the
+strength contrast, bootstraps over chromosomes, and writes
+`gam2d_strength_external_axes.tsv`. Then register it in `verify_GAM.R` as a
+fact so the prose is checked like everything else. Until that exists, quote the
+two rows above as provisional and say where they came from.

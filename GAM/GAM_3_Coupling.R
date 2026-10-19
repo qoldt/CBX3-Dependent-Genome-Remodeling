@@ -1041,10 +1041,22 @@ local({
   d[, top_lost   := n_contacts_lost   >= quantile(n_contacts_lost,   0.9, na.rm = TRUE)]
   d[, top_gained := n_contacts_gained >= quantile(n_contacts_gained, 0.9, na.rm = TRUE)]
   flags <- c("top_lost", "top_gained", "tad_boundary")
-  if (have_feat) {
-    d[, switch_AB := compartment_switch == "A_B"]   # WT A -> KO B
-    d[, switch_BA := compartment_switch == "B_A"]   # WT B -> KO A
-    flags <- c(flags, "switch_AB", "switch_BA")
+  # A/B crossing on the SHARED axis (GAM_2b), not on compartment_switch. The
+  # latter asks whether WT's own eigenvector called a bin A while the cKO's
+  # called it B, and those are different eigenvectors on 11 of 19 autosomes, so
+  # it is not one quantity. gam_shared_axis_bins() scores both genotypes on one
+  # phased axis per chromosome, where a sign change is a real crossing. Same
+  # definition as GAM_4 and GAM_6 use - see config.R, including why the
+  # genome-wide A->B and B->A totals are equal by construction and so these
+  # flags answer enrichment only. Section 3 below still censuses
+  # compartment_switch, under its own caveat, for the contrast.
+  sa_flags <- gam_shared_axis_bins("flags")
+  if (!is.null(sa_flags)) {
+    d <- merge(d, sa_flags, by = "bin_id", all.x = TRUE, sort = FALSE)
+    d[, `:=`(shared_AB = as.logical(shared_AB), shared_BA = as.logical(shared_BA))]
+    flags <- c(flags, "shared_AB", "shared_BA")
+    message(sprintf("  shared-axis A/B flags joined to %.1f%% of bins",
+                    100 * mean(!is.na(d$shared_AB))))
   }
   perm_res <- rbindlist(lapply(names(schemes), function(sc) {
     g <- factor(d[[schemes[[sc]]]], levels = grp_levels)

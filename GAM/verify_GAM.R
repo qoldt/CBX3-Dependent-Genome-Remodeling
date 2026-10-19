@@ -33,6 +33,24 @@
 # Note the polarity: a file passes by CONTAINING the current value, not by
 # lacking old ones. A change-note that says "previously 38 of 38, now 27 of 38"
 # passes, which is deliberate - that is good documentation, not staleness.
+#
+# WHAT THIS CANNOT COVER, and it is the important limitation (found 2026-10-19)
+#
+# The design only works for a statistic that HAS a table. A number computed
+# once in a session and written straight into prose is invisible here: there is
+# nothing to compute it from, so no fact exists and no check fails. Passing
+# 39/39 means every statistic WITH a table agrees with it - not that every
+# statistic in the prose is backed.
+#
+# One such number is load-bearing: the compartment-strength null (active-
+# chromatin axis mean delta -0.00018, 95% CI -0.00213 to +0.00186, p = 0.62;
+# TSS axis +0.00019, p = 0.74). It was settled in f5096fa on 2026-10-17 and
+# written into GAM/CLAUDE.md and make_report.R without a stage or a table, so
+# it does not regenerate from committed code - which the repo rule for
+# results/ forbids - and it is the ONE compartment claim the analysis still
+# makes. Not registered as a failing check, because the fix is to write the
+# stage, not to edit prose, and a permanently red check is a check people stop
+# reading. Tracked in results/COMPARTMENTS.md section 6.
 # ================================================================
 source("config.R")
 suppressPackageStartupMessages(library(data.table))
@@ -129,14 +147,14 @@ S <- rd(file.path(tables_dir, "gam2b_shared_axis_summary.tsv"))
 if (!is.null(S)) {
   det <- S[determined == TRUE]
   fact("shared.determined", nrow(det), m_n_of_m(nrow(S)),
-       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
+       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md", "../ABSTRACT.md"),
        "autosomes with a shared axis", src = "gam2b_shared_axis_summary.tsv")
   fact("shared.pc1", sum(det$which_pc == 1, na.rm = TRUE), m_n_of_m(nrow(det)),
        c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md",
-         "results/BIN_BALANCING.md"),
+         "results/BIN_BALANCING.md", "../ABSTRACT.md"),
        "shared axes carried by PC1", src = "gam2b_shared_axis_summary.tsv")
   fact("shared.median_rho", median(abs(det$rho_ref), na.rm = TRUE), m_near(0.002),
-       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
+       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md", "../ABSTRACT.md"),
        "median |rho| of the shared axis vs active chromatin", src = "gam2b_shared_axis_summary.tsv")
 }
 
@@ -150,7 +168,7 @@ if (!is.null(L)) {
   for (mk in L$mark) {
     v <- L[mark == mk, median_log2FC]
     fact(sprintf("chip.median_l2fc.%s", mk), v, m_near(0.0015),
-         c("make_report.R"),
+         c("make_report.R", "../ABSTRACT.md"),
          sprintf("%s median log2FC on the GAM 20 kb grid", mk),
          src = "gam_bins_l2fc_summary.tsv")
   }
@@ -162,13 +180,36 @@ if (!is.null(CC) && all(c("cls", "band", "pct") %in% names(CC))) {
   v <- CC[cls == "inter_het" & band == "<0.2Mb", pct]
   if (length(v) == 1)
     fact("contacts.het_het_short", v, m_near(0.06),
-         c("make_report.R", "CLAUDE.md"),
+         c("make_report.R", "CLAUDE.md", "../ABSTRACT.md"),
          "het-het (different domains) below 0.2 Mb, % change in mean NPMI", src = "gam10_class_change.tsv")
   v2 <- CC[cls == "eu_eu" & band == ">10Mb", pct]
   if (length(v2) == 1)
     fact("contacts.eu_eu_long", v2, m_near(0.06),
-         c("make_report.R"),
+         c("make_report.R", "../ABSTRACT.md"),
          "eu-eu beyond 10 Mb, % change in mean NPMI", src = "gam10_class_change.tsv")
+}
+
+# --- the per-chromosome contrast behind "17 of 19 autosomes" -----------------
+# This was quoted in the plan stock-take and in ABSTRACT.md but computed nowhere
+# that persists, so nothing could catch it drifting. The claim is that
+# heterochromatin-heterochromatin contacts rise RELATIVE to euchromatin-
+# euchromatin below 1 Mb on most autosomes. Recomputed here as the sign of
+# (inter_het - eu_eu) per chromosome, which is what makes it offset-invariant:
+# the per-chromosome level of pct is dominated by a global offset (eu_eu ranges
+# -6.4% to +3.4%) and the contrast cancels it.
+PB <- rd(file.path(tables_dir, "gam15_perchrom_class_band.tsv"))
+if (!is.null(PB) && all(c("chr", "cls", "band", "pct") %in% names(PB))) {
+  w <- dcast(PB[band %in% c("<0.2Mb", "0.2-1Mb")], chr + band ~ cls, value.var = "pct")
+  if (all(c("eu_eu", "inter_het") %in% names(w))) {
+    w[, contrast := inter_het - eu_eu]
+    # Require it in BOTH sub-bands, not in their mean: a mean could be carried
+    # by one band while the other disagrees, and the claim is about both.
+    n_pos <- w[, .(all_pos = all(contrast > 0, na.rm = TRUE)), by = chr][, sum(all_pos)]
+    fact("contacts.contrast_autosomes", n_pos, m_n_of_m(length(gam_autosomes)),
+         c("../ABSTRACT.md"),
+         "autosomes where het-het beats eu-eu in BOTH sub-bands below 1 Mb",
+         src = "gam15_perchrom_class_band.tsv")
+  }
 }
 
 # --- hotspot domains ----------------------------------------------------------
@@ -189,7 +230,7 @@ if (!is.null(E) && "fold_rotated" %in% names(E)) {
                  list(key = "repeat: LINE-high (top quartile)",  id = "hotspot.fold_line"))) {
     v <- E[domain_set == "lost_adj" & annotation == a$key, fold_rotated]
     if (length(v) == 1)
-      fact(a$id, v, m_near(0.006), c("make_report.R"),
+      fact(a$id, v, m_near(0.006), c("make_report.R", "../ABSTRACT.md"),
            sprintf("lost domains vs rotation null: %s", a$key),
            src = "gam4_hotspot_annotation_enrichment.tsv")
   }
@@ -271,12 +312,19 @@ deps <- list(
   list(out = file.path(results_dir, "GAM_REPORT.html"),       ins = fact_srcs()),
   list(out = file.path(results_dir, "GAM_REPORT_artifact.html"), ins = fact_srcs()),
   # NOTE the name is misleading: gam6_block_characterisation.tsv is written by
-  # GAM_4_Large_Scale.R, not GAM_6, and it does NOT read the shared axis - it
-  # reads gam_bins_annotated.rds and npmi_bin_features.rds. Listing the shared
-  # axis here produced a false alarm on the first run of this check.
+  # GAM_4_Large_Scale.R, not GAM_6. Listing a GAM_6 input here produced a false
+  # alarm on the first run of this check. It DOES now read the shared axis
+  # (2026-10-19: its compartment column moved from pc1_WT to shared_WT), so
+  # shared_axis_scores.rds is a genuine input and is listed.
   list(out = file.path(tables_dir, "gam6_block_characterisation.tsv"),
        ins = c(file.path(rds_dir, "gam_bins_annotated.rds"),
-               file.path(rds_dir, "npmi_bin_features.rds"))),
+               file.path(rds_dir, "npmi_bin_features.rds"),
+               file.path(rds_dir, "shared_axis_scores.rds"))),
+  # GAM_3's size-matched overlap moved onto the shared axis on the same day.
+  list(out = file.path(tables_dir, "gam4_size_perm_overlap.tsv"),
+       ins = c(file.path(rds_dir, "gam_bins_annotated.rds"),
+               file.path(rds_dir, "npmi_bin_features.rds"),
+               file.path(rds_dir, "shared_axis_scores.rds"))),
   # GAM_6 is the stage that joins the shared axis's score_delta.
   list(out = file.path(tables_dir, "gam5_decompaction_verdict.tsv"),
        ins = file.path(rds_dir, "shared_axis_scores.rds")),

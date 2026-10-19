@@ -918,7 +918,9 @@ parts$blocks <- sec("Large one-directional blocks",
   tbl("gam6_large_blocks.tsv", "The blocks.", max_rows = 25L),
   embed_fig("blocks/block_contact_budget.png", "Block-by-block contact budget."),
   tbl("gam8_block_contact_budget.tsv", max_rows = 20L),
-  tbl("gam6_block_characterisation.tsv", "What is in them.", max_rows = 20L))
+  tbl("gam6_block_characterisation.tsv",
+      "What is in them. The compartment column moved from <code>pc1_WT</code> to the shared axis on 2026-10-19, because <code>pc1_WT</code> is WT's own selected eigenvector and is a different eigenvector on different chromosomes. <strong>Read <code>shared_WT</code>, not <code>shared_delta</code>.</strong> <code>shared_WT</code> is clean, and says lost blocks are the more B-like half of the genome in WT &mdash; the same statement the LAD, LINE and quiescent enrichment of lost hotspot domains makes independently. <code>shared_delta</code> is partly circular here: the score is <code>C_g %*% a</code>, so a block defined by losing contact has its score magnitude mechanically pulled toward 0, which for a negative (B-like) score reads as &ldquo;toward A&rdquo;. The observed values are exactly what that artefact predicts, so they are not independent evidence of a shift.",
+      max_rows = 20L))
 
 parts$hetclass <- sec("Contact classes and mark-change strata",
   embed_fig("heterochromatin/heterochromatin_contact_classes.png",
@@ -958,10 +960,12 @@ parts$targets <- sec("HUSH/CBX3 target families",
   embed_fig("pcdh/pcdh_native_npmi_difference.png",
             "The protocadherin cluster at native resolution, from the contact pairs rather than the 5 Mb hotspot summary."),
   tbl("gam9_pcdh_native_profile.tsv", max_rows = 20L),
-  tbl("gam5_size_perm_binary_flags.tsv", "The coarser size-matched permutation, as a cross-check that the stratified result is not an artefact of the stratification."))
+  tbl("gam5_size_perm_binary_flags.tsv", "The coarser size-matched permutation, as a cross-check that the stratified result is not an artefact of the stratification. The A/B flag was <code>switch_AB</code> (WT&rsquo;s eigenvector called this bin A while the cKO&rsquo;s called it B &mdash; two different directions) until 2026-10-19 and is now <code>shared_AB</code>, a sign change of one axis both genotypes are scored on."),
+  "<p><strong>This is where the retargeted flag changed an answer.</strong> KRAB-ZFP clusters cross A&rarr;B at 1.45&times; a repeat-matched draw (z = 3.54, p = 0.002, 387 bins). In the stratified null the same set gives A&rarr;B z = 3.62 (p = 0.001) with B&rarr;A flat (z = 0.88, p = 0.37), a continuous <code>shared_delta</code> of &minus;0.160 against &minus;0.017 matched (z = &minus;3.40), and a starting position more A-ward than matched bins (<code>in_A_shared_WT</code> 0.615 vs 0.566). Four readings of one axis, all agreeing: HP1&gamma; loss moves these clusters toward B.</p>",
+  "<p>The obvious objection does not hold here. The shared score is <code>C_g %*% a</code>, so contact amplitude leaks into it &mdash; but KRAB-ZFP <em>gains</em> contact relative to matched bins (<code>net_remodel</code> +0.22, <code>lost_log1p</code> z = &minus;3.86) and starts A-ward, so the mechanical direction is toward <em>A</em>, the opposite of what is observed. The caveat that does apply is the axis quality: median |&rho;| 0.391 against active chromatin, determined on 16 of 19 autosomes.</p>")
 
 parts$compartments <- sec("Compartment figures",
-  "<div class='warn'><strong>Read this section against the compartment caveat.</strong> The A/B axis is weakly determined on most chromosomes, and WT and cKO do not select the same eigenvector, so a WT-vs-cKO comparison of these tracks is comparing two different directions. Compartment <em>strength</em>, measured on axes external to both contact matrices across all 19 autosomes, shows <strong>no change</strong> (active-chromatin axis mean delta &minus;0.00018, 95% CI &minus;0.00213 to +0.00186, p = 0.62; TSS-density axis p = 0.74). The figures are kept for the structure they show, not for a differential claim.</div>",
+  "<div class='warn'><strong>Read this section against the compartment caveat.</strong> The A/B axis is weakly determined on most chromosomes, and WT and cKO do not select the same eigenvector, so a WT-vs-cKO comparison of these tracks is comparing two different directions. Compartment <em>strength</em>, measured on axes external to both contact matrices across all 19 autosomes, shows <strong>no change</strong> (active-chromatin axis mean delta &minus;0.00018, 95% CI &minus;0.00213 to +0.00186, p = 0.62; TSS-density axis p = 0.74) &mdash; but those two numbers were computed on 2026-10-17 and written into prose without a stage or a table behind them, so nothing regenerates or checks them; see <code>results/COMPARTMENTS.md</code> section 6. The figures are kept for the structure they show, not for a differential claim.</div>",
   embed_fig("compartments/contact_decay_by_genotype.png",
             "Contact decay with separation. This does NOT depend on the compartment axis and is reliable."),
   embed_fig("compartments/saddle_by_genotype.png",
