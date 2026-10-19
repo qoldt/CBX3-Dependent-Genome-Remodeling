@@ -175,18 +175,38 @@ if (!is.null(L)) {
 }
 
 # --- the central contact result ----------------------------------------------
+# These moved onto the two-level partition on 2026-10-19. "het-het" is now
+# LEVEL 1 - Polycomb + H3K9me3 + quiescent - not the old "both bins carry an
+# H3K9me3/H4K20me3 peak", and "eu-eu" is TSS + enhancer + transcribed rather
+# than "neither bin carries a peak". The values therefore changed, and the
+# documents quoting them were updated in the same commit.
 CC <- rd(file.path(tables_dir, "gam10_class_change.tsv"))
-if (!is.null(CC) && all(c("cls", "band", "pct") %in% names(CC))) {
-  v <- CC[cls == "inter_het" & band == "<0.2Mb", pct]
+if (!is.null(CC) && all(c("level", "pair", "band", "pct") %in% names(CC))) {
+  L1 <- CC[level == "L1"]
+  v <- L1[pair == "heterochromatin-heterochromatin" & band == "<0.2Mb", pct]
   if (length(v) == 1)
     fact("contacts.het_het_short", v, m_near(0.06),
          c("make_report.R", "CLAUDE.md", "../ABSTRACT.md"),
-         "het-het (different domains) below 0.2 Mb, % change in mean NPMI", src = "gam10_class_change.tsv")
-  v2 <- CC[cls == "eu_eu" & band == ">10Mb", pct]
+         "level-1 het-het below 0.2 Mb, % change in mean NPMI", src = "gam10_class_change.tsv")
+  # Band edges moved on 2026-10-19: the old open-ended ">10Mb" pooled 10-195 Mb,
+  # with nearly half its pairs beyond 50 Mb. This fact now names the top band
+  # from config so it cannot silently key on a band that no longer exists.
+  v2 <- L1[pair == "euchromatin-euchromatin" & band == tail(gam_band_names, 1), pct]
   if (length(v2) == 1)
+    # Checked against the RENDERED report, not make_report.R: the class tables
+    # are now generated from gam10_class_change.tsv, so the source legitimately
+    # contains no literal to match. Same reason as the melting facts below.
     fact("contacts.eu_eu_long", v2, m_near(0.06),
-         c("make_report.R", "../ABSTRACT.md"),
-         "eu-eu beyond 10 Mb, % change in mean NPMI", src = "gam10_class_change.tsv")
+         c("results/GAM_REPORT.html", "../ABSTRACT.md"),
+         "level-1 eu-eu in the top distance band, % change in mean NPMI", src = "gam10_class_change.tsv")
+  # The H3K9me3 sub-class on its own, which is where the effect concentrates and
+  # which is the closest thing to the quantity the old binary measured.
+  v3 <- CC[level == "L2" & pair == "H3K9me3-H3K9me3" & band == "<0.2Mb", pct]
+  if (length(v3) == 1)
+    fact("contacts.k9_k9_short", v3, m_near(0.06),
+         c("results/GAM_REPORT.html", "../ABSTRACT.md"),
+         "level-2 H3K9me3-H3K9me3 below 0.2 Mb, % change in mean NPMI",
+         src = "gam10_class_change.tsv")
 }
 
 # --- the per-chromosome contrast behind "17 of 19 autosomes" -----------------
@@ -194,14 +214,15 @@ if (!is.null(CC) && all(c("cls", "band", "pct") %in% names(CC))) {
 # that persists, so nothing could catch it drifting. The claim is that
 # heterochromatin-heterochromatin contacts rise RELATIVE to euchromatin-
 # euchromatin below 1 Mb on most autosomes. Recomputed here as the sign of
-# (inter_het - eu_eu) per chromosome, which is what makes it offset-invariant:
-# the per-chromosome level of pct is dominated by a global offset (eu_eu ranges
-# -6.4% to +3.4%) and the contrast cancels it.
+# (het-het - eu-eu) per chromosome, which is what makes it offset-invariant:
+# the per-chromosome level of pct is dominated by a global offset and the
+# contrast cancels it. Reads level 1 since 2026-10-19.
 PB <- rd(file.path(tables_dir, "gam15_perchrom_class_band.tsv"))
-if (!is.null(PB) && all(c("chr", "cls", "band", "pct") %in% names(PB))) {
-  w <- dcast(PB[band %in% c("<0.2Mb", "0.2-1Mb")], chr + band ~ cls, value.var = "pct")
-  if (all(c("eu_eu", "inter_het") %in% names(w))) {
-    w[, contrast := inter_het - eu_eu]
+if (!is.null(PB) && all(c("chr", "level", "pair", "band", "pct") %in% names(PB))) {
+  w <- dcast(PB[level == "L1" & band %in% c("<0.2Mb", "0.2-1Mb")],
+             chr + band ~ pair, value.var = "pct")
+  if (all(c("euchromatin-euchromatin", "heterochromatin-heterochromatin") %in% names(w))) {
+    w[, contrast := `heterochromatin-heterochromatin` - `euchromatin-euchromatin`]
     # Require it in BOTH sub-bands, not in their mean: a mean could be carried
     # by one band while the other disagrees, and the claim is about both.
     n_pos <- w[, .(all_pos = all(contrast > 0, na.rm = TRUE)), by = chr][, sum(all_pos)]
@@ -211,6 +232,43 @@ if (!is.null(PB) && all(c("chr", "cls", "band", "pct") %in% names(PB))) {
          src = "gam15_perchrom_class_band.tsv")
   }
 }
+
+# --- the large one-directional blocks and what is inside them -----------------
+# results/LARGE_BLOCKS.md is a hand-written document full of numbers, which is
+# exactly the shape of file this checker exists for.
+local({
+  B <- rd(file.path(tables_dir, "gam6_large_blocks.tsv"))
+  if (!is.null(B) && nrow(B)) {
+    cnt <- function(txt, v) grepl(sprintf("\\b%d\\b", v), txt, perl = TRUE)
+    fact("blocks.n_lost", sum(B$dirn == "lost"), cnt,
+         c("results/LARGE_BLOCKS.md"), "large blocks that LOSE contacts",
+         src = "gam6_large_blocks.tsv")
+    fact("blocks.n_gained", sum(B$dirn == "gained"), cnt,
+         c("results/LARGE_BLOCKS.md"), "large blocks that GAIN contacts",
+         src = "gam6_large_blocks.tsv")
+  }
+  G <- rd(file.path(tables_dir, "gam8_block_contact_budget.tsv"))
+  if (!is.null(G) && nrow(G)) {
+    v <- G[pair == "lost-lost" & band == "5-10Mb", pct]
+    if (length(v) == 1)
+      fact("blocks.lost_lost_5_10Mb", v, m_near(0.06), c("results/LARGE_BLOCKS.md"),
+           "both ends in a lost block, 5-10 Mb, % change in mean NPMI",
+           src = "gam8_block_contact_budget.tsv")
+    v <- G[pair == "gained-gained" & band == "1-5Mb", pct]
+    if (length(v) == 1)
+      fact("blocks.gained_gained_1_5Mb", v, m_near(0.06), c("results/LARGE_BLOCKS.md"),
+           "both ends in a gained block, 1-5 Mb, % change in mean NPMI",
+           src = "gam8_block_contact_budget.tsv")
+  }
+  K <- rd(file.path(tables_dir, "gam16_block_class_contrast_ci.tsv"))
+  if (!is.null(K) && nrow(K)) {
+    v <- K[dirn == "lost" & band == "0.2-1Mb", contrast]
+    if (length(v) == 1)
+      fact("blocks.k9_vs_quies_lost", v, m_near(0.06), c("results/LARGE_BLOCKS.md"),
+           "H3K9me3-H3K9me3 minus quiescent-quiescent INSIDE lost blocks, 0.2-1 Mb",
+           src = "gam16_block_class_contrast_ci.tsv")
+  }
+})
 
 # --- hotspot domains ----------------------------------------------------------
 for (d in list(list(f = "hotspot_domains_lost_adj.tsv",   id = "hotspot.n_lost",
@@ -248,6 +306,39 @@ if (!is.null(CS)) {
     fact("coupling.n", n, function(txt, v)
            grepl(format(v, big.mark = ","), txt, fixed = TRUE),
          c("make_report.R"), "bins behind the coupling rho", src = "coupling_spearman.tsv")
+  # The NET variant, added 2026-10-19. The melting section compares its own rho
+  # against "the mark-vs-contact coupling", and the honest comparator there is
+  # the net measure, because the melting rho is also against net. The lost-only
+  # rho above is a different quantity and quoting it in that sentence invited
+  # the reader to compare a signed number with one of the opposite sign.
+  vn <- CS[mark == "H4K20me3" & variant == "raw" & direction == "net", rho]
+  if (length(vn) == 1)
+    fact("coupling.h4k20me3_raw_net", vn, m_near(0.0006),
+         c("make_report.R"), "H4K20me3 vs NET contact change",
+         src = "coupling_spearman.tsv")
+}
+
+# --- melting vs covariates ----------------------------------------------------
+# These two rho values are drawn into the figure by GAM_2c and quoted in the
+# report caption. Until 2026-10-19 the caption carried them as literals with the
+# sign they had BEFORE `net` was flipped KO-oriented on 2026-10-18, so the report
+# said -0.305 / +0.071 for values that are +0.305 / -0.071. The caption now reads
+# the table, which makes that drift impossible; this check covers the table's
+# continued existence and the sign, so a future flip cannot pass unnoticed.
+MR <- rd(file.path(tables_dir, "gam2c_melting_covariate_rho.tsv"))
+if (!is.null(MR) && all(c("w", "r") %in% names(MR))) {
+  vnet <- MR[grepl("net differential contacts", w, fixed = TRUE), r]
+  if (length(vnet) == 1)
+    fact("melting.rho_net_contacts", vnet, m_near(0.002),
+         c("results/GAM_REPORT.html"),
+         "melting score vs net differential contacts",
+         src = "gam2c_melting_covariate_rho.tsv")
+  vk20 <- MR[grepl("H4K20me3", w, fixed = TRUE), r]
+  if (length(vk20) == 1)
+    fact("melting.rho_h4k20me3", vk20, m_near(0.002),
+         c("results/GAM_REPORT.html"),
+         "melting score vs H4K20me3 log2FC",
+         src = "gam2c_melting_covariate_rho.tsv")
 }
 
 message("\n== A. quoted statistics match the tables they cite ==")
@@ -466,6 +557,7 @@ writer_map <- list(
   "gam12_block_ranking.tsv"         = "GAM_7_Figures.R",
   "gam14_pcdh_tad_summary.tsv"      = "GAM_6_Targets.R",
   "coupling_spearman.tsv"           = "GAM_3_Coupling.R",
+  "gam2c_melting_covariate_rho.tsv" = "GAM_2c_Meltron.R",
   "gam2b_shared_axis_summary.tsv"   = "GAM_2b_Shared_Axis.R")
 wrong_writer <- character()
 for (tb in names(writer_map)) {

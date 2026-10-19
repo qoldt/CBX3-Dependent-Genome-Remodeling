@@ -456,12 +456,14 @@ local({
                         name = NULL) +
       facet_grid(track ~ chr, scales = "free_x", switch = "y") +
       labs(x = "position (Mb)", y = NULL,
+           # The axis comes from the averaged correlation matrix at
+           # gam2b_params$binsize, phased once against WT H3K4me3 + H3K36me3; both
+           # genotypes are then scored on it. Amplitude is removed because the ~20%
+           # fall in lambda1 is global, not compartment-specific (GAM/CLAUDE.md
+           # settled point 6).
            title = "One shared A/B axis, both genotypes scored on it",
-           subtitle = paste0("Axis from the averaged correlation matrix at ",
-                             gam2b_params$binsize / 1000,
-                             " kb, phased on WT H3K4me3 + H3K36me3. Scores are shape only",
-                             " (RMS 1 per chromosome):\namplitude is removed because the ",
-                             "~20% fall in lambda1 is global, not compartment-specific.")) +
+           subtitle = paste0("Scores are SHAPE ONLY - amplitude is removed per chromosome, so this figure cannot be ",
+                             "read\nfor a change in compartment strength.")) +
       theme_m + theme(legend.position = "top",
                       axis.text.y = element_text(size = 7),
                       strip.placement = "outside")

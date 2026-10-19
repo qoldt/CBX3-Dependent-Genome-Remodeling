@@ -186,13 +186,14 @@ pE <- ggplot(sub, aes(start / 1e6)) +
 fig <- (pA | pB) / (pC | pD) / pE +
   patchwork::plot_annotation(
     title = "Hotspot domain calling QC - GAM/ChIP integration",
+    # What the sweep is for, beyond the parameters themselves: the per-bin count
+    # track is retained UNMODIFIED as the primary continuous covariate, and
+    # domains are the independent unit for enrichment tests, because adjacent
+    # bins are not independent (panel A). Both an adjusted and an UNADJUSTED
+    # domain set are carried through the pipeline.
     subtitle = paste0("Defaults in GAM/config.R$gam_hotspot_params: q=", q,
       ", smooth=", gam_hotspot_params$smooth_bins, " bins (", chosen_kb, " kb), gap<=",
-      gam_hotspot_params$gap, ", min=", gam_hotspot_params$min_bins, " bins. ",
-      "\nThe per-bin count track is retained UNMODIFIED as the primary continuous covariate;",
-      " domains are the independent unit for enrichment tests,\nbecause adjacent bins are not",
-      " independent (panel A). Both an adjusted and an UNADJUSTED domain set are carried",
-      " through the pipeline."),
+      gam_hotspot_params$gap, ", min=", gam_hotspot_params$min_bins, " bins."),
     theme = theme(plot.title = element_text(face = "bold", size = 14)))
 save_fig(fig, "hotspot_domain_calling_qc", subdir = "qc", width = 15, height = 15)
 

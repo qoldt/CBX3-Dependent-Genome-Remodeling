@@ -95,10 +95,15 @@ local({
 
   # --- artifact check, printed not hidden --------------------------------------
   cat("=== artifact check: is direction just a coverage difference? ===\n")
+  rho_cov <- NA_real_
   if (has_g2 && all(c("n_valid_WT","n_valid_HP1gKO") %in% names(a))) {
     dv <- as.numeric(a$n_valid_WT) - as.numeric(a$n_valid_HP1gKO)
+    # Kept in a variable rather than only printed: the figure subtitle quotes it,
+    # and a subtitle that hard-codes "~ 0" is exactly the kind of prose number
+    # that goes stale without any stopifnot noticing.
+    rho_cov <- cor(a$net, dv, method = "spearman", use = "complete.obs")
     cat(sprintf("  rho(net, WT-KO valid NPMI cells) = %+.3f   (near 0 = not a coverage artifact)\n",
-        cor(a$net, dv, method = "spearman", use = "complete.obs")))
+        rho_cov))
   } else cat("  (needs GAM_2; skipped)\n")
 
   # --- call blocks --------------------------------------------------------------
@@ -115,9 +120,9 @@ local({
   blk <- blk[width_Mb >= gam_block_min_mb][order(-width_Mb)]
   cat(sprintf("\n=== %d blocks >= %d Mb (%d lost-dominated, %d gained-dominated) ===\n",
               nrow(blk), gam_block_min_mb, sum(blk$dirn == "lost"), sum(blk$dirn == "gained")))
+  pct_genome <- 100 * sum(blk$end - blk$start) / sum(a$end - a$start)
   cat(sprintf("  genome in blocks: %.1f%%   median block %.1f Mb   largest %.1f Mb\n",
-              100 * sum(blk$end - blk$start) / sum(a$end - a$start),
-              median(blk$width_Mb), max(blk$width_Mb)))
+              pct_genome, median(blk$width_Mb), max(blk$width_Mb)))
   print(head(blk[, .(chr, start, end, width_Mb, dirn, mean_net = round(mean_net, 2))], 15),
         row.names = FALSE)
 
@@ -202,13 +207,27 @@ local({
     # shading agree: up is red is gained.
     scale_fill_manual(values = c(gained = "#B2182B", lost = "#2166AC"), name = "block") +
     labs(title = "Large one-directional contact blocks, genome-wide",
-         subtitle = paste0("net = log2((gained+1)/(lost+1)), ",
-                           gam_block_smooth_bins * gam_binsize / 1e6,
-                           " Mb running mean. POSITIVE = contacts preferentially GAINED in the cKO, ",
-                           "matching red = gained everywhere else in this repo.\n",
-                           "Blocks: |net| > ", gam_block_net_cut, " for at least ",
-                           gam_block_min_mb, " Mb. Direction is NOT a coverage artifact ",
-                           "(rho with WT-KO valid cells ~ 0)."),
+         # Written to be read off a slide by someone who has not seen the rest
+         # of the repo, so it says what the unit is (20 kb bins, not blocks),
+         # what goes into net, and what rho is - and spells out "absolute
+         # value" rather than writing |net|, which renders as "Inetl" at
+         # presentation size and has been misread as a variable name.
+         subtitle = paste0(
+           "CURVE: one value per ", gam_binsize / 1000, " kb bin, ",
+           "net = log2((gained + 1) / (lost + 1)) over the counts of significant ",
+           "differential contacts (within 0-5 Mb) that the bin carries in each direction,\n",
+           "then a ", sprintf("%.2f", gam_block_smooth_bins * gam_binsize / 1e6),
+           " Mb running mean (", gam_block_smooth_bins, " bins) within each chromosome. ",
+           "POSITIVE and RED = contacts preferentially GAINED in the cKO; negative and blue = lost.\n",
+           "SHADING: the ", nrow(blk), " blocks - runs where the smoothed net stays beyond ",
+           gam_block_net_cut, " in absolute value (a ",
+           sprintf("%.1f", 2^gam_block_net_cut), "-fold count ratio) for at least ",
+           gam_block_min_mb, " Mb; ", sprintf("%.1f", pct_genome), "% of the genome, ",
+           sum(blk$dirn == "lost"), " lost / ", sum(blk$dirn == "gained"), " gained.\n",
+           "Direction is not a coverage artifact: Spearman rho between net and the ",
+           "WT-minus-cKO difference in usable NPMI cells per bin is ",
+           if (is.finite(rho_cov)) sprintf("%+.3f", rho_cov) else "not computed",
+           "."),
          x = "position (Mb)", y = "net contact direction\n(+ = gained in cKO)") +
     theme_m + theme(legend.position = "top")
   save_fig(p, "large_blocks_genome_wide", subdir = "blocks", width = 15, height = 11)
@@ -237,8 +256,12 @@ local({
     a[chr == blk$chr[i] & start >= blk$start[i] & end <= blk$end[i], cls := blk$dirn[i]]
   cat("=== bins per class ===\n"); print(table(a$cls))
 
-  BAND_EDGES <- c(0, 1e6, 5e6, 1e7, Inf)
-  BAND_NAMES <- c("0.02-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
+  # Keeps its own near-diagonal band (one 0.02-1Mb bin, deliberately excluding
+  # the diagonal) but takes the same LONG-RANGE split as everything else: the
+  # old open-ended >10Mb had nearly half its pairs beyond 50 Mb. See
+  # gam_band_edges in config.R.
+  BAND_EDGES <- c(0, 1e6, 5e6, 1e7, 5e7, Inf)
+  BAND_NAMES <- c("0.02-1Mb", "1-5Mb", "5-10Mb", "10-50Mb", ">50Mb")
   CLS <- c("lost", "gained", "neither")
 
   acc <- list()
@@ -539,12 +562,16 @@ local({
     scale_x_continuous(trans = "log1p", breaks = c(0, 20, 100, 200, 500, 1000, 2000)) +
     scale_colour_manual(values = setNames(disc_pal(length(unique(SWD$domain_set))),
                                           sort(unique(SWD$domain_set))), name = NULL) +
+    # WHY THIS SWEEP EXISTS, kept out of the subtitle: the heterochromatin
+    # fragment set percolated under the same sweep - 1.3% of the genome at gap 0
+    # to 64.8% at 50 kb - which is why its domain definition had to be rebuilt
+    # (GAM_5 section C). Hotspot domains do not percolate: the curve is gradual,
+    # so merging here is a choice about scale rather than a cliff to stay off.
+    # Past ~500 kb it starts reproducing the large one-directional blocks, which
+    # are called separately in section A of this file.
     labs(title = "Do hotspot domains percolate if adjacent ones are merged?",
-         subtitle = paste0("Genome fraction covered as the merge gap grows. The heterochromatin fragment set percolated under ",
-                           "this\nsweep - 1.3% of the genome at gap 0 to 64.8% at 50 kb - which is why its domain definition had to ",
-                           "be\nrebuilt. Hotspot domains do not: the curve is gradual, so merging is a choice about scale rather ",
-                           "than a\ncliff to stay off. Past ~500 kb it starts reproducing the GAM_6 blocks, which already exist ",
-                           "separately."),
+         subtitle = paste0("Genome fraction covered as the merge gap grows. A gradual curve means merging is a choice of\n",
+                           "scale; a percolation cliff would mean the domain definition is unstable."),
          x = "merge gap (kb, log scale)", y = "% of genome covered") +
     theme_m
   save_fig(pS, "hotspot_domain_merge_sweep", subdir = fig_sub, width = 8, height = 5.5)
@@ -644,12 +671,15 @@ local({
     geom_tile(colour = "white", linewidth = .4) +
     geom_text(aes(label = paste0(sprintf("%.2f", fold), sig)), size = 2.6) +
     scale_fill_heat0_div(limits = c(-lim, lim), name = "log2 fold\nvs width-\nmatched null") +
+    # Method kept here rather than on the panel: the null reshuffles the same
+    # domains to random positions on the same chromosome keeping their widths,
+    # and the star marks the CIRCULAR-SHIFT null, which also preserves the
+    # spacing between domains and is the conservative of the two. 'adj' domains
+    # are smoothed-then-thresholded, 'raw' are thresholded directly.
     labs(title = "What hotspot domains are made of, against a width-matched null",
-         subtitle = paste0("Fold = observed share of domain bp in the annotation, divided by the share when the same domains are\n",
-                           "reshuffled to random positions on the same chromosome keeping their widths. * = BH < 0.05 under the\n",
-                           "CIRCULAR-SHIFT null, which also preserves the spacing between domains and is the conservative one.\n",
-                           "'adj' domains are smoothed-then-thresholded, 'raw' are thresholded directly; they agree on\n",
-                           "only 40% of bins, so a result present in one and not the other is a result about the definition."),
+         subtitle = paste0("Fold = observed share of domain bp in the annotation over a width-matched null; * = BH < 0.05.\n",
+                           "'adj' and 'raw' are two domain definitions agreeing on only 40% of bins - a result in one and ",
+                           "not the other is about the definition."),
          x = NULL, y = NULL) +
     theme_m + theme(panel.grid = element_blank(),
                     axis.text.x = element_text(angle = 30, hjust = 1))
@@ -666,10 +696,12 @@ local({
     geom_point(aes(colour = test), size = 1.6, show.legend = FALSE) +
     geom_hline(yintercept = -log10(0.05), linetype = 2, colour = "grey40") +
     scale_colour_manual(values = setNames(disc_pal(3), levels(cmp$test))) +
+    # Why the hypergeometric is inflated: it treats 20 kb bins as independent
+    # draws, but the count track has autocorrelation r = 0.59 at 20 kb and a
+    # hotspot domain is by construction a run of correlated bins.
     labs(title = "The same comparisons under three nulls, from most to least assumption",
-         subtitle = paste0("One line per annotation x domain-set cell. The hypergeometric treats 20 kb bins as independent draws,\n",
-                           "but the count track has autocorrelation r = 0.59 at 20 kb and a hotspot domain is by construction a run\n",
-                           "of correlated bins - so its effective n is the ~1,000 domains, not the ~10,000 bins. Dashed line = 0.05."),
+         subtitle = paste0("One line per annotation x domain-set cell; dashed = 0.05. The hypergeometric is inflated here - the\n",
+                           "effective n is the ~1,000 domains, not the ~10,000 bins."),
          x = NULL, y = "-log10(p)") +
     theme_m
   save_fig(p2, "hotspot_test_comparison", subdir = fig_sub, width = 7.5, height = 6)
@@ -681,11 +713,13 @@ local({
       geom_col(position = position_dodge(width = .75), width = .7) +
       geom_text(aes(label = sig), position = position_dodge(width = .75), hjust = -0.3, size = 3.5) +
       scale_fill_manual(values = setNames(disc_pal(2), unique(DD$definition)), name = "domain definition") +
+      # Why this contrast is cleaner than either set against the genome: both sets
+      # come from the same track by the same procedure, so width, mappability and
+      # coverage confounds are shared and largely cancel. The star is a
+      # width-decile-stratified permutation of the lost/gained labels.
       labs(title = "Do domains that LOSE contacts differ in composition from those that GAIN?",
-           subtitle = paste0("Difference in the share of domain bp in each annotation, lost minus gained. Positive = more common in\n",
-                             "lost domains. Both sets come from the same track by the same procedure, so width, mappability and\n",
-                             "coverage confounds are shared and largely cancel. * = BH < 0.05 under a width-decile-stratified\n",
-                             "permutation of the lost/gained labels."),
+           subtitle = paste0("Difference in the share of domain bp in each annotation, lost minus gained; positive = more common\n",
+                             "in lost domains. * = BH < 0.05."),
            x = "share in lost domains minus share in gained domains", y = NULL) +
       theme_m
     save_fig(p3, "hotspot_direction_contrast", subdir = fig_sub, width = 9.5, height = 7)

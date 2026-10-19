@@ -254,7 +254,143 @@ try({
     num$is_ok <- TRUE
   }
 }, silent = TRUE)
+# The two melting-vs-covariate correlations. These were typed into the caption
+# by hand and both had the WRONG SIGN from 2026-10-18, when `net` was flipped to
+# be KO-oriented: the figure recomputed, the caption did not. GAM_2c now writes
+# them to a table and they are read from it here.
+num$melt_ok <- FALSE
+try({
+  mr <- fread(file.path(tables_dir, "gam2c_melting_covariate_rho.tsv"))
+  g <- function(key) mr[grepl(key, w, fixed = TRUE), r][1]
+  num$melt_rho_net <- g("net differential contacts")
+  num$melt_rho_k20 <- g("H4K20me3")
+  num$melt_ok <- is.finite(num$melt_rho_net) && is.finite(num$melt_rho_k20)
+}, silent = TRUE)
+
+# The chromatin-class contact table. It was 4 rows of hand-typed HTML for a
+# partition that no longer exists (the old het/eu binary, which called unmarked
+# chromatin euchromatin and pooled Polycomb into it). Generated from the table
+# now, so it cannot describe a partition the pipeline is not using.
+num$cc_ok <- FALSE
+try({
+  cc <- fread(file.path(tables_dir, "gam10_class_change.tsv"))
+  cc[, band := factor(band, gam_band_names)]
+  num$cc <- cc
+  num$cc_ok <- nrow(cc) > 0
+}, silent = TRUE)
+
+sg_ <- function(x) if (!is.finite(x)) "&mdash;" else
+  sprintf("%s%.1f%%", if (x < 0) "&minus;" else "+", abs(x))
+cls_row_ <- function(lab, lv, pr, bold = FALSE) {
+  if (!isTRUE(num$cc_ok)) return("")
+  d <- num$cc[level == lv & pair == pr]
+  if (!nrow(d)) return("")
+  cells <- vapply(levels(num$cc$band), function(b) {
+    r <- d[band == b]
+    if (!nrow(r) || !is.finite(r$pct)) return("<td>&mdash;</td>")
+    v <- sg_(r$pct)
+    sprintf("<td>%s (%s, %s)</td>", if (bold) paste0("<strong>", v, "</strong>") else v,
+            sg_(r$lo), sg_(r$hi))
+  }, "")
+  paste0("<tr><td>", lab, "</td>", paste(cells, collapse = ""), "</tr>")
+}
+# Header from the band names, so it cannot describe a band set the tables do
+# not use - it said "&gt;10 Mb" for a week after the edges moved.
+hdr_band_ <- function(b) gsub("-", "&ndash;", gsub("^<", "&lt;", gsub("^>", "&gt;", b)))
+cls_hdr_ <- paste0("<tr><th>pair type</th>",
+  paste(sprintf("<th>%s</th>", hdr_band_(gam_band_names)), collapse = ""), "</tr>")
+# One value out of the table, for prose that has to name a number.
+ccv_ <- function(lv, pr, b) {
+  if (!isTRUE(num$cc_ok)) return(NA_real_)
+  v <- num$cc[level == lv & pair == pr & band == b, pct]
+  if (length(v) == 1) v else NA_real_
+}
+
+# Per-chromosome class/band value, so chromosome-specific prose stops being
+# hand-typed. The chr11 paragraph quoted -22.0% / -27.8% from the old five-band
+# partition and would have survived the band change unchallenged.
+# Share of within-block pairs that are H3K9me3-H3K9me3, and the H3K9me3-vs-
+# quiescent contrast with its interval. Generated, because every number in this
+# repo that was typed into prose has eventually disagreed with its table.
+num$bk_ok <- FALSE
+try({
+  bk <- fread(file.path(tables_dir, "gam16_block_contact_classes.tsv"))
+  num$bk <- bk; num$bk_ok <- nrow(bk) > 0
+}, silent = TRUE)
+num$bkc_ok <- FALSE
+try({
+  bkc <- fread(file.path(tables_dir, "gam16_block_class_contrast_ci.tsv"))
+  num$bkc <- bkc; num$bkc_ok <- nrow(bkc) > 0
+}, silent = TRUE)
+bk_share_ <- function(d) {
+  if (!isTRUE(num$bk_ok)) return(NA_real_)
+  x <- num$bk[dirn == d]
+  100 * sum(x[pair == "H3K9me3-H3K9me3", n_WT]) / sum(x$n_WT)
+}
+bkc_ <- function(d, b) {
+  if (!isTRUE(num$bkc_ok)) return("&mdash;")
+  r <- num$bkc[dirn == d & band == b]
+  if (!nrow(r)) return("&mdash;")
+  # PERCENTAGE POINTS, not percent: this is a difference between two percent
+  # changes, so sg_'s "%" would be the wrong unit.
+  pp <- function(x) if (!is.finite(x)) "&mdash;" else
+    sprintf("%s%.1f", if (x < 0) "&minus;" else "+", abs(x))
+  sprintf("%s pts [%s, %s]", pp(r$contrast), pp(r$lo), pp(r$hi))
+}
+
+pcv_ <- function(ch, lv, pr, b) {
+  if (!isTRUE(num$pb_ok) || is.null(num$pb_long)) return(NA_real_)
+  v <- num$pb_long[chr == ch & level == lv & pair == pr & band == b, pct]
+  if (length(v) == 1) v else NA_real_
+}
+# Spelled band count, from the band names themselves.
+n_bands_word_ <- local({
+  n <- length(gam_band_names)
+  w <- c("one","two","three","four","five","six","seven","eight","nine","ten")
+  if (n <= length(w)) w[n] else as.character(n)
+})
+
+# The per-chromosome contrast table, generated. It was 19 rows of hand-typed
+# HTML computed from the old partition, with a hand-typed "17/19" footer; both
+# were silently wrong the moment the classes changed.
+num$pb_ok <- FALSE
+try({
+  pb <- fread(file.path(tables_dir, "gam15_perchrom_class_band.tsv"))
+  bl <- gam_band_names
+  w <- dcast(pb[level == "L1"], chr + band ~ pair, value.var = "pct")
+  w[, contrast := `heterochromatin-heterochromatin` - `euchromatin-euchromatin`]
+  w[, band := factor(band, bl)]
+  num$pb <- w; num$pb_bands <- bl; num$pb_ok <- nrow(w) > 0
+  num$pb_long <- pb
+}, silent = TRUE)
+
+perchrom_rows_ <- function() {
+  if (!isTRUE(num$pb_ok)) return("")
+  w <- num$pb
+  rows <- vapply(paste0("chr", 1:19), function(ch) {
+    cells <- vapply(num$pb_bands, function(b) {
+      v <- w[chr == ch & band == b, contrast]
+      if (!length(v) || !is.finite(v)) return("<td>&mdash;</td>")
+      # Bold the large ones in either direction, the same emphasis the
+      # hand-written table used, but applied by rule instead of by eye.
+      sprintf(if (abs(v) >= 10) "<td><strong>%s</strong></td>" else "<td>%s</td>",
+              sprintf("%s%.1f", if (v < 0) "&minus;" else "+", abs(v)))
+    }, "")
+    paste0("<tr><td>", ch, "</td>", paste(cells, collapse = ""), "</tr>")
+  }, "")
+  foot <- vapply(num$pb_bands, function(b) {
+    d <- w[band == b & is.finite(contrast)]
+    sprintf("<td><strong>%d/%d</strong></td>", sum(d$contrast > 0), nrow(d))
+  }, "")
+  paste0(paste(rows, collapse = ""),
+         "<tr><td><strong>positive on</strong></td>", paste(foot, collapse = ""), "</tr>")
+}
+
 pc_ <- function(n, d) sprintf("%.1f%%", 100 * n / d)
+# Signed, with a real minus sign, because the sign IS the statement in the
+# melting captions and a hyphen is easy to lose at caption size.
+rho_ <- function(x) if (!is.finite(x)) "(not computed)" else
+  sprintf("%s%.3f", if (x < 0) "&minus;" else "+", abs(x))
 
 # ==============================================================================
 parts <- list()
@@ -281,32 +417,60 @@ parts$bottom <- sec("Bottom line",
   "A global shift, not a minority-of-sites effect. Everything else here is the architecture question.</p>",
 
   "<h3>2. Heterochromatin becomes more self-associated at short range. It is NOT mixing.</h3>",
-  "<p>This is the central result. Heterochromatin gains contacts with heterochromatin, and with nothing else.",
-  "By partner class &mdash; <strong>het</strong> is heterochromatin, euchromatin the gene-rich remainder:</p>",
-  "<table>",
-  "<tr><th>pair type</th><th>&lt;0.2 Mb</th><th>0.2&ndash;1 Mb</th><th>1&ndash;5 Mb</th><th>5&ndash;10 Mb</th><th>&gt;10 Mb</th></tr>",
-  "<tr><td>het&ndash;het, same domain</td><td><strong>+4.3%</strong> (1.8, 6.6)</td><td><strong>+5.9%</strong> (1.3, 18.6)</td><td><strong>+4.8%</strong> (3.6, 29.7)</td><td>&mdash;</td><td>&mdash;</td></tr>",
-  "<tr><td>het&ndash;het, different domains</td><td><strong>+4.2%</strong> (3.4, 4.9)</td><td><strong>+6.2%</strong> (3.5, 8.2)</td><td>+4.8% (&minus;0.02, 8.5)</td><td>+5.1% (&minus;5.9, 9.0)</td><td>&minus;0.6% (&minus;10.3, 4.9)</td></tr>",
-  "<tr><td>het&ndash;euchromatin</td><td>+2.0% (1.3, 2.8)</td><td>+0.2% (&minus;1.2, 1.6)</td><td>&minus;1.9% (&minus;5.1, 1.1)</td><td><strong>&minus;5.2%</strong> (&minus;10.1, &minus;1.0)</td><td>&minus;6.4% (&minus;13.5, 0.0)</td></tr>",
-  "<tr><td>euchromatin&ndash;euchromatin</td><td>+0.9% (0.3, 1.6)</td><td><strong>&minus;1.7%</strong> (&minus;3.0, &minus;0.5)</td><td><strong>&minus;5.0%</strong> (&minus;7.5, &minus;2.4)</td><td><strong>&minus;8.1%</strong> (&minus;12.0, &minus;4.2)</td><td><strong>&minus;8.9%</strong> (&minus;13.8, &minus;4.0)</td></tr>",
+  p_("This is the central result. Bins carry a <strong>two-level chromatin class</strong>, defined once in",
+     "<code>config.R</code> and nested so a level-1 number is exactly the pooled level-2 numbers:",
+     "<strong>euchromatin</strong> is TSS + enhancer + transcribed, <strong>heterochromatin</strong> is",
+     "Polycomb + H3K9me3 + quiescent. The earlier binary called every bin without an H3K9me3/H4K20me3 peak",
+     "&ldquo;euchromatin&rdquo;, which put Polycomb (facultative heterochromatin) in that class and left it",
+     "85% ChromHMM-quiescent &mdash; only about one bin in nine of it was actually active chromatin."),
+  "<p><strong>Level 1.</strong> Percent change in mean NPMI, HP1gKO vs WT, with 95% CIs bootstrapped over the 19 autosomes:</p>",
+  "<table>", cls_hdr_,
+  cls_row_("heterochromatin&ndash;heterochromatin", "L1", "heterochromatin-heterochromatin", bold = TRUE),
+  cls_row_("euchromatin&ndash;heterochromatin",     "L1", "euchromatin-heterochromatin"),
+  cls_row_("euchromatin&ndash;euchromatin",         "L1", "euchromatin-euchromatin"),
   "</table>",
-  "<p>Read down the columns, not across:</p>",
+  p_("The three classes are strictly ordered het&ndash;het &gt; het&ndash;eu &gt; eu&ndash;eu in",
+     sprintf("<strong>every one of the %s bands</strong>, and only het&ndash;het rises at all", n_bands_word_),
+     sprintf("(%s below 0.2 Mb, against %s for eu&ndash;eu).",
+             sg_(ccv_("L1", "heterochromatin-heterochromatin", "<0.2Mb")),
+             sg_(ccv_("L1", "euchromatin-euchromatin", "<0.2Mb"))),
+     "<strong>This is not mixing.</strong> Mixing would pull the classes together; instead the gradient holds at",
+     "every separation, and the mixed het&ndash;eu pairs sit between the two same-type classes rather than above",
+     "them. Heterochromatin keeps more company with heterochromatin and no more with euchromatin."),
+  "<p><strong>Level 2</strong> &mdash; the same contacts, split six ways. This is where the effect localises:</p>",
+  embed_fig("heterochromatin/contact_classes_level2.png",
+            "The three heterochromatin sub-classes do not behave alike. H3K9me3 is the only one still above zero past 5 Mb; Polycomb and quiescent rise only below 0.2 Mb and then fall with euchromatin."),
+  "<table>", cls_hdr_,
+  cls_row_("H3K9me3&ndash;H3K9me3",   "L2", "H3K9me3-H3K9me3", bold = TRUE),
+  cls_row_("Polycomb&ndash;Polycomb", "L2", "Polycomb-Polycomb"),
+  cls_row_("quiescent&ndash;quiescent", "L2", "Quiescent-Quiescent"),
+  cls_row_("TSS&ndash;TSS",           "L2", "TSS-TSS"),
+  cls_row_("enhancer&ndash;enhancer", "L2", "Enhancer-Enhancer"),
+  cls_row_("transcribed&ndash;transcribed", "L2", "Tx-Tx"),
+  "</table>",
   "<ul>",
-  "<li><strong>The gain is heterochromatin-to-heterochromatin, and it is not &ldquo;same chromatin type&rdquo;.</strong>",
-  "Euchromatin&ndash;euchromatin is also same-type and already <em>falls</em> by 0.2&ndash;1 Mb (&minus;1.7%), and below",
-  "200 kb the mixed het&ndash;euchromatin pairs rise <em>more</em> than same-type eu&ndash;eu (euchromatin&ndash;euchromatin) pairs do (+2.0% against",
-  "+0.9%). So the short-range gain is a property of heterochromatin specifically, not of partners matching.</li>",
-  "<li><strong>It reaches 1&ndash;5 Mb for within-domain pairs</strong> (+4.8%, CI 3.6 to 29.7), where between-domain pairs",
-  "just touch zero (&minus;0.02 lower bound). That CI is hugely asymmetric on 4,657 pairs, so read it as",
-  "&ldquo;positive, magnitude poorly determined&rdquo;. Past 5 Mb every het&ndash;het CI spans zero.</li>",
-  "<li><strong>It is not mixing.</strong> Mixing would require het&ndash;euchromatin to rise. It does not: flat at 0.2&ndash;1 Mb",
-  "(+0.2%, CI spans zero) and <em>falling</em> at long range (&minus;5.2%, &minus;6.4%). Heterochromatin is keeping more",
-  "company with heterochromatin and no more with euchromatin &mdash; segregation sharpening at short range, not dissolving.</li>",
-  "<li><strong>The long-range loss spares heterochromatin.</strong> Beyond 10 Mb eu&ndash;eu is &minus;8.9% and",
-  "het&ndash;euchromatin &minus;6.4%, both substantial, while het&ndash;het is &minus;0.6% with a CI spanning zero &mdash;",
-  "flat, not falling. So &ldquo;decreased long-range contacts&rdquo; is true of euchromatin and of mixed pairs, and",
-  "<em>not</em> of heterochromatin with itself.</li>",
+  p_("<li><strong>The gain is specific to constitutive heterochromatin.</strong> H3K9me3&ndash;H3K9me3 is the",
+     sprintf("only class still rising at 5&ndash;10 Mb (%s), and it is the largest short-range gain (%s).",
+             sg_(ccv_("L2", "H3K9me3-H3K9me3", "5-10Mb")),
+             sg_(ccv_("L2", "H3K9me3-H3K9me3", "<0.2Mb"))),
+     "</li>"),
+  p_("<li><strong>Repression alone does not do it.</strong> Polycomb&ndash;Polycomb",
+     sprintf("(%s) and quiescent&ndash;quiescent (%s) rise below 0.2 Mb and then fall away.",
+             sg_(ccv_("L2", "Polycomb-Polycomb", "<0.2Mb")),
+             sg_(ccv_("L2", "Quiescent-Quiescent", "<0.2Mb"))),
+     "Pooling them with H3K9me3, as the old binary did, diluted the signal and hid the difference.</li>"),
+  p_("<li><strong>Active chromatin loses most at long range.</strong>",
+     sprintf("TSS&ndash;TSS falls %s at 5&ndash;10 Mb and transcribed&ndash;transcribed %s beyond 50 Mb.",
+             sg_(ccv_("L2", "TSS-TSS", "5-10Mb")), sg_(ccv_("L2", "Tx-Tx", ">50Mb"))),
+     "</li>"),
   "</ul>",
+  "<div class='warn'><strong>What changed, and what did not.</strong> The old partition measured",
+  "<strong>+4.2%</strong> for &ldquo;het&ndash;het&rdquo; below 0.2 Mb; on the new one the same quantity",
+  "&mdash; H3K9me3&ndash;H3K9me3 &mdash; is",
+  sprintf("<strong>%s</strong>.", sg_(ccv_("L2", "H3K9me3-H3K9me3", "<0.2Mb"))),
+  "The measurement did not move; the labelling and the subdivision did. The level-1 het&ndash;het number is",
+  "smaller than the old one because it now includes quiescent chromatin, which is 78% of the genome and",
+  "rises much less.</div>",
 
   "<h3>3. Individual domains do not compact. Heterochromatin-to-heterochromatin contact is what rises.</h3>",
   "<p>Within-domain versus between-domain is indistinguishable: every difference-in-differences CI spans zero",
@@ -376,31 +540,26 @@ parts$bottom <- sec("Bottom line",
   "below is the quantity that survives it.</div>",
 
   "<h4>The offset-invariant contrast, every autosome</h4>",
-  "<p>het&ndash;het (different domains) minus euchromatin&ndash;euchromatin, in percentage points. Positive means",
-  "heterochromatin gained relative to euchromatin on that chromosome at that separation.</p>",
+  p_("Level-1 heterochromatin&ndash;heterochromatin minus euchromatin&ndash;euchromatin, in percentage points.",
+     "Positive means heterochromatin gained relative to euchromatin on that chromosome at that separation.",
+     "Bold marks a contrast of 10 points or more in either direction."),
   "<table>",
-  "<tr><th>chr</th><th>&lt;0.2 Mb</th><th>0.2&ndash;1 Mb</th><th>1&ndash;5 Mb</th><th>5&ndash;10 Mb</th><th>&gt;10 Mb</th></tr>",
-  "<tr><td>chr1</td><td>&minus;0.6</td><td>&minus;1.6</td><td>&minus;3.4</td><td><strong>&minus;17.0</strong></td><td><strong>&minus;10.0</strong></td></tr><tr><td>chr2</td><td>+2.3</td><td>+7.2</td><td>+2.6</td><td>&minus;0.7</td><td>&minus;2.7</td></tr><tr><td>chr3</td><td>&minus;0.8</td><td>&minus;2.2</td><td>&minus;2.5</td><td>+7.3</td><td>+5.2</td></tr><tr><td>chr4</td><td>+4.3</td><td>+8.7</td><td><strong>+10.2</strong></td><td>+9.7</td><td>&minus;4.5</td></tr><tr><td>chr5</td><td>+4.3</td><td>+7.2</td><td><strong>+12.3</strong></td><td><strong>+14.9</strong></td><td><strong>+17.0</strong></td></tr><tr><td>chr6</td><td>+1.5</td><td>+4.8</td><td>+5.9</td><td>&minus;6.0</td><td><strong>+18.2</strong></td></tr><tr><td>chr7</td><td>+3.0</td><td>+8.3</td><td>+5.0</td><td>+1.7</td><td>&minus;5.3</td></tr><tr><td>chr8</td><td>+1.8</td><td>+0.3</td><td>+2.5</td><td><strong>&minus;15.5</strong></td><td>+1.0</td></tr><tr><td>chr9</td><td>+5.1</td><td><strong>+16.0</strong></td><td>+7.1</td><td>+5.4</td><td><strong>+10.5</strong></td></tr><tr><td>chr10</td><td>+2.3</td><td>+2.5</td><td>&minus;8.2</td><td>&minus;2.2</td><td>&minus;8.8</td></tr><tr><td>chr11</td><td>+7.3</td><td><strong>+13.6</strong></td><td>&minus;2.6</td><td><strong>&minus;11.8</strong></td><td>+3.0</td></tr><tr><td>chr12</td><td>+4.7</td><td>+3.3</td><td>+4.8</td><td><strong>+13.0</strong></td><td>+9.3</td></tr><tr><td>chr13</td><td>+4.1</td><td><strong>+13.5</strong></td><td><strong>+22.1</strong></td><td>+6.6</td><td>&minus;2.5</td></tr><tr><td>chr14</td><td>+3.8</td><td>+8.2</td><td><strong>+14.8</strong></td><td><strong>+23.3</strong></td><td><strong>+23.8</strong></td></tr><tr><td>chr15</td><td>+1.9</td><td>+5.0</td><td>+1.5</td><td><strong>&minus;13.5</strong></td><td>+0.9</td></tr><tr><td>chr16</td><td>+1.2</td><td>+4.8</td><td><strong>+14.8</strong></td><td><strong>+15.8</strong></td><td><strong>+14.6</strong></td></tr><tr><td>chr17</td><td>+4.9</td><td>+9.0</td><td>+9.6</td><td>+6.6</td><td>+5.5</td></tr><tr><td>chr18</td><td>+0.0</td><td>+3.1</td><td>+4.2</td><td>+2.5</td><td>&minus;5.0</td></tr><tr><td>chr19</td><td>+2.4</td><td>+5.4</td><td>+8.9</td><td><strong>+23.1</strong></td><td>+3.0</td></tr>",
-  "<tr><td><strong>positive on</strong></td><td><strong>17/19</strong></td><td><strong>17/19</strong></td><td><strong>15/19</strong></td><td>12/19</td><td>12/19</td></tr>",
+  paste0("<tr><th>chr</th>", paste(sprintf("<th>%s</th>", hdr_band_(gam_band_names)), collapse = ""), "</tr>"),
+  perchrom_rows_(),
   "</table>",
   "<ul>",
-  "<li><strong>Below 1 Mb the result is near-universal.</strong> Heterochromatin gains relative to euchromatin on",
-  "17 of 19 autosomes in both short bands. The two exceptions are chr1 (&minus;0.6, &minus;1.6) and chr3",
-  "(&minus;0.8, &minus;2.2) &mdash; both small enough to be noise around zero rather than a reversal. This is the",
-  "per-chromosome support for result 2 and it is the strongest pattern in the data.</li>",
-  "<li><strong>Beyond 5 Mb it splits 12 to 7.</strong> The contrast stays strongly positive on chr14 (+23.3, +23.8),",
-  "chr16 (+15.8, +14.6), chr5 (+14.9, +17.0) and chr19 (+23.1), and goes clearly negative on chr1 (&minus;17.0),",
-  "chr8 (&minus;15.5), chr15 (&minus;13.5) and chr11 (&minus;11.8). So the long-range behaviour is",
-  "chromosome-specific in a way the short-range behaviour is not.</li>",
-  "<li><strong>chr11 is not the lone exception.</strong> It inverts at 1&ndash;5 Mb (&minus;2.6) and 5&ndash;10 Mb",
-  "(&minus;11.8), but chr1 inverts harder at both (&minus;3.4, &minus;17.0), and chr8, chr10 and chr15 also invert",
-  "at long range. Any statement that singles chr11 out as reversing the rule is wrong; it is one of five.</li>",
-  "<li><strong>Power is very unevenly distributed.</strong> het&ndash;het pair counts at 1&ndash;5 Mb range from 1,245",
-  "(chr11) to 61,329 (chr7) &mdash; a 49&times; spread, because heterochromatin content varies from 3.1% of bins on",
-  "chr11 to far more on chr7. The chromosomes that invert at long range are, with the exception of chr1, among the",
-  "thinnest. Read the sign, not the magnitude, on chr8, chr10, chr11, chr15 and chr18.</li>",
+  p_("<li><strong>Below 1 Mb the result is now universal.</strong> Heterochromatin gains relative to euchromatin",
+     "on <strong>19 of 19</strong> autosomes in both short bands. Under the previous partition this was 17 of 19,",
+     "with chr1 and chr3 as exceptions; both were narrow misses (&minus;0.6 / &minus;1.6 and &minus;0.8 / &minus;2.2)",
+     "and both resolve once Polycomb and quiescent chromatin are no longer counted as euchromatin. This is the",
+     "per-chromosome support for result 2 and it is the strongest pattern in the data.</li>"),
+  p_("<li><strong>Long range stays chromosome-specific.</strong> The counts in the footer fall away past 5 Mb,",
+     "so the near-universal agreement is a short-range phenomenon. Read the sign there, not the magnitude.</li>"),
+  p_("<li><strong>Power is very unevenly distributed.</strong> Heterochromatin content varies several-fold",
+     "between autosomes, so the pair counts behind these cells do too. The thinnest chromosomes are the ones",
+     "most likely to swing at long range, where the pair counts are smallest relative to the spread.</li>"),
   "</ul>",
-  embed_fig("chromosomes/contact_budget_all19_unified.png",
+  embed_fig("chromosomes/contact_change_all19_unified.png",
             "The whole per-chromosome result in one view: chromosome down the side, separation across, chromatin class in the four panels, percent change in mean NPMI as the fill. Grey cells have no bin pairs &mdash; same-domain pairs exist only where a large heterochromatin domain does, and only out to the separations it spans."),
   embed_fig("chromosomes/perchrom_class_contrast_all19.png",
             "het&ndash;het minus euchromatin&ndash;euchromatin per autosome and separation band. This is the offset-invariant contrast."),
@@ -408,8 +567,10 @@ parts$bottom <- sec("Bottom line",
             "All four pair classes on all 19 autosomes. Read the shape across separations within a panel; the level of a whole panel is confounded by the per-chromosome offset."),
   "<div class=\'warn\'><strong>chr11 specifically.</strong> It is the least heterochromatic autosome (3.1% of bins",
   "against 7.2% genome-wide), so its het&ndash;het cells rest on roughly 900&ndash;1,250 bin pairs where eu&ndash;eu",
-  "has millions. Its dominant feature is a loss in <em>every</em> class (eu&ndash;eu &minus;22.0% at 5&ndash;10 Mb,",
-  "&minus;27.8% beyond 10 Mb), with het&ndash;het more negative still on thin data. Nothing computed here attributes",
+  sprintf("has millions. Its dominant feature is a loss in <em>every</em> class (eu&ndash;eu %s at 5&ndash;10 Mb, %s at 10&ndash;50 Mb),",
+          sg_(pcv_("chr11", "L1", "euchromatin-euchromatin", "5-10Mb")),
+          sg_(pcv_("chr11", "L1", "euchromatin-euchromatin", "10-50Mb"))),
+  "with het&ndash;het more negative still on thin data. Nothing computed here attributes",
   "that to the loss of one large LAD-associated domain, and chr11 is an unlikely place for a large heterochromatin",
   "domain by construction.</div>",
 
@@ -567,21 +728,30 @@ parts$pcdh <- sec("The protocadherin cluster as a TAD",
   embed_fig("pcdh_tad/pcdh_partner_profile.png"),
   tbl("gam14_pcdh_by_separation.tsv"))
 
-chr_files <- file.path(results_dir, "chromosomes", paste0(c("chr3","chr7","chr11","chr16","chr18"), ".md"))
+# All 19, in genomic order. It was five until 2026-10-19, which left no way for
+# a reader to tell whether the other fourteen had been looked at and were dull
+# or had never been looked at.
+chr_all <- paste0("chr", 1:19)
 parts$chrom <- sec("Per-chromosome characterisation",
-  p_("chr11 and chr16 were flagged by the data producers; chr3 and chr7 carry large GAM_6 blocks; chr18 holds the Pcdh cluster."),
+  p_("Every autosome gets an along-chromosome overview and a findings file. <strong>Five are
+     singled out for a contact budget recomputed from the NPMI matrices</strong> &mdash; chr11 and
+     chr16 were flagged by the data producers, chr3 and chr7 carry large GAM_6 blocks, chr18 holds
+     the Pcdh cluster. The other fourteen take their budget from
+     <code>gam15_perchrom_class_band.tsv</code>, which measures the same quantity from GAM_5's
+     per-chromosome sums on finer bands; each findings file names the source it used."),
   "<div class='warn'><strong>Mark-contact coupling does not rank chromosomes.</strong> chr11 is rank 1 of 19 for &rho;(H4K20me3, net contacts), but at &rho; = 0.128, with chr17 at &minus;0.149 &mdash; larger, opposite sign &mdash; and a genome-wide value of 0.012. The spread is small and roughly symmetric about zero, so the ordering carries no weight.</div>",
   embed_fig("chromosomes/chromosome_ranking.png"),
   "<div class='warn'><strong>A tempting over-read, tested and rejected.</strong> chr7 is by far the most heterochromatic chromosome (20.2% of bins against 7.2% genome-wide) <em>and</em> gains contacts at every separation, while chr11 is the least (3.1%) and loses most. Across all 19 autosomes that relationship is absent: &rho; = &minus;0.014, p = 0.96. The two are simply the extremes of both rankings at once.</div>",
   embed_fig("chromosomes/het_content_vs_net.png"),
   tbl("gam15_chromosome_ranking.tsv", "All 19 autosomes, so any one chromosome can be read against the spread.", max_rows = 20L),
-  embed_fig("chromosomes/contact_budget_all19_unified.png",
+  embed_fig("chromosomes/contact_change_all19_unified.png",
             "All 19 autosomes, all four chromatin classes, all five separation bands. Derived from the per-chromosome sums in <code>gam10_perchrom_sums.tsv</code>."),
-  embed_fig("chromosomes/contact_budget_by_chromosome.png",
+  embed_fig("chromosomes/contact_change_by_chromosome.png",
             "The same quantity recomputed directly from the NPMI matrices for the five focus chromosomes, with slightly coarser bands. Kept as an independent cross-check of the figure above, which comes from pre-summed counts."),
-  tbl("gam15_contact_budget.tsv", "Contact budget by chromosome, chromatin class and separation.", max_rows = 60L),
-  paste0(sapply(c("chr3","chr7","chr11","chr16","chr18"), function(ch)
-    paste0("<h3>", ch, "</h3>",
+  tbl("gam15_contact_budget.tsv", "Contact change by chromosome, chromatin class and separation. (The file keeps its older name.)", max_rows = 60L),
+  paste0(sapply(chr_all, function(ch)
+    paste0("<h3>", ch, if (ch %in% c("chr3","chr7","chr11","chr16","chr18"))
+                         " <small>(matrix-derived budget)</small>" else "", "</h3>",
            embed_fig(sprintf("chromosomes/%s_overview.png", ch)),
            md_file(file.path(results_dir, "chromosomes", paste0(ch, ".md")),
                    demote = TRUE))), collapse = ""))
@@ -920,7 +1090,34 @@ parts$blocks <- sec("Large one-directional blocks",
   tbl("gam8_block_contact_budget.tsv", max_rows = 20L),
   tbl("gam6_block_characterisation.tsv",
       "What is in them. The compartment column moved from <code>pc1_WT</code> to the shared axis on 2026-10-19, because <code>pc1_WT</code> is WT's own selected eigenvector and is a different eigenvector on different chromosomes. <strong>Read <code>shared_WT</code>, not <code>shared_delta</code>.</strong> <code>shared_WT</code> is clean, and says lost blocks are the more B-like half of the genome in WT &mdash; the same statement the LAD, LINE and quiescent enrichment of lost hotspot domains makes independently. <code>shared_delta</code> is partly circular here: the score is <code>C_g %*% a</code>, so a block defined by losing contact has its score magnitude mechanically pulled toward 0, which for a negative (B-like) score reads as &ldquo;toward A&rdquo;. The observed values are exactly what that artefact predicts, so they are not independent evidence of a shift.",
-      max_rows = 20L))
+      max_rows = 20L),
+
+  # The chromatin of the contacts INSIDE the blocks (GAM_8). The budget table
+  # above says the blocks move contact; this says in what chromatin, which is a
+  # question the budget cannot answer because it classifies bins by block
+  # membership only. Full write-up with caveats: results/LARGE_BLOCKS.md.
+  "<h3>What chromatin are the contacts inside the blocks?</h3>",
+  p_("Both ends classified on the level-2 partition, both ends required to be in the <em>same</em> block.",
+     "Both kinds of block are dominated by quiescent chromatin &mdash; <strong>neither is an H3K9me3 domain</strong>",
+     "&mdash; but H3K9me3&ndash;H3K9me3 pairs are",
+     sprintf("%.1f&times; more common inside gained blocks than inside lost ones (%s against %s of within-block pairs).",
+             bk_share_("gained") / bk_share_("lost"),
+             sprintf("%.2f%%", bk_share_("gained")), sprintf("%.2f%%", bk_share_("lost"))),
+     "That is sharper than the bins give (10.97% of gained-block bins are H3K9me3 against 7.04% of lost-block",
+     "bins, genome 9.31%), because a pair needs both ends in the class."),
+  tbl("gam16_block_contact_classes.tsv",
+      "Within-block pairs by level-2 class pair and separation.", max_rows = 24L),
+  p_("<strong>The H3K9me3 short-range advantage does not depend on which way the block is going.</strong>",
+     "Against quiescent&ndash;quiescent pairs in the same blocks, bootstrapped on one shared chromosome draw so a",
+     "block-level offset cancels:",
+     sprintf("inside <em>lost</em> blocks %s at 0.2&ndash;1 Mb and %s at 1&ndash;5 Mb; inside <em>gained</em> blocks %s below 0.2 Mb and %s at 0.2&ndash;1 Mb.",
+             bkc_("lost", "0.2-1Mb"), bkc_("lost", "1-5Mb"),
+             bkc_("gained", "<0.2Mb"), bkc_("gained", "0.2-1Mb")),
+     "So the genome-wide level-2 result is not produced by the gained blocks: it survives inside blocks that are",
+     "losing contact overall. The 10&ndash;50 Mb within-block band rests on 6&ndash;14 chromosomes instead of 19 and",
+     "is not usable."),
+  tbl("gam16_block_class_contrast_ci.tsv",
+      "H3K9me3&ndash;H3K9me3 minus quiescent&ndash;quiescent inside each block set, with its bootstrap interval."))
 
 parts$hetclass <- sec("Contact classes and mark-change strata",
   embed_fig("heterochromatin/heterochromatin_contact_classes.png",
@@ -1071,11 +1268,17 @@ parts$meltron <- sec("MELTRON: melting and condensation",
      "<strong>melting is a contact-side measure that agrees with our other contact-side measures",
      "and is independent of the ChIP side</strong>."),
   embed_fig("meltron/melting_vs_covariates.png",
-            "Net differential contacts &rho; = &minus;0.305 (bins losing contacts melt, bins gaining condense); H4K20me3 log2FC &rho; = 0.071, flat."),
+            paste0("Net differential contacts &rho; = ",
+                   if (isTRUE(num$melt_ok)) rho_(num$melt_rho_net) else "(not computed)",
+                   " (bins losing contacts melt, bins gaining condense); H4K20me3 log2FC &rho; = ",
+                   if (isTRUE(num$melt_ok)) rho_(num$melt_rho_k20) else "(not computed)",
+                   ", flat.")),
   embed_fig("meltron/melting_vs_annotation.png",
             "Lost hotspot domains melt (median +5), gained domains condense (&minus;8), everything else sits on zero. The ChIP classes are indistinguishable from each other."),
-  p_("That &rho; of &minus;0.305 against net differential contacts is large by this project's",
-     "standards &mdash; compare &rho; = &minus;0.015 for the mark-vs-contact coupling. It is a",
+  p_("That &rho; of", if (isTRUE(num$melt_ok)) rho_(num$melt_rho_net) else "(not computed)",
+     "against net differential contacts is large by this project's",
+     "standards &mdash; compare &rho; = +0.010 for H4K20me3 against the same net measure",
+     "(&minus;0.015 against lost contacts alone). It is a",
      "<em>third</em> instrument reaching the same conclusion as the |&Delta;z| calls and the",
      "block analysis, from insulation distributions rather than from per-contact significance.",
      "And the flat H4K20me3 panel is the project's central uncoupling result appearing for the",
@@ -1185,12 +1388,18 @@ parts$methods <- sec("How every comparison in this report is computed",
   "that cell is taken <em>within each genotype separately</em>, and the reported figure is",
   "<strong>100 &times; (mean<sub>cKO</sub> / mean<sub>WT</sub> &minus; 1)</strong>. It is a ratio of two means, not a",
   "mean of per-pair ratios, so a cell with few pairs cannot be dominated by one extreme pair.</li>",
-  "<li><strong>Separation bands</strong> are &lt;0.2, 0.2&ndash;1, 1&ndash;5, 5&ndash;10 and &gt;10 Mb. Banding is",
+  sprintf("<li><strong>Separation bands</strong> are %s. Banding is",
+          paste(hdr_band_(gam_band_names), collapse = ", ")),
   "mandatory rather than cosmetic: NPMI falls steeply with separation, so any average pooled over separations is",
   "mostly a statement about which separations the two sets happened to contain.</li>",
-  "<li><strong>Chromatin class</strong> is from the WT H3K9me3/H4K20me3 heterochromatin domain calls, so the class",
-  "label is fixed and does not move with the genotype. A pair is het&ndash;het, het&ndash;euchromatin or",
-  "euchromatin&ndash;euchromatin; het&ndash;het is split further into same-domain and different-domain.</li>",
+  "<li><strong>Chromatin class</strong> is from the 18-state ChromHMM model for P0 cortex, lifted to mm39 and",
+  "collapsed onto two nested levels. Level 2 is TSS, enhancer, transcribed, Polycomb, H3K9me3 and quiescent;",
+  "level 1 is euchromatin (the first three) against heterochromatin (the last three). A bin takes the state with",
+  "the greatest coverage, and a WT H3K9me3/H4K20me3 peak call overrides it to H3K9me3. Three states are assigned",
+  "against their names on our own ChIP evidence &mdash; Quies2 and Quies3 carry 2.4&times; and 3.0&times; the median",
+  "H3K9me3 and are called H3K9me3; QuiesG carries 3.1&times; the median H3K4me3 and is called transcribed. The",
+  "label is fixed in WT and does not move with the genotype. A pair is named by its two bins&rsquo; classes;",
+  "H3K9me3&ndash;H3K9me3 pairs are split further into same-domain and different-domain.</li>",
   "<li><strong>Confidence intervals are a bootstrap over the 19 autosomes</strong>, resampled with replacement,",
   "the whole cell mean recomputed each time, 95% percentile interval. The chromosome is the resampling unit",
   "because bin pairs within a chromosome are not independent &mdash; treating millions of pairs as independent",

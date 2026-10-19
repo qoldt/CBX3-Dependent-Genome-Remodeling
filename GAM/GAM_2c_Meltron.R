@@ -662,12 +662,12 @@ local({
                         name = NULL) +
       facet_wrap(~ chr, ncol = 1, scales = "free_x") +
       labs(x = "position (Mb)", y = "-log10 p (Bonferroni)",
+           # Window is dbin wide stepping one bin, as MELTRONIC. Documented in
+           # GAM/CLAUDE.md rather than restated on the panel.
            title = "Melting and condensation are two scores, not one signed one",
-           subtitle = paste0(dbin / 1000, " kb window stepping one bin, as MELTRONIC. ",
-                             "Dashed lines are the published |score| > ",
-                             gam2c_params$call_cut, " cutoff.\nAn interval with ",
-                             "both means its two insulation distributions CROSS - ",
-                             "one tail up, the other down.")) +
+           subtitle = paste0("Dashed = the published |score| > ", gam2c_params$call_cut,
+                             " cutoff. An interval called BOTH ways is one where\nits two ",
+                             "insulation distributions CROSS, not a contradiction.")) +
       theme_m + theme(legend.position = "top")
     save_fig(p3, "melting_track", subdir = fig_sub, width = 11, height = 5.5)
   }
@@ -681,9 +681,8 @@ local({
     labs(x = "melting score", y = "condensation score",
          title = "The two one-sided tests are not complementary",
          subtitle = sprintf(paste0("Top-right quadrant = called BOTH ways: %.1f%% of ",
-                                   "intervals. Those are places where the two\ninsulation ",
-                                   "distributions cross, so a single signed track would ",
-                                   "misdescribe them."), pct_both)) +
+                                   "intervals - where the two insulation distributions cross."),
+                            pct_both)) +
     theme_m
   save_fig(p1, "melting_score_distribution", subdir = fig_sub, width = 6.5, height = 5.5)
 
@@ -694,10 +693,11 @@ local({
     geom_point(alpha = 0.05, size = 0.4, colour = "#2166ac") +
     facet_wrap(~ which) +
     labs(x = "one-sided KS statistic D (effect size)", y = "-log10 p (Bonferroni)",
+         # At the published window (gam2c_params$win_bp) the score stops
+         # saturating; an earlier 500 kb window pooled nested values and pinned
+         # -log10(p_adj) at its ceiling. See GAM/CLAUDE.md.
          title = "Score against effect size",
-         subtitle = paste0("With the published ", gam2c_params$win_bp / 1000,
-                           " kb window the score no longer saturates, so the ",
-                           "published cutoff is usable.")) +
+         subtitle = "The score does not saturate against effect size, so the published cutoff is usable.") +
     theme_m
   save_fig(p2, "melting_score_vs_D", subdir = fig_sub, width = 8, height = 4.5)
 
@@ -716,10 +716,10 @@ local({
       scale_y_continuous(expand = expansion(mult = c(0, 0.22))) +
       coord_flip() +
       labs(x = NULL, y = "KS statistic D (effect size)",
+           # Nulls are gam2c_params$n_null random region sets of the same widths on
+           # the same chromosomes.
            title = "Region sets against size-matched random regions",
-           subtitle = paste0("x marks the median D of ", gam2c_params$n_null,
-                             " size-matched random region sets,\nsame widths and ",
-                             "same chromosomes. A bar at its x is background.")) +
+           subtitle = "x = the median D of the size-matched random region sets; a bar at its x is background.") +
       theme_m + theme(legend.position = "top")
     save_fig(p4, "melting_region_sets", subdir = fig_sub, width = 8, height = 5.5)
   }
@@ -807,13 +807,28 @@ local({
       cats$chip <- J[!is.na(compartment_centred),
                      .(grp = "ChIP class", lvl = as.character(compartment_centred),
                        v = net_score)]
-    hm <- grep("^hmm_", names(J), value = TRUE)
-    if (length(hm)) {
-      J[, top_state := sub("^hmm_", "", hm[max.col(as.matrix(.SD), ties.method = "first")]),
-        .SDcols = hm]
-      keep <- J[, .N, by = top_state][N > 2000, top_state]
-      cats$state <- J[top_state %in% keep, .(grp = "ChromHMM state", lvl = top_state,
-                                             v = net_score)]
+    # THE TWO-LEVEL CHROMATIN CLASSES (config.R), not raw ChromHMM states.
+    #
+    # This panel used to take each bin's single top hmm_ state and then drop any
+    # state with fewer than 2,000 bins. That filter removed `Het` - 491 bins by
+    # dominant state - so the one figure able to ask whether heterochromatin
+    # melts or condenses was excluding heterochromatin. The level-2 classes pool
+    # states into six groups that all clear any sensible count, and H3K9me3
+    # additionally absorbs the peak-based call, which is 10,924 bins.
+    #
+    # This is a method-robustness check, not independent evidence: MELTRON reads
+    # the same NPMI matrices as the contact budget. What it varies is the
+    # statistic - a KS test on insulation DISTRIBUTIONS across square sizes,
+    # rather than a mean over bin pairs. The classes are assigned without any
+    # reference to the melting score, so the comparison is not circular.
+    cc <- tryCatch(gam_chromatin_classes(A), error = function(e) NULL)
+    if (!is.null(cc)) {
+      J <- merge(J, cc[, .(bin_id, class1, class2)], by = "bin_id", all.x = TRUE)
+      cats$cls1 <- J[!is.na(class1), .(grp = "chromatin, level 1",
+                                       lvl = as.character(class1), v = net_score)]
+      cats$cls2 <- J[!is.na(class2), .(grp = "chromatin, level 2",
+                                       lvl = as.character(class2), v = net_score)]
+      msg("  melting by chromatin class: %d bins classified", sum(!is.na(J$class2)))
     }
     D2 <- rbindlist(cats)
     if (nrow(D2)) {
@@ -825,7 +840,8 @@ local({
         coord_cartesian(ylim = as.numeric(quantile(D2$v, c(0.01, 0.99), na.rm = TRUE))) +
         labs(x = NULL, y = "net MELTRON score  (+ condensing, - melting)",
              title = "Melting against the project's own annotations",
-             subtitle = paste0("Per 20 kb bin. If melting carried no information beyond ",
+             subtitle = paste0("Per 20 kb bin. Positive = the cKO holds MORE contact density across ",
+                               "that position (condensing).\nIf melting carried no information beyond ",
                                "the existing tracks these would all sit on zero.")) +
         theme_m + theme(axis.text.x = element_text(angle = 40, hjust = 1, size = 7))
       save_fig(p2, "melting_vs_annotation", subdir = fig_sub, width = 11, height = 4.6)
@@ -846,7 +862,15 @@ local({
                    lo = quantile(y, 0.25, na.rm = TRUE),
                    hi = quantile(y, 0.75, na.rm = TRUE), n = .N), by = .(w, xb)]
       rho <- CV[, .(r = stats::cor(x, y, method = "spearman",
-                                   use = "pairwise.complete.obs")), by = w]
+                                   use = "pairwise.complete.obs"),
+                    n = sum(is.finite(x) & is.finite(y))), by = w]
+      # Written out, not just drawn into the facet strip. These two numbers are
+      # quoted in the report and in talks, and until 2026-10-19 they lived
+      # nowhere but inside this ggplot call - so when the sign of `net` was
+      # flipped on 2026-10-18 the figure updated and the report's caption did
+      # not, leaving it quoting -0.305 and +0.071 for values that are +0.305 and
+      # -0.071. verify_GAM.R can only check a statistic that has a table.
+      fwrite(rho, file.path(tables_dir, "gam2c_melting_covariate_rho.tsv"), sep = "\t")
       SM <- merge(SM, rho, by = "w")
       SM[, lab := sprintf("%s  (rho = %.3f)", w, r)]
       p3 <- ggplot(SM, aes(x, y)) +
@@ -891,10 +915,10 @@ local({
         labs(x = "insulation score (all square sizes pooled)",
              y = "cumulative probability",
              title = "What the Kolmogorov-Smirnov test actually compares",
+             # This is the published diagnostic (Meltron code/plot_ecdf.R).
              subtitle = paste0("The largest vertical gap between the two curves IS the ",
                                "statistic D. cKO curve to the LEFT = less local\ncontact ",
-                               "density = melting. This is the published diagnostic ",
-                               "(Meltron code/plot_ecdf.R).")) +
+                               "density = melting.")) +
         theme_m + theme(legend.position = "top", strip.text = element_text(size = 7))
       save_fig(p4, "melting_ecdf_region_sets", subdir = fig_sub, width = 10, height = 7)
     }

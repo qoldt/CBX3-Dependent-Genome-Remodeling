@@ -24,6 +24,8 @@ GAM_2_NPMI_Compartments.R     NPMI -> PC1/compartments/insulation/decay         
   ├── GAM_4_Large_Scale.R     10-25 Mb one-directional blocks + block contact budget
   ├── GAM_5_Heterochromatin.R heterochromatin domains, intra vs inter, mark strata  (heavy)
   ├── GAM_6_Targets.R         HUSH families, repeats, protocadherin, the Pcdh TAD
+  ├── GAM_8_Block_Classes.R   chromatin classes of the contacts INSIDE the blocks  (heavy)
+  │    needs GAM_4's gam6_large_blocks.tsv; see results/LARGE_BLOCKS.md
   └── GAM_7_Figures.R         region plots + per-chromosome overviews               (heavy)
 
 utilities (not pipeline stages, run on their own):
@@ -156,6 +158,7 @@ files' own completion messages. The current mapping:
 | `GAM_5_Heterochromatin.R` | `gam10_*`, `gam11_*`, `gam13_*` |
 | `GAM_6_Targets.R` | `gam9_*`, `gam14_*` |
 | `GAM_7_Figures.R` | `gam12_*`, `gam15_*` |
+| `GAM_8_Block_Classes.R` | `gam16_*` |
 
 So `gam6_block_characterisation.tsv` is a **GAM_4** output; `gam10_class_change.tsv`
 is **GAM_5**. (GAM_4 *does* read the shared axis as of 2026-10-19 - see the
@@ -661,8 +664,8 @@ properties follow and all three matter:
 2. **It is centred PER GENOTYPE PER CHROMOSOME**, so `IS_cKO - IS_WT` has each
    genotype's own chromosome mean already removed. **A uniform genome-wide shift
    in contact density is invisible to it by construction** - which matters here,
-   because the headline effect IS broad (`gam10_class_change.tsv`: -1.7% to -5.0%
-   eu-eu, +4.2% het-het). The strip answers "where within this chromosome did
+   because the headline effect IS broad (`gam10_class_change.tsv`, level 1:
+   -0.6% to -9.6% eu-eu against +1.6% to -8.2% het-het). The strip answers "where within this chromosome did
    contact move", never "did this chromosome gain or lose contact". Same choice
    MELTRONIC makes, so it is not a deviation - but it is a limit.
 3. **The rows are nested, not independent.** The 1040 kb square contains the
@@ -781,7 +784,7 @@ outstanding inconsistency in the GAM tree.
 
 Every output, the `.rds` files included, is regenerable by `run_GAM.R`. The only
 committed files under `results/` are the hand-written `.md` files
-(`METHODS.md`). The input data (`NPMI_matrices/`, `Diff_contacts/`, `Hotspots/`,
+(`METHODS.md`, `COMPARTMENTS.md`, `BIN_BALANCING.md`, `LARGE_BLOCKS.md`). The input data (`NPMI_matrices/`, `Diff_contacts/`, `Hotspots/`,
 about 7.7 GB) is git-ignored too. `GAM_RESULTS=<dir>` writes a run elsewhere.
 
 ## Do not invent provenance

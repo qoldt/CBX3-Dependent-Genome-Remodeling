@@ -336,6 +336,194 @@ merge_het_domains <- function(gap = gam_het_merge$gap,
   g
 }
 
+# ==============================================================================
+# CHROMATIN CLASSES - TWO LEVELS, ONE DEFINITION                    (2026-10-19)
+# ==============================================================================
+# Replaces the old binary is_het / eu_eu split, which called everything that was
+# not an H3K9me3/H4K20me3 peak "euchromatin". That was wrong twice over: it put
+# Polycomb (facultative heterochromatin) in the euchromatin bucket, and the
+# bucket was 85% ChromHMM-quiescent, i.e. unmarked chromatin, not euchromatin.
+# Only about one bin in nine of the old "euchromatin" was actually active.
+#
+#   LEVEL 1  euchromatin | heterochromatin        - the headline contrast
+#   LEVEL 2  TSS, Enhancer, Tx | Polycomb, H3K9me3, Quiescent
+#
+# Level 2 nests exactly inside level 1, so any level-1 number is the pooled
+# level-2 numbers and the two can never disagree.
+#
+# STATE -> LEVEL 2 MAPPING, AND WHY IT IS NOT JUST THE STATE NAMES
+# ----------------------------------------------------------------
+# Mostly the 18-state cortex P0 model's own names are taken at face value. Three
+# groups are assigned against their name, because our own WT ChIP contradicts it
+# and the group is large enough for that to matter. Mean WT signal in bins where
+# the state covers >= 20% of the bin (genome-wide mean is ~1.0-1.5 for each):
+#
+#   state     bins    H3K4me3  H3K36me3  H3K9me3  H4K20me3   assigned
+#   Het       1372       0.70      0.79     4.49      3.54    H3K9me3
+#   Quies3    5331       0.39      0.68     3.03      2.45    H3K9me3   <- not quiescent
+#   Quies2    9983       0.60      0.77     2.37      1.89    H3K9me3   <- not quiescent
+#   Quies    94902       0.97      0.81     1.05      1.15    Quiescent
+#   QuiesG   22198       3.10      1.72     0.66      0.85    Tx        <- not quiescent
+#
+# Quies2 and Quies3 carry H3K9me3 at 2.4-3.0x, against 1.05x for Quies proper -
+# they are H3K9me3 heterochromatin wearing a quiescent label. QuiesG runs the
+# other way: H3K4me3 3.10 and H3K9me3 DEPLETED at 0.66, which is gene-associated
+# chromatin. Leaving these three under "Quiescent" would have put 15,314 bins of
+# real heterochromatin and 22,198 bins of gene-adjacent chromatin in the wrong
+# level-1 class.
+#
+# Four small states are kept on their names although our marks disagree -
+# TssBiv (H3K9me3 2.16) and EnhPr (H3K9me3 3.54) look heterochromatic, EnhPois
+# and EnhLo are quiet. All four are under 150 bins at >= 20% coverage, so
+# reassigning them would be fitting the map to a few hundred bins. Recorded so
+# the inconsistency is a known choice rather than an oversight.
+#
+# WE DO NOT MEASURE H3K27me3. The Polycomb class rests entirely on this external
+# segmentation, whose training marks are not recorded (METHODS open question).
+# Our own data can only confirm what Polycomb is NOT: ReprPC/ReprPCWk bins carry
+# the LOWEST H3K9me3 (0.37) and H4K20me3 (0.43) of any class, below active
+# chromatin, so they are certainly not constitutive heterochromatin.
+gam_chromatin_state_map <- c(
+  # --- euchromatin ---
+  Tss = "TSS", TssFlnk = "TSS",
+  Enh = "Enhancer", EnhG = "Enhancer", EnhLo = "Enhancer",
+  EnhPr = "Enhancer", EnhPois = "Enhancer",
+  Tx = "Tx", TxWk = "Tx", QuiesG = "Tx",
+  # --- heterochromatin ---
+  TssBiv = "Polycomb", ReprPC = "Polycomb", ReprPCWk = "Polycomb",
+  Het = "H3K9me3", Quies2 = "H3K9me3", Quies3 = "H3K9me3",
+  Quies = "Quiescent", Quies4 = "Quiescent")
+
+gam_chromatin_level1 <- c(TSS = "euchromatin", Enhancer = "euchromatin", Tx = "euchromatin",
+                          Polycomb = "heterochromatin", H3K9me3 = "heterochromatin",
+                          Quiescent = "heterochromatin")
+gam_class2_levels <- c("TSS", "Enhancer", "Tx", "Polycomb", "H3K9me3", "Quiescent")
+gam_class1_levels <- c("euchromatin", "heterochromatin")
+
+# A bin whose H3K9me3/H4K20me3 PEAK coverage reaches this is called H3K9me3
+# heterochromatin whatever ChromHMM says. This override is not a hedge - it is
+# the better-evidenced call. 8,266 bins that ChromHMM puts in plain Quies carry
+# mean WT H3K9me3 of 3.94 against 0.88 for the Quies bins without a peak, a
+# 4.5x separation measured in this tissue. ChromHMM's own Het state is only
+# 0.92% of the genome against our 7.2%, so it under-calls badly here and is
+# folded in rather than relied on.
+gam_het_peak_cut <- 0.5
+
+# Returns one row per input bin: bin_id, het_frac, class2, class1.
+# `annot` must be the gam_bins_annotated.rds $annot table (hmm_* coverage
+# columns plus chr/start/end/bin_id). Pure function of its input, so every
+# stage that calls it gets the same partition - which is the whole point of it
+# living here rather than being rebuilt in each stage, as is_het was.
+gam_chromatin_classes <- function(annot, peak_cut = gam_het_peak_cut) {
+  a <- data.table::as.data.table(annot)
+  stopifnot(all(c("bin_id", "chr", "start", "end") %in% names(a)))
+  hm <- grep("^hmm_", names(a), value = TRUE)
+  st <- sub("^hmm_", "", hm)
+  unmapped <- setdiff(st, names(gam_chromatin_state_map))
+  if (length(unmapped))
+    stop("ChromHMM states with no level-2 assignment: ", paste(unmapped, collapse = ", "),
+         "\n  Add them to gam_chromatin_state_map in config.R.", call. = FALSE)
+
+  # Coverage of each level-2 group = sum of its states' coverage fractions.
+  grp <- gam_chromatin_state_map[st]
+  M <- as.matrix(a[, ..hm])
+  G <- vapply(gam_class2_levels, function(g) {
+    k <- which(grp == g)
+    if (!length(k)) rep(0, nrow(M)) else rowSums(M[, k, drop = FALSE], na.rm = TRUE)
+  }, numeric(nrow(M)))
+
+  # Peak-based H3K9me3 coverage, the same geometry GAM_5 used for is_het.
+  dm <- data.table::fread(het_domain_bed, header = FALSE, select = 1:3,
+                          col.names = c("chr", "start", "end"))
+  dm[, chr := ifelse(grepl("^chr", chr), chr, paste0("chr", chr))]
+  dm <- dm[chr %in% unique(a$chr)]
+  red <- GenomicRanges::reduce(
+           GenomicRanges::GRanges(dm$chr, IRanges::IRanges(dm$start + 1, dm$end)),
+           ignore.strand = TRUE)
+  b <- GenomicRanges::GRanges(a$chr, IRanges::IRanges(a$start + 1, a$end))
+  h <- GenomicRanges::findOverlaps(b, red, ignore.strand = TRUE)
+  w <- GenomicRanges::width(GenomicRanges::pintersect(
+         b[S4Vectors::queryHits(h)], red[S4Vectors::subjectHits(h)], ignore.strand = TRUE))
+  v <- numeric(length(b))
+  agg <- tapply(w, S4Vectors::queryHits(h), sum)
+  v[as.integer(names(agg))] <- as.numeric(agg)
+  het_frac <- pmin(v / GenomicRanges::width(b), 1)
+
+  cls2 <- gam_class2_levels[max.col(G, ties.method = "first")]
+  # A bin with no ChromHMM coverage at all has no dominant group; max.col would
+  # hand it column 1 (TSS) on a row of zeros, which would invent active
+  # chromatin out of missing annotation.
+  cls2[rowSums(G, na.rm = TRUE) <= 0] <- NA_character_
+  cls2[het_frac >= peak_cut] <- "H3K9me3"
+
+  out <- data.table::data.table(
+    bin_id   = a$bin_id,
+    het_frac = het_frac,
+    class2   = factor(cls2, levels = gam_class2_levels),
+    class1   = factor(unname(gam_chromatin_level1[cls2]), levels = gam_class1_levels))
+  # A seqname-style mismatch zeroes the peak overlap and every other failure
+  # mode here empties a class, so assert rather than warn (repo rule).
+  stopifnot(sum(out$class2 == "H3K9me3", na.rm = TRUE) > 1000,
+            sum(out$class1 == "euchromatin", na.rm = TRUE) > 1000)
+  out[]
+}
+
+# --- Distance bands for every contact-by-separation analysis -----------------
+# One definition, because these were copied into GAM_5 (twice), GAM_7 (twice)
+# and make_report.R, and a band set that disagrees between two tables is the
+# kind of thing no stopifnot catches.
+#
+# The top band was ">10Mb" until 2026-10-19, open-ended over 10-195 Mb. That
+# pooled 364 M possible pairs, and NEARLY HALF of them were beyond 50 Mb, so
+# anything happening at 10-25 Mb was swamped by the very long range. Splitting
+# at 50 Mb divides it almost evenly: 189 M pairs in 10-50 Mb against 174 M
+# beyond 50 Mb.
+#
+# READ THE >50Mb BAND PER CHROMOSOME WITH CARE. It is open-ended, so it means a
+# different separation on every chromosome: chr19 (61 Mb) can only contribute
+# 50-61 Mb and has 0.16 M pairs, while chr1 (195 Mb) contributes 50-195 Mb with
+# 26 M - a 160-fold spread. Pooled genome-wide that is fine; as one column of a
+# per-chromosome figure it is not comparable across rows, and chr19 is
+# effectively unpowered there. The same was true of the old ">10Mb", less
+# visibly.
+gam_band_edges <- c(0, 2e5, 1e6, 5e6, 1e7, 5e7, Inf)
+gam_band_names <- c("<0.2Mb", "0.2-1Mb", "1-5Mb", "5-10Mb", "10-50Mb", ">50Mb")
+
+# Colours for the six level-2 classes. From the shared discrete palette, not
+# raw hex, per the repo rule - with the deliberate grey exception for
+# Quiescent, which is the "unmarked / not-a-category" class the greys exist
+# for. One definition so the region track and the exported BED cannot drift.
+gam_class2_colours <- local({
+  cats <- c("TSS", "Enhancer", "Tx", "Polycomb", "H3K9me3")
+  p <- tryCatch(disc_pal(length(cats)), error = function(e) NULL)
+  if (is.null(p)) p <- c("#B2182B", "#EF8A62", "#4D9221", "#762A83", "#2166AC")
+  c(stats::setNames(p, cats), Quiescent = "grey80")
+})
+
+# Writes the level-2 chromatin partition as an itemRgb BED for IGV. Merges
+# adjacent bins of the same class so the file is runs, not 123,133 single bins.
+write_chromatin_state_bed <- function(annot, path) {
+  cc <- gam_chromatin_classes(annot)
+  a <- data.table::as.data.table(annot)[, .(bin_id, chr, start, end)]
+  a <- merge(a, cc[, .(bin_id, class2)], by = "bin_id")
+  a <- a[!is.na(class2)]
+  data.table::setorder(a, chr, start)
+  # rleid over (chr, class) collapses runs; a gap in bins does not merge because
+  # the runs are then written with their own start/end.
+  a[, run := data.table::rleid(chr, class2)]
+  r <- a[, .(chr = chr[1], start = min(start), end = max(end),
+             name = as.character(class2[1])), by = run]
+  rgb <- grDevices::col2rgb(gam_class2_colours[r$name])
+  r[, `:=`(score = 0L, strand = ".", ts = start, te = end,
+           itemRgb = paste(rgb[1, ], rgb[2, ], rgb[3, ], sep = ","))]
+  writeLines(paste0('track name="GAM chromatin states (level 2)" ',
+                    'description="TSS/Enhancer/Tx = euchromatin; ',
+                    'Polycomb/H3K9me3/Quiescent = heterochromatin" itemRgb=On'), path)
+  data.table::fwrite(r[, .(chr, start, end, name, score, strand, ts, te, itemRgb)],
+                     path, sep = "\t", col.names = FALSE, append = TRUE, quote = FALSE)
+  invisible(r)
+}
+
 # --- Sample sheet + exclusion (mirrors ChIP/config.R) ------------
 # DEFAULT: HP1gKO rep2 is EXCLUDED, exactly as on the ChIP side - it is the
 # highest-signal library in all five marks and discordant with rep3, its own

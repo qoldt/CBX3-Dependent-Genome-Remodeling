@@ -474,24 +474,30 @@ local({
     geom_text(aes(label = paste0(sprintf("%.1f", z), star)), size = 3) +
     scale_fill_heat0_div(name = "z vs matched\nbackground") +
     facet_grid(~ grp, scales = "free_x", space = "free_x") +
+    # HOW THIS IS MEASURED - moved off the figure, which carried it as an
+    # eleven-line caption. For each family, every other 20 kb bin in the genome is
+    # a candidate background bin. Candidates are stratified on three covariates
+    # jointly: dominant chromHMM state, quartile of repeat content
+    # (LINE+SINE+LTR fraction), and tertile of GAM coverage (n_valid, WT + cKO
+    # summed). 1,000 permutations each draw, per stratum, as many background bins
+    # as the family has in that stratum, and recompute the mean of every column.
+    # z = (family mean - mean of the 1,000 permuted means) / sd of the permuted
+    # means. The p value is the two-sided empirical fraction of permutations at
+    # least as extreme, BH-adjusted across families within a column.
+    # Matching is the whole point: HUSH targets are repeat-rich and
+    # heterochromatic, so against unmatched bins every column would be
+    # significant for reasons that have nothing to do with HP1g. The unmatched
+    # contrast is kept in gam5_target_vs_matched_background.tsv as naive_diff.
+    # Counts are compared as log1p because the per-bin differential-contact
+    # counts are heavy-tailed (1-162).
     labs(title = "Contact remodelling at HUSH/CBX3 target families, against matched background bins",
-         subtitle = paste0("Each cell is a z-score: how far that family's mean sits from the mean of ",
-                           "background bins matched to it, in units of the\nbackground's own spread. ",
-                           "Positive (red) = higher than matched background. * = BH-adjusted ",
-                           "permutation p < 0.05."),
+         subtitle = paste0("Each cell is a z-score against background bins matched to that family. Positive (red) = higher ",
+                           "than\nmatched background. * = BH-adjusted permutation p < 0.05."),
          caption = paste0(
-           "HOW THIS IS MEASURED. For each family, every other 20 kb bin in the genome is a candidate background bin. Candidates are ",
-           "stratified\non three covariates jointly: dominant chromHMM state, quartile of repeat content (LINE+SINE+LTR fraction), and tertile of ",
-           "GAM\ncoverage (n_valid, WT + cKO summed). 1,000 permutations each draw, per stratum, as many background bins as the family has in ",
-           "that\nstratum, and recompute the mean of every column. z = (family mean - mean of the 1,000 permuted means) / sd of the permuted ",
-           "means.\nThe p value is the two-sided empirical fraction of permutations at least as extreme, BH-adjusted across families within a ",
-           "column.\nMatching is the whole point: HUSH targets are repeat-rich and heterochromatic, so against unmatched bins every column would ",
-           "be\nsignificant for reasons that have nothing to do with HP1g. The unmatched contrast is kept in gam5_target_vs_matched_background.tsv ",
-           "as\nnaive_diff, for comparison.\n",
-           "DIRECTION. lost/gained are from selWT/selcKO: 'lost' = the contact was stronger in WT. All deltas are cKO minus WT.\n",
-           "CAVEAT ON THE LAST THREE COLUMNS. They derive from the A/B compartment call, which is weakly determined on most chromosomes ",
-           "(see\nGAM/CLAUDE.md). Read them as provisional; the first six columns do not depend on the compartment axis.\n",
-           "Counts are compared as log1p because the per-bin differential-contact counts are heavy-tailed (1-162)."),
+           "DIRECTION. 'lost' = the contact was stronger in WT (selWT); all deltas are cKO minus WT.\n",
+           "CAVEAT ON THE COMPARTMENT COLUMNS. They derive from the A/B compartment axis, which is weakly determined on most chromosomes ",
+           "(see\nGAM/CLAUDE.md) - read them as provisional. The differential-contact and NPMI columns do not depend on it.\n",
+           "Background matching and the permutation scheme are documented in GAM_6_Targets.R; the unmatched contrast is in gam5_target_vs_matched_background.tsv."),
          x = NULL, y = NULL) +
     theme_m + theme(axis.text.x = element_text(size = 7, lineheight = 0.9),
                     strip.text = element_text(size = 8, face = "bold"),
@@ -853,10 +859,9 @@ local({
                 own_WT     = "TADs called from WT insulation",
                 own_HP1gKO = "TADs called from cKO insulation")
   relab <- ggplot2::as_labeller(part_lab)
-  part_note <- paste0("The three panels are three ways of dividing chr18 into TADs, NOT three samples. ",
-                      "Every panel measures the same thing:\npercent change in mean NPMI, cKO vs WT. The WT and cKO ",
-                      "insulation calls put the Pcdh cluster in the SAME TAD, so those two\npanels differ only in the ",
-                      "other TADs that form the comparison set.")
+  part_note <- paste0("The three panels are three ways of dividing chr18 into TADs, NOT three samples; all three measure ",
+                      "percent change in\nmean NPMI, cKO vs WT. The WT and cKO calls put Pcdh in the same TAD, so those ",
+                      "two differ only in the comparison set.")
 
   # --- figures ------------------------------------------------------------------
   NULLD <- rbindlist(lapply(R, `[[`, "nullv"))
@@ -866,9 +871,9 @@ local({
     geom_vline(data = OBS, aes(xintercept = distal_pct), colour = "#b2182b", linewidth = .8) +
     facet_wrap(~ partition, scales = "free_y", nrow = 1, labeller = relab) +
     labs(title = "Pcdh TAD vs distal TADs, against every other chr18 TAD at matched separation",
-         subtitle = paste0("Grey = the separation-stratified contact change of each other chr18 TAD against its own ",
-                           "partners.\nRed = the Pcdh TAD. Averaging within separation band first stops a TAD being ",
-                           "scored by how many near\npartners it happens to have."),
+         # Averaging within separation band BEFORE pooling is what stops a TAD
+         # being scored by how many near partners it happens to have.
+         subtitle = paste0("Grey = each other chr18 TAD's separation-stratified contact change; red = the Pcdh TAD."),
          caption = part_note,
          x = "separation-matched change in mean NPMI, cKO vs WT (%)", y = "number of TADs") +
     theme_m + theme(plot.caption = element_text(hjust = 0, size = 7, lineheight = 1.2),
@@ -888,9 +893,9 @@ local({
     facet_wrap(~ partition, nrow = 1, labeller = relab) +
     scale_x_continuous(breaks = seq_along(SEP_NM), labels = SEP_NM) +
     labs(title = "Where along the chromosome does the Pcdh TAD change its contacts?",
-         subtitle = paste0("RED = the Pcdh TAD. GREY LINE = the median of every OTHER chr18 TAD measured at the same ",
-                           "separation;\nGREY BAND = their interquartile range. The grey is therefore the distance-matched ",
-                           "control: the Pcdh TAD is\nunusual only where red leaves the band."),
+         subtitle = paste0("RED = the Pcdh TAD. GREY = every OTHER chr18 TAD at the same separation (line = median, band ",
+                           "= IQR),\nso the grey is the distance-matched control: Pcdh is unusual only where red leaves ",
+                           "the band."),
          caption = part_note,
          x = "separation from the Pcdh TAD", y = "% change in mean NPMI, cKO vs WT") +
     theme_m + theme(plot.caption = element_text(hjust = 0, size = 7, lineheight = 1.2),

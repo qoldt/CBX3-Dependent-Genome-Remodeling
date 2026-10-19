@@ -52,17 +52,27 @@ source("GAM_2b_Shared_Axis.R")
 message("=== GAM_2c: MELTRON - chromatin melting and condensation ===")
 source("GAM_2c_Meltron.R")
 
-message("=== GAM_3: does contact remodelling coincide with the mark loss? ===")
-source("GAM_3_Coupling.R")
-
 message("=== GAM_4: large one-directional blocks and the block contact budget ===")
 source("GAM_4_Large_Scale.R")
 
 message("=== GAM_5: heterochromatin domains and their contacts ===")
 source("GAM_5_Heterochromatin.R")
 
+# GAM_3 AFTER GAM_5, not before. Its synthesis panel reads
+# gam10_class_change.tsv, which GAM_5 writes - in the old order that read always
+# picked up the PREVIOUS run's table, so a full pipeline run produced a figure
+# one generation out of date and nothing said so.
+message("=== GAM_3: does contact remodelling coincide with the mark loss? ===")
+source("GAM_3_Coupling.R")
+
 message("=== GAM_6: the derepressed targets (families, repeats, protocadherin) ===")
 source("GAM_6_Targets.R")
+
+# GAM_8 after GAM_4 (it needs gam6_large_blocks.tsv) and after GAM_1. It is
+# placed here rather than next to GAM_4 only so the heavy NPMI passes do not
+# run back to back.
+message("=== GAM_8: chromatin classes of the contacts inside the large blocks ===")
+source("GAM_8_Block_Classes.R")
 
 message("=== GAM_7: region plots and per-chromosome overviews ===")
 source("GAM_7_Figures.R")

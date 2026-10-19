@@ -75,9 +75,27 @@ local({
     v <- numeric(length(bins)); agg <- tapply(w, queryHits(h), sum)
     v[as.integer(names(agg))] <- as.numeric(agg); pmin(v / width(bins), 1)
   }
-  a[, het_frac := cov_frac]
-  a[, is_het := het_frac >= gam10_het_cut]
+  # The two-level chromatin partition, from config.R so that every stage sees the
+  # same one. It supersedes the old is_het/eu_eu binary, which called the 85% of
+  # the genome that merely lacks an H3K9me3/H4K20me3 peak "euchromatin" and put
+  # Polycomb in with it. het_frac below is the same peak coverage as before and
+  # is kept because the H4K20me3 strata in section B still use it.
+  cc <- gam_chromatin_classes(a)
+  a <- merge(a, cc, by = "bin_id", sort = FALSE)
+  setorder(a, chr, start)
+  a[, is_het := class2 == "H3K9me3" & !is.na(class2)]
   stopifnot(sum(a$is_het) > 1000)   # a seqname-style failure would zero this
+  cat(sprintf("=== chromatin classes ===\n  level 1: %s\n  level 2: %s\n",
+      paste(sprintf("%s %d", levels(a$class1), table(a$class1)), collapse = "  "),
+      paste(sprintf("%s %d", levels(a$class2), table(a$class2)), collapse = "  ")))
+  cat(sprintf("  bins with no ChromHMM coverage, excluded from every pair: %d\n",
+              sum(is.na(a$class2))))
+  # The partition as an itemRgb BED, for loading beside the contact maps in IGV.
+  local({
+    bp <- file.path(bed_dir, "chromatin_states_level2.bed")
+    r <- write_chromatin_state_bed(as.data.table(x$annot)[chr %in% gam_autosomes], bp)
+    cat(sprintf("  wrote %s (%d runs from %d bins)\n", bp, nrow(r), nrow(a)))
+  })
 
   big <- dg[width(dg) >= gam10_min_domain]
   cat(sprintf("=== domains: %d total, %d >= %d kb ===\n", length(dg), length(big),
@@ -92,8 +110,8 @@ local({
   cat(sprintf("  bins inside a large domain: %d, across %d domains\n",
               sum(!is.na(a$dom_id)), uniqueN(a$dom_id, na.rm = TRUE)))
 
-  BAND_EDGES <- c(0, 2e5, 1e6, 5e6, 1e7, Inf)
-  BAND_NAMES <- c("<0.2Mb", "0.2-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
+  BAND_EDGES <- gam_band_edges   # config.R - one definition for every stage
+  BAND_NAMES <- gam_band_names
 
   # --- accumulate per chromosome x genotype x class x band ---------------------
   acc <- list()
@@ -106,23 +124,47 @@ local({
       keep <- intersect(rownames(m), ids$bin_id)
       m <- m[keep, keep, drop = FALSE]
       k <- match(keep, ids$bin_id)
-      het <- ids$is_het[k]; dom <- ids$dom_id[k]; pos <- ids$start[k]
-      n <- length(keep)
-      d <- abs(outer(pos, pos, "-"))
-      band <- cut(d, BAND_EDGES, labels = BAND_NAMES, right = FALSE)
-      same_dom <- outer(dom, dom, function(p, q) !is.na(p) & !is.na(q) & p == q)
-      both_het <- outer(het, het, "&")
-      one_het  <- outer(het, het, "|") & !both_het
-      cls <- matrix("eu_eu", n, n)
-      cls[both_het] <- "inter_het"
-      cls[same_dom] <- "intra_dom"
-      cls[one_het]  <- "het_eu"
-      ok <- is.finite(m) & upper.tri(m) & !is.na(band)
-      if (!any(ok)) { rm(m, d, band, cls, same_dom, both_het, one_het); gc(FALSE); next }
-      acc[[length(acc) + 1]] <- data.table(chr = ch, genotype = g, cls = cls[ok],
-        band = as.character(band[ok]), v = m[ok])[, .(s = sum(v), n = .N),
-        by = .(chr, genotype, cls, band)]
-      rm(m, d, band, cls, same_dom, both_het, one_het, ok); gc(FALSE)
+      k1 <- as.integer(ids$class1[k]); k2 <- as.integer(ids$class2[k])
+      dom <- ids$dom_id[k]; pos <- ids$start[k]
+      # Work on the upper-triangle INDEX rather than on n x n matrices. The old
+      # version built four n x n logicals plus an n x n character matrix; on
+      # chr1 that is five 9,758^2 objects at once, and the character one alone
+      # is ~760 MB of pointers. Indexing costs two integer vectors instead.
+      iu <- which(upper.tri(m), arr.ind = TRUE)
+      i1 <- iu[, 1]; i2 <- iu[, 2]; rm(iu)
+      val  <- m[cbind(i1, i2)]
+      band <- cut(abs(pos[i2] - pos[i1]), BAND_EDGES, labels = BAND_NAMES, right = FALSE)
+      # A bin with no ChromHMM coverage has no class, and a pair involving one
+      # is dropped from BOTH levels rather than being given a default - there
+      # are 3,218 such bins and defaulting them would invent a class.
+      ok <- is.finite(val) & !is.na(band) & !is.na(k1[i1]) & !is.na(k1[i2])
+      if (!any(ok)) { rm(m, i1, i2, val, band, ok); gc(FALSE); next }
+      i1 <- i1[ok]; i2 <- i2[ok]; val <- val[ok]; band <- as.character(band[ok]); rm(ok)
+
+      # Aggregate on INTEGER pair codes and attach the labels afterwards, on the
+      # few hundred surviving rows. Pasting labels across ~47M pairs first would
+      # allocate a 47M-element character vector per level for no gain.
+      code <- function(z) pmin(z[i1], z[i2]) * 100L + pmax(z[i1], z[i2])
+      agg <- function(cd) data.table(cd = cd, band = band, v = val)[
+                            , .(s = sum(v), n = .N), by = .(cd, band)]
+      lab <- function(d, levs) {
+        d[, pair := paste(levs[cd %/% 100L], levs[cd %% 100L], sep = "-")][, cd := NULL][]
+      }
+      A1 <- lab(agg(code(k1)), gam_class1_levels)[, level := "L1"]
+      A2 <- lab(agg(code(k2)), gam_class2_levels)[, level := "L2"]
+      # The same-domain / different-domain split, which is only meaningful for a
+      # pair of H3K9me3 bins and is the question section A exists to ask.
+      kh <- which(gam_class2_levels == "H3K9me3")
+      hh <- k2[i1] == kh & k2[i2] == kh
+      A3 <- if (any(hh)) {
+        sd <- !is.na(dom[i1][hh]) & !is.na(dom[i2][hh]) & dom[i1][hh] == dom[i2][hh]
+        data.table(pair = fifelse(sd, "same domain", "different domains"),
+                   band = band[hh], v = val[hh])[, .(s = sum(v), n = .N), by = .(pair, band)][
+                   , level := "dom"][]
+      } else NULL
+      acc[[length(acc) + 1]] <- rbindlist(list(A1, A2, A3), use.names = TRUE)[
+                                  , `:=`(chr = ch, genotype = g)][]
+      rm(m, i1, i2, val, band, A1, A2, A3, hh); gc(FALSE)
     }
     cat("  ", ch, "done\n")
   }
@@ -130,9 +172,10 @@ local({
   fwrite(A, file.path(tables_dir, "gam10_perchrom_sums.tsv"), sep = "\t")
 
   # --- pooled means, percent change, and a chromosome bootstrap ----------------
-  pool <- function(d) d[, .(mean_npmi = sum(s) / sum(n), n = sum(n)), by = .(genotype, cls, band)]
+  pool <- function(d) d[, .(mean_npmi = sum(s) / sum(n), n = sum(n)),
+                        by = .(genotype, level, pair, band)]
   P <- pool(A)
-  W <- dcast(P, cls + band ~ genotype, value.var = c("mean_npmi", "n"))
+  W <- dcast(P, level + pair + band ~ genotype, value.var = c("mean_npmi", "n"))
   setnames(W, c("mean_npmi_WT","mean_npmi_HP1gKO"), c("WT","KO"))
   W[, pct := 100 * (KO - WT) / WT]
 
@@ -142,38 +185,41 @@ local({
     smp <- sample(chrs, length(chrs), replace = TRUE)
     d <- rbindlist(lapply(seq_along(smp), function(j) { z <- A[chr == smp[j]]; z[, chr := j]; z }))
     p <- pool(d)
-    w <- dcast(p, cls + band ~ genotype, value.var = "mean_npmi")
-    w[, .(cls, band, pct = 100 * (HP1gKO - WT) / WT, rep = i)]
+    w <- dcast(p, level + pair + band ~ genotype, value.var = "mean_npmi")
+    w[, .(level, pair, band, pct = 100 * (HP1gKO - WT) / WT, rep = i)]
   }))
   ci <- boot[, .(lo = quantile(pct, .025, na.rm = TRUE), hi = quantile(pct, .975, na.rm = TRUE)),
-             by = .(cls, band)]
-  W <- merge(W, ci, by = c("cls","band"))
-  setorder(W, band, cls)
+             by = .(level, pair, band)]
+  W <- merge(W, ci, by = c("level","pair","band"))
+  setorder(W, level, band, pair)
   fwrite(W, file.path(tables_dir, "gam10_class_change.tsv"), sep = "\t")
 
   cat("\n=== mean NPMI change by contact class, within distance band ===\n")
   cat("   (95% CI from a bootstrap over the 19 autosomes - n is 19, not the pair count)\n")
-  for (bn in BAND_NAMES) {
-    d <- W[band == bn]; if (!nrow(d)) next
-    cat("\n--", bn, "--\n")
-    cat(sprintf("  %-10s %8s %8s %9s %18s %12s\n","class","WT","KO","change","95% CI","pairs"))
+  cat("   L1 = euchromatin/heterochromatin; L2 = the six sub-classes.\n")
+  for (lv in c("L1", "L2")) for (bn in BAND_NAMES) {
+    d <- W[level == lv & band == bn]; if (!nrow(d)) next
+    setorder(d, -pct)
+    cat("\n--", lv, bn, "--\n")
+    cat(sprintf("  %-42s %8s %8s %9s %18s %14s\n","pair","WT","KO","change","95% CI","pairs"))
     for (i in seq_len(nrow(d)))
-      cat(sprintf("  %-10s %8.4f %8.4f %+8.1f%% [%+6.1f%%,%+6.1f%%] %12s\n",
-          d$cls[i], d$WT[i], d$KO[i], d$pct[i], d$lo[i], d$hi[i],
+      cat(sprintf("  %-42s %8.4f %8.4f %+8.1f%% [%+6.1f%%,%+6.1f%%] %14s\n",
+          d$pair[i], d$WT[i], d$KO[i], d$pct[i], d$lo[i], d$hi[i],
           format(d$n_WT[i], big.mark = ",")))
   }
 
   # --- the contrast the question asks for: intra vs inter, same band -----------
-  did <- boot[cls %in% c("intra_dom","inter_het")]
-  did <- dcast(did, band + rep ~ cls, value.var = "pct")
-  did[, diff := intra_dom - inter_het]
+  # Now carried by the "dom" level, which splits H3K9me3-H3K9me3 pairs only.
+  did <- boot[level == "dom"]
+  did <- dcast(did, band + rep ~ pair, value.var = "pct")
+  did[, diff := `same domain` - `different domains`]
   D <- did[, .(est = mean(diff, na.rm = TRUE),
                lo = quantile(diff, .025, na.rm = TRUE),
                hi = quantile(diff, .975, na.rm = TRUE),
                p_two_sided = 2 * min(mean(diff <= 0, na.rm = TRUE),
                                      mean(diff >= 0, na.rm = TRUE))), by = band]
-  D <- merge(D, W[cls == "intra_dom", .(band, intra = pct)], by = "band")
-  D <- merge(D, W[cls == "inter_het", .(band, inter = pct)], by = "band")
+  D <- merge(D, W[level == "dom" & pair == "same domain",        .(band, intra = pct)], by = "band")
+  D <- merge(D, W[level == "dom" & pair == "different domains",   .(band, inter = pct)], by = "band")
   D[, band := factor(band, BAND_NAMES)]; setorder(D, band)
   fwrite(D, file.path(tables_dir, "gam10_intra_vs_inter.tsv"), sep = "\t")
 
@@ -185,21 +231,63 @@ local({
   cat("\n  A CI excluding 0 means the two classes changed by different amounts.\n")
   cat("  p is the bootstrap two-sided proportion, not a parametric test.\n")
 
-  pw <- W[cls %in% c("intra_dom","inter_het","het_eu","eu_eu")]
+  # LEVEL 1 only. The six-way level-2 version is 21 pairs and belongs in the
+  # table, not in a bar chart; GAM_7 draws the level-2 view per chromosome.
+  pw <- W[level == "L1"]
   pw[, band := factor(band, BAND_NAMES)]
-  pw[, cls := factor(cls, c("intra_dom","inter_het","het_eu","eu_eu"))]
-  p <- ggplot(pw, aes(band, pct, fill = cls)) +
+  pw[, pair := factor(pair, c("heterochromatin-heterochromatin",
+                              "euchromatin-heterochromatin", "euchromatin-euchromatin"))]
+  pw <- pw[!is.na(pair)]
+  p <- ggplot(pw, aes(band, pct, fill = pair)) +
     geom_col(position = position_dodge(.8), width = .72) +
     geom_errorbar(aes(ymin = lo, ymax = hi), position = position_dodge(.8),
                   width = .22, linewidth = .4) +
     geom_hline(yintercept = 0, linewidth = .3) +
     scale_fill_disc(name = NULL) +
-    labs(title = "Heterochromatin contacts: within a domain vs between domains",
-         subtitle = paste0("Change in mean NPMI, HP1gKO vs WT, within each distance band.\n",
-                           "Bars are 95% CIs from a bootstrap over the 19 autosomes."),
+    labs(title = "Contact change by chromatin class and separation",
+         subtitle = paste0("Change in mean NPMI, HP1gKO vs WT. Heterochromatin here is Polycomb + ",
+                           "H3K9me3 + quiescent;\neuchromatin is TSS + enhancer + transcribed. ",
+                           "Bars are 95% CIs over the 19 autosomes."),
          x = "contact distance", y = "change in mean NPMI (%)") +
     theme_m + theme(legend.position = "top", text = element_text(size = 14))
   save_fig(p, "heterochromatin_contact_classes", subdir = "heterochromatin", width = 11, height = 7)
+
+  # --- LEVEL 2, the six self-pairs --------------------------------------------
+  # The level-1 figure above shows heterochromatin beating euchromatin. It
+  # cannot show the finding that matters most, which is that the three
+  # heterochromatin sub-classes do NOT behave alike: H3K9me3 keeps gaining out
+  # to 10 Mb while Polycomb and quiescent rise only below 0.2 Mb and then fall
+  # with everything else. Only the self-pairs are drawn - the 15 mixed pairs are
+  # in gam10_class_change.tsv and would make this unreadable.
+  sp <- paste(gam_class2_levels, gam_class2_levels, sep = "-")
+  pw2 <- W[level == "L2" & pair %in% sp]
+  if (nrow(pw2)) {
+    pw2[, band := factor(band, BAND_NAMES)]
+    pw2[, cls := factor(sub("-.*$", "", pair), gam_class2_levels)]
+    # DODGED ERROR BARS, NOT RIBBONS. Six translucent ribbons over six bands
+    # overlap into a single wash that hides the lines they belong to, and the
+    # widest one (TSS) stretched the y axis to -40 so every other class was
+    # squeezed into the top third. Dodging separates the intervals and lets the
+    # axis follow the estimates.
+    dg <- position_dodge(width = 0.5)
+    p2 <- ggplot(pw2, aes(band, pct, colour = cls, group = cls)) +
+      geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
+      geom_errorbar(aes(ymin = lo, ymax = hi), width = 0, linewidth = .45,
+                    alpha = .45, position = dg) +
+      geom_line(linewidth = .8, position = dg) +
+      geom_point(size = 2.3, position = dg) +
+      scale_colour_disc(name = NULL) +
+      labs(title = "Only H3K9me3 heterochromatin keeps gaining contact past 1 Mb",
+           subtitle = paste0("Self-pairs only (both bins in the same class), HP1gKO vs WT. ",
+                             "Ribbons are 95% CIs over the 19 autosomes.\n",
+                             "Polycomb and quiescent chromatin rise below 0.2 Mb and then fall ",
+                             "with euchromatin - the gain is not repression in general."),
+           x = "distance between the two bins (Mb = megabases)",
+           y = "change in mean NPMI (%)") +
+      theme_m + theme(legend.position = "top", text = element_text(size = 13))
+    save_fig(p2, "contact_classes_level2", subdir = "heterochromatin",
+             width = 11, height = 7)
+  }
   cat("\nGAM_10 complete.\n")
 })
 
@@ -251,8 +339,8 @@ local({
   cat(sprintf("  tertile cuts at log2FC %.3f and %.3f; euchromatic bins: %d\n",
               qs[1], qs[2], sum(a$stratum == "eu")))
 
-  BAND_EDGES <- c(0, 2e5, 1e6, 5e6, 1e7, Inf)
-  BAND_NAMES <- c("<0.2Mb", "0.2-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
+  BAND_EDGES <- gam_band_edges   # config.R - one definition for every stage
+  BAND_NAMES <- gam_band_names
   KEEP <- c("het_lost-het_lost", "het_lost-het_kept", "het_kept-het_kept",
             "het_lost-eu", "het_kept-eu", "eu-eu")
 
@@ -363,8 +451,12 @@ local({
 local({
   set.seed(1)
   N_BOOT  <- 2000L
-  BANDS   <- list(c(2e4, 1e6), c(1e6, 5e6), c(5e6, 1e7), c(1e7, Inf))
-  BANDNM  <- c("0.02-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
+  # Keeps its own near-diagonal band (one 0.02-1Mb bin, deliberately excluding
+  # the diagonal) but takes the same LONG-RANGE split as everything else: the
+  # old open-ended >10Mb had nearly half its pairs beyond 50 Mb. See
+  # gam_band_edges in config.R.
+  BANDS   <- list(c(2e4, 1e6), c(1e6, 5e6), c(5e6, 1e7), c(1e7, 5e7), c(5e7, Inf))
+  BANDNM  <- c("0.02-1Mb", "1-5Mb", "5-10Mb", "10-50Mb", ">50Mb")
   SZ_CUT  <- c(0, 2e5, 5e5, Inf)                 # domain size tertile-ish classes
   SZ_NM   <- c("100-200kb", "200-500kb", ">500kb")
 
@@ -398,10 +490,12 @@ local({
     geom_line() + geom_point(size = 1.4) +
     geom_vline(xintercept = gam_het_merge$gap / 1e3, linetype = 2, colour = "grey40") +
     scale_colour_manual(values = disc_pal(3), name = "min width (kb)") +
+    # The input is 126,197 peak fragments of mean width 3.5 kb, which is why the
+    # percolation point is so early: past ~20 kb the gap exceeds the typical
+    # spacing between peaks.
     labs(title = "Heterochromatin fragments percolate when gap-merged",
-         subtitle = paste0("126,197 peak fragments, mean width 3.5 kb. Past ~20 kb the gap exceeds the ",
-                           "typical spacing\nbetween peaks and they fuse into chromosome-length blocks. ",
-                           "Dashed line = the gap used downstream."),
+         subtitle = paste0("Dashed = the gap used downstream. Past ~20 kb the fragments fuse into ",
+                           "chromosome-length blocks."),
          x = "merge gap (kb)", y = "% of autosomal genome in domains") +
     theme_m
   save_fig(p, "merge_sweep", subdir = fig_sub, width = 8, height = 5)
@@ -592,9 +686,9 @@ local({
     facet_wrap(~ definition, nrow = 1) +
     scale_colour_manual(values = c(intra = "#b2182b", inter = "#2166ac"), name = NULL) +
     labs(title = "Heterochromatin contacts: within a domain vs between domains",
-         subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT, by separation. Bars are 95% CIs from a ",
-                           "bootstrap over the 19 autosomes.\nThe three panels are three ways of defining a ",
-                           "domain from the same peak set - where they disagree, the definition is doing the work."),
+         subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT, by separation; bars are 95% CIs over the 19 ",
+                           "autosomes.\nThe three panels are three definitions of a domain from the SAME peak set - ",
+                           "where they disagree, the definition is doing the work."),
          x = "genomic separation", y = "% change in mean NPMI") +
     theme_m
   save_fig(p, "intra_vs_inter_by_definition", subdir = fig_sub, width = 11, height = 5)
@@ -636,9 +730,10 @@ local({
       geom_col(position = position_dodge(.8), width = .7) +
       scale_fill_manual(values = c(cLAD = "#53426b", ciLAD = "#cbbddc"), name = NULL) +
       labs(title = "Heterochromatin domains against constitutive LADs",
-           subtitle = paste0("cLAD/ciLAD (Peric-Hupkes 2010) are external to both genotypes and to all five ",
-                             "marks, so unlike our own PC1\nthey cannot be circular. They are the ",
-                             "cell-type-invariant core, NOT a neuronal annotation."),
+           # cLAD/ciLAD are external to both genotypes and to all five marks, so
+           # unlike our own PC1 they cannot be circular - that is why they are here.
+           subtitle = paste0("cLAD/ciLAD (Peric-Hupkes 2010) are the cell-type-invariant core, NOT a neuronal ",
+                             "annotation."),
            x = NULL, y = "% of domain bp") +
       theme_m
     save_fig(p, "domains_vs_lads", subdir = fig_sub, width = 7.5, height = 5)

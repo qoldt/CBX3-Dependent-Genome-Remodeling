@@ -546,17 +546,21 @@ local({
                     linewidth = 0.5) +
     facet_wrap(~ direction, nrow = 1) +
     scale_colour_disc(guide = "none") +
+    # The machine-generated verdict string used to be the subtitle. It is printed
+    # to the console above and stored in coupling_specificity.tsv$overall_verdict,
+    # which is where it belongs - a verdict is a conclusion, not a legend.
     labs(title = "Specificity control: does only H4K20me3 (+/- H3K9me3) track contact remodelling?",
-         subtitle = paste0(paste(strwrap(paste("raw:", verdict_raw), 120), collapse = "\n"), "\n",
-                           "grey band = 'flat' (|rho| < ", FLAT_RHO, "); bars = chromosome-bootstrap 95% CI"),
+         subtitle = paste0("grey band = 'flat' (|rho| < ", FLAT_RHO, "); bars = chromosome-bootstrap 95% CI"),
          x = NULL, y = "Spearman rho (log2FC vs contact density)", shape = NULL) +
     theme_m + theme(legend.position = "bottom", plot.subtitle = element_text(size = 8))
   save_fig(g_spec, "specificity_control_rho", subdir = "coupling", width = 11, height = 5.5)
 
   # All five marks on ONE panel for direct comparison, lost only (the control as
   # specified). Same data as the curves figure, restricted to the direction at issue.
+  # Verdict string deliberately not repeated here either - see above.
   g_spec_curve <- curve_plot("lost", "Specificity control: all five marks vs contact-LOSS density",
-                             paste(strwrap(paste("raw:", verdict_raw), 110), collapse = "\n"),
+                             paste0("ribbon = 95% CI of the mean; centred on each mark's genome-wide median, ",
+                                    "so a flat line = no coupling"),
                              "percentile of n_contacts_lost (bin mean)") +
     theme(plot.subtitle = element_text(size = 8))
   save_fig(g_spec_curve, "specificity_control_curves", subdir = "coupling", width = 7, height = 5.5)
@@ -651,11 +655,13 @@ local({
     scale_fill_heat0_div(limits = c(-lim, lim), name = "Spearman\nrho") +
     labs(title = "Does contact change predict mark change WITHIN matched chromatin?",
          x = NULL, y = NULL,
+         # Contact loss IS strongly LINE-rich - mean lost counts rise 18.3 to 20.8
+         # from LINE Q1 to Q4 - but that contrast is BETWEEN rows, not within them,
+         # which is exactly what stratifying removes. Kept here so a near-white
+         # panel is not read as "LINE content does not matter".
          subtitle = paste("NOT a map of where contacts change. Each tile is the rho between per-bin ChIP log2FC and",
-                          "per-bin contact count\nINSIDE one stratum, so any association that defines the stratum",
-                          "(LINE content, ChromHMM state) is removed by construction.\nContact loss IS strongly",
-                          "LINE-rich - mean lost counts rise 18.3 to 20.8 from LINE Q1 to Q4 - and that contrast is",
-                          "between rows, not within them.\nFill clipped at +-0.10; values printed in full.")) +
+                          "contact count\nINSIDE one stratum, so any association that defines the stratum (LINE",
+                          "content, ChromHMM state) is removed by construction.\nFill clipped at +-0.10; values printed in full.")) +
     theme_m + theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 30, hjust = 1))
   save_fig(g_strat, "coupling_stratified", subdir = "coupling", width = 10, height = 9)
 
@@ -1325,10 +1331,20 @@ local({
     theme_m + theme(plot.caption = element_text(hjust = 0, size = 7, colour = "grey40"))
 
   # --- panel 3: where the effect actually is --------------------------------
-  cc <- fread(f("gam10_class_change.tsv"))[cls %in% c("inter_het", "eu_eu")]
-  cc[, cls := factor(fifelse(cls == "eu_eu", "euchromatin", "heterochromatin"),
+  # GAM_5 writes this table, and run_GAM.R used to run GAM_3 BEFORE GAM_5, so
+  # this read always saw the previous run's file. The order is fixed in
+  # run_GAM.R, but fail loudly rather than silently plotting a stale schema if
+  # someone runs the stages by hand in the old order.
+  cc <- fread(f("gam10_class_change.tsv"))
+  if (!all(c("level", "pair") %in% names(cc)))
+    stop("gam10_class_change.tsv predates the two-level chromatin classes.\n",
+         "  Run GAM_5 first:  cd GAM && Rscript GAM_5_Heterochromatin.R", call. = FALSE)
+  cc <- cc[level == "L1" & pair %in% c("heterochromatin-heterochromatin",
+                                       "euchromatin-euchromatin")]
+  cc[, cls := factor(fifelse(pair == "euchromatin-euchromatin",
+                             "euchromatin", "heterochromatin"),
                      levels = c("heterochromatin", "euchromatin"))]
-  ord <- c("<0.2Mb", "0.2-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
+  ord <- gam_band_names   # config.R, so this panel cannot outlive a band change
   cc <- cc[band %in% ord][, band := factor(band, levels = ord)]
   p3 <- ggplot(cc, aes(band, pct, colour = cls, group = cls)) +
     geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
@@ -1342,15 +1358,33 @@ local({
     theme_m + theme(legend.position = "bottom",
                     plot.caption = element_text(hjust = 0, size = 7, colour = "grey40"))
 
+  # STANDALONE EXPORT of panel 3. Inside the synthesis it is panel "3." of an
+  # argument and its subtitle reads as one, which is wrong on a slide where it
+  # appears alone. Same data, same scales, its own title.
+  p3_solo <- p3 +
+    labs(title = "Heterochromatin gains contact at short range; euchromatin loses at every range",
+         subtitle = paste0("Change in mean NPMI, HP1gKO vs WT, by the chromatin class of BOTH bins in a pair. ",
+                           "Heterochromatin is\nPolycomb + H3K9me3 + quiescent; euchromatin is TSS + enhancer ",
+                           "+ transcribed."),
+         x = "distance between the two bins (Mb = megabases)") +
+    theme(legend.position = "top",
+          plot.title = element_text(face = "bold", size = 13))
+  save_fig(p3_solo, "contact_change_by_class", subdir = "coupling", width = 8, height = 5.6)
+
   pp <- p1 + p2 + p3 + patchwork::plot_layout(widths = c(1, 1, 1.25)) +
     patchwork::plot_annotation(
       title = "Does the H4K20me3 loss have a contact counterpart? Three ways of asking",
+      # WHY THE NEGATIVE IS REAL, kept off the panel: the extremes make it
+      # concrete - bins losing the most H4K20me3 (median -0.76) and the least
+      # (-0.22) have identical contact densities. Panel 2 exists because panel 1's
+      # contact measure is integrated over 5 Mb while the mark varies at 20 kb, so
+      # its null could have been a resolution limit; recounted locally the null
+      # holds at every distance. Panel 3 then shows the architecture DOES change -
+      # heterochromatin gains, euchromatin loses - it just does not track the size
+      # of the mark loss bin by bin.
       subtitle = paste0(
-        "Panels 1 and 2 find nothing, and that is a real negative, not a weak one: n = 119,952 bins, and the extremes make it concrete - ",
-        "bins losing the most\nH4K20me3 (median -0.76) and the least (-0.22) have identical contact densities. Panel 2 exists because panel 1's contact measure is ",
-        "integrated over\n5 Mb while the mark varies at 20 kb, so its null could have been a resolution limit; recounted locally, the null holds at every distance.\n\n",
-        "Panel 3 is where the signal is, and it is a different question: not 'how much mark did this bin lose' but 'what kind of chromatin is this'. ",
-        "Heterochromatin\ngains contacts while euchromatin loses them. So the architecture does change - it just does not track the size of the mark loss bin by bin."),
+        "Panels 1 and 2 ask whether the SIZE of a bin's mark loss predicts the size of its contact change. Both find nothing, and it is a\n",
+        "real negative rather than a weak one (n = 119,952 bins). Panel 3 asks a different question - what KIND of chromatin a bin is."),
       theme = theme(plot.title = element_text(face = "bold", size = 13),
                     plot.subtitle = element_text(size = 8.5, colour = "grey25")))
   save_fig(pp, "coupling_synthesis", subdir = "coupling", width = 13.5, height = 6.4)

@@ -823,7 +823,10 @@ g_diag <- ggplot(diag_df, aes(log2FoldChange)) +
   facet_wrap(~ChIP, ncol = 1, scales = "free_y") +
   coord_cartesian(xlim = c(-2, 2)) +
   labs(title = "Per-peak log2FC distribution by mark (HP1gKO vs WT)",
-       subtitle = "solid = 0, dashed grey = median. Median far below 0 = global loss (per-peak p underpowered → effect-size framing)",
+       # Why the framing is effect-size rather than per-peak significance: with
+       # n = 2 vs 2 and a genome-wide shift, the per-peak p is underpowered by
+       # construction. See ChIP/results/EXECUTIVE_SUMMARY.md.
+       subtitle = "solid = 0, dashed grey = each mark's median log2FC; a median far below 0 is a global loss",
        x = "log2FoldChange", y = "density") +
   theme_minimal(base_size = base_size) +
   theme(legend.position = "none", panel.grid.minor = element_blank())
@@ -1052,7 +1055,7 @@ g_bin <- ggplot(d9, aes(H3K9me3, H4K20me3)) +
             inherit.aes = FALSE, hjust = 1.05, vjust = 1.5, size = 3, colour = "black") +
   facet_wrap(~Cluster, nrow = 1) +
   labs(title = "H3K9me3 vs H4K20me3 change (DESeq2 log2FC), binned by domain size",
-       subtitle = "fill = median domain size of peaks in each bin; where do the large domains sit in the change plane?",
+       subtitle = "fill = median domain size of the peaks in each bin",
        x = "H3K9me3 log2FoldChange", y = "H4K20me3 log2FoldChange") +
   theme_minimal(base_size = base_size) + theme(panel.grid.minor = element_blank())
 save_fig(g_bin, "relationship_bycluster_change_H3K9me3_vs_H4K20me3_binned", "relationships", width = 14, height = 3.6)

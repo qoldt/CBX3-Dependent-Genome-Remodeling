@@ -108,7 +108,7 @@ local({
   gam12_map_cols_max <- 1600L  # tile budget: ~1.3 M rects in the full triangle
   # How many blocks from each end of gam12_block_ranking.tsv to render as region
   # figures. 0 disables. They get band_sigonly only - see the region list.
-  gam12_block_regions_n <- 20L
+  gam12_block_regions_n <- 30L   # top N gained + top N lost from the block ranking
   # RAW NPMI CAP: DATA-DRIVEN. Forcing theirs was tried and reverted.
   #
   # Their slides use a fixed 0 to 0.25 bar, and a fixed limit is normally the
@@ -173,6 +173,21 @@ local({
   gam12_h_mark   <- 0.525
   gam12_h_gene   <- 0.80
   gam12_h_ctcf   <- 0.26   # CTCF strip, same height as the LAD ribbon
+  gam12_show_ctcf <- FALSE # see the note at p_ctcf below
+  # ggplot draws plot.caption as literal lines and NEVER wraps them, so any line
+  # longer than the canvas is silently cut off at the right edge - which is what
+  # the long non-slide caption has been doing at every width. Wrap it ourselves,
+  # line by line so the author's own breaks survive, at roughly the characters
+  # that fit at this width (~15 per inch at size 7, the figure's caption size).
+  wrap_cap <- function(txt, fig_width) {
+    if (!length(txt) || !nzchar(txt)) return(txt)
+    w <- max(60L, as.integer(fig_width * 15))
+    paste(vapply(strsplit(txt, "\n", fixed = TRUE)[[1]],
+                 function(l) if (nzchar(l)) paste(strwrap(l, width = w), collapse = "\n") else l,
+                 character(1), USE.NAMES = FALSE),
+          collapse = "\n")
+  }
+  gam12_h_state  <- 0.26   # chromatin-state ribbon, same height as the LAD one
   # REPEAT PANEL. Taller than a ribbon because it carries three lines and a
   # numbered y axis, shorter than a mark panel because it needs only two breaks.
   gam12_h_repeat <- 0.42
@@ -315,6 +330,12 @@ local({
   # a DATA COVERAGE WARNING line (chr7_Vmn is 29% measured), and the figure must
   # fit its longest caption, not its typical one.
   gam12_h_chrome <- 3.00
+  # Width of ONE column's non-panel furniture (y-axis titles + tick labels) in
+  # the two-column layout. The single-column layout folds this into side_allow
+  # along with the legend; a second column needs its own axis block, and it is
+  # not free. Measured from a render, not guessed - the same discipline the
+  # chrome heights above are set by.
+  gam12_w_axis2  <- 0.95
   # SLIDE CHROME, MEASURED NOT GUESSED. Every panel row in this figure is an
   # absolute height, so a figure saved shorter than its content does not shrink
   # to fit - it overflows the canvas and the outer rows are silently cut off.
@@ -444,6 +465,24 @@ local({
     }
   })
 
+  # GENOME-WIDE MEDIAN WT COVERAGE PER MARK, for a reference line on every mark
+  # panel. The tracks are ABSOLUTE coverage drawn on a per-region auto-scaled
+  # axis, so every region fills its panel and reads as mark-rich whatever its
+  # actual enrichment - chr4:23.8-30.4, a LOST block, sits at 0.94x the genome
+  # mean for H3K9me3 and still looks heavily marked. The line is the only thing
+  # on the panel that says where the genome sits.
+  gam12_mark_med <- vapply(colnames(X$l2fc), function(mk) {
+    v <- A[[paste0("sig_", mk, "_WT")]]
+    if (is.null(v)) NA_real_ else stats::median(v, na.rm = TRUE)
+  }, numeric(1))
+
+  # The level-2 chromatin partition, for the state ribbon under the LAD track.
+  local({
+    cc <- tryCatch(gam_chromatin_classes(A), error = function(e) NULL)
+    if (!is.null(cc)) A <<- merge(A, cc[, .(bin_id, class2)], by = "bin_id", sort = FALSE)
+    if (!is.null(cc)) setorder(A, chr, start)
+  })
+
   # z-score within each genomic distance (each diagonal). This is the
   # collaborators' normalisation, and it must be computed on the WHOLE chromosome
   # matrix, not on a displayed sub-region: a 2 Mb window leaves ~90 values per
@@ -503,6 +542,13 @@ local({
                               # two marks instead of five, and the caption reduced to a
                               # single line (on a slide it belongs in the speaker notes).
                               slide = FALSE,
+                              # TWO-COLUMN LAYOUT. Left: the raw WT and cKO
+                              # triangles. Right: the difference map and every
+                              # track. A whole-chromosome render at three
+                              # stacked triangles is ~20 in tall at 11 in wide
+                              # (1:1.84); splitting it lands near 1:0.7, which
+                              # is both readable and slide-shaped.
+                              twocol = FALSE,
                               # INSULATION-SCORE MAP STRIPS under the difference
                               # map (WT, cKO, cKO - WT). On by default in slide
                               # mode, where the point of the figure is the change
@@ -512,7 +558,18 @@ local({
                               # (the default on slides) or "all". See
                               # gam12_ismap_mode in the config block for why one
                               # strip rather than three.
-                              ismap = if (slide) gam12_ismap_mode else "none") {
+                              # ON FOR EVERY REGION PLOT, not just slides.
+                              # It was slide-only, which meant the melting
+                              # strip - the one view that says at WHAT SCALE a
+                              # region reorganised - was missing from every
+                              # full and band render, and from any region that
+                              # had no slide variant. It costs one 0.45 in row,
+                              # and gam_map_in$total already counts it through
+                              # track_h, so the saved canvas follows. A region
+                              # with no insulation data still degrades to no
+                              # strip rather than failing. "none" remains
+                              # available per call.
+                              ismap = gam12_ismap_mode) {
     diff_mode <- match.arg(diff_mode)
 
     reg <- A[chr == chrom]
@@ -778,7 +835,10 @@ local({
       scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim),
                            na.value = if (dz_sig) "grey88" else "transparent",
                            name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
-                           guide = guide_colourbar(barheight = grid::unit(2.8, "cm"))) +
+                           # Shorter on a slide: the collected legend column is
+                           # the binding constraint there (see the theme block).
+                           guide = guide_colourbar(
+                             barheight = grid::unit(if (slide) 1.2 else 2.8, "cm"))) +
       { if (gam12_hotline / 2 < maxdist / 2)
           geom_hline(yintercept = gam12_hotline / 2e6, linetype = 2, linewidth = .3,
                      colour = "grey30") } +
@@ -962,6 +1022,27 @@ local({
     # cannot be circular. Drawn as a thin ribbon rather than a track because the
     # only question asked of it is "is this stretch peripheral or not".
     lads <- tryCatch(load_lads(), error = function(e) NULL)
+    # CHROMATIN STATE, level 2. Same geometry as the LAD ribbon below it, so the
+    # two read as a pair: which compartment-scale domain a position is in, and
+    # what chromatin it is made of. Colours come from gam_class2_colours in
+    # config.R, which the exported BED uses too.
+    p_state <- if (!("class2" %in% names(A))) NULL else {
+      sd <- A[chr == chrom & end > from & start < to & !is.na(class2),
+              .(s = pmax(start, from) / 1e6, e = pmin(end, to) / 1e6,
+                class2 = factor(as.character(class2), levels = gam_class2_levels))]
+      if (!nrow(sd)) NULL else
+        ggplot(sd) +
+          geom_rect(aes(xmin = s, xmax = e, ymin = 0, ymax = 1, fill = class2)) +
+          scale_fill_manual(values = gam_class2_colours, name = NULL, drop = FALSE) +
+          scale_x_continuous(expand = c(0, 0), limits = c(from, to) / 1e6) +
+          scale_y_continuous(expand = c(0, 0)) +
+          labs(y = "chromatin") +
+          theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                          axis.text.y = element_blank(), axis.ticks.y = element_blank(),
+                          axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5, size = 7),
+                          panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
+    }
+
     p_lad <- if (is.null(lads)) NULL else {
       lg <- as.data.table(as.data.frame(
         IRanges::subsetByOverlaps(lads, GRanges(chrom, IRanges(from, to)))))
@@ -1198,6 +1279,14 @@ local({
         # free-floating lines.
         geom_ribbon(aes(x = x, ymin = 0, ymax = pmin(wt, ko)),
                     fill = "grey72", colour = NA, na.rm = TRUE) +
+        # GENOME-WIDE MEDIAN for this mark, so the panel can be read for
+        # enrichment and not just for shape. Drawn only when it falls inside the
+        # panel; on a region far above the genome it would otherwise sit on the
+        # axis and read as part of the frame.
+        { m <- unname(gam12_mark_med[mk])
+          if (isTRUE(is.finite(m) && m > rng[1] && m < rng[2]))
+            geom_hline(yintercept = m, linewidth = .3, linetype = 2,
+                       colour = "grey35") } +
         # the gap between the means, coloured by direction. Two ribbons each
         # clipped at the other mean, for the same reason the old panels used two:
         # one ribbon with a mapped fill joins its own points straight across
@@ -1300,6 +1389,10 @@ local({
     # at any scale - which is why the collaborators' full-chromosome maps are
     # undistorted however wide the region is.
     panel_w  <- max(2, fig_width - side_allow)      # inches of plotting area
+    # Two columns split the drawing area and pay for a second axis block, so the
+    # triangles shrink. coord_fixed locks a map's height to half its panel
+    # width, so this is the single number that sets the whole figure's shape.
+    if (twocol) panel_w <- max(2, (fig_width - side_allow - gam12_w_axis2) / 2)
     map_h_in <- panel_w * ((maxdist / 2) / (to - from))
     # One cap from the pooled values of both genotypes, so the two raw panels are
     # directly comparable and patchwork can collect their now-identical scales
@@ -1361,7 +1454,7 @@ local({
           scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim),
                                na.value = "grey92", name = leg,
                                guide = guide_colourbar(
-                                 barheight = grid::unit(0.85, "in"),
+                                 barheight = grid::unit(if (slide) 0.40 else 0.85, "in"),
                                  barwidth  = grid::unit(0.15, "in"))) +
           scale_x_continuous(expand = c(0, 0)) +
           scale_y_continuous(expand = c(0, 0),
@@ -1414,7 +1507,11 @@ local({
     # because at a whole-chromosome width ~90k peaks would otherwise merge into a
     # solid bar; one tick per peak keeps the density readable.
     ctcf <- tryCatch(load_ctcf(), error = function(e) NULL)
-    p_ctcf <- if (is.null(ctcf)) NULL else {
+    # CTCF OFF BY DEFAULT. It validated our insulation boundaries once (1.72x at
+    # +/-5 kb, in the CTCF section) and that result stands, but as a per-region
+    # track it is a near-uniform picket fence that earns none of its row.
+    # gam12_show_ctcf <- TRUE brings it back.
+    p_ctcf <- if (!gam12_show_ctcf || is.null(ctcf)) NULL else {
       cg <- as.data.table(as.data.frame(IRanges::subsetByOverlaps(
               ctcf[ctcf$tissue == "hippocampus"], GRanges(chrom, IRanges(from, to)))))
       if (!nrow(cg)) NULL else {
@@ -1432,30 +1529,123 @@ local({
       }
     }
     ctcf_h  <- if (is.null(p_ctcf)) numeric(0) else gam12_h_ctcf
+    state_h <- if (is.null(p_state)) numeric(0) else gam12_h_state
     lad_h   <- if (is.null(p_lad)) numeric(0) else gam12_h_lad
     ismap_h <- if (is.null(ismap_panels)) numeric(0)
                else rep(gam12_h_ismap, length(ismap_panels))
     rep_h   <- if (is.null(p_rep)) numeric(0) else gam12_h_repeat
-    track_h <- c(ismap_h, hot_h, ctcf_h, lad_h, rep_h,
+    track_h <- c(ismap_h, hot_h, ctcf_h, state_h, lad_h, rep_h,
                  rep(gam12_h_mark, length(panels)), gam12_h_gene)
     heights <- grid::unit(c(rep(map_h_in, n_tri), track_h), "in")
     # guides = "collect" is essential here, not cosmetic. Without it every panel
     # keeps its own legend, and patchwork centres each one on ITS OWN ROW - so the
     # LAD legend (two keys) was being centred on a 0.22 in row and spilled over
     # the legends above and below it. Collected and top-justified, they stack.
-    wrap_plots(c(tri, ismap_panels, hot_panels,
-                 if (is.null(p_ctcf)) NULL else list(p_ctcf),
-                 if (is.null(p_lad))  NULL else list(p_lad),
-                 if (is.null(p_rep))  NULL else list(p_rep),
-                 panels, list(p_gene)), ncol = 1, heights = heights) +
+    rest <- c(ismap_panels, hot_panels,
+              if (is.null(p_ctcf))  NULL else list(p_ctcf),
+              if (is.null(p_state)) NULL else list(p_state),
+              if (is.null(p_lad))   NULL else list(p_lad),
+              if (is.null(p_rep))  NULL else list(p_rep),
+              panels, list(p_gene))
+    if (identical(Sys.getenv("GAM7_DEBUG", ""), "2") && twocol && length(tri) >= 3) {
+      drawit <- function(lbl, x) {
+        r <- tryCatch({ pdf(NULL); on.exit(dev.off(), add = TRUE); print(x); "OK" },
+                      error = function(e) paste("FAIL -", conditionMessage(e)))
+        message(sprintf("  TRY %-30s %s", lbl, r))
+      }
+      LH <- grid::unit(rep(map_h_in, 2), "in")
+      RH <- grid::unit(c(map_h_in, track_h), "in")
+      drawit("left alone", wrap_plots(tri[1:2], ncol = 1, heights = LH))
+      drawit("right alone", wrap_plots(c(tri[3], rest), ncol = 1, heights = RH))
+      drawit("right, no heights", wrap_plots(c(tri[3], rest), ncol = 1))
+      drawit("left no heights | right no h",
+             wrap_plots(tri[1:2], ncol = 1) | wrap_plots(c(tri[3], rest), ncol = 1))
+      drawit("single column (control)", wrap_plots(c(tri, rest), ncol = 1, heights = heights))
+      drawit("BOTH with inch heights",
+             wrap_plots(tri[1:2], ncol = 1, heights = LH) |
+             wrap_plots(c(tri[3], rest), ncol = 1, heights = RH))
+      drawit("left inch, right none",
+             wrap_plots(tri[1:2], ncol = 1, heights = LH) |
+             wrap_plots(c(tri[3], rest), ncol = 1))
+      drawit("left none, right inch",
+             wrap_plots(tri[1:2], ncol = 1) |
+             wrap_plots(c(tri[3], rest), ncol = 1, heights = RH))
+      drawit("wrap_plots(L,R,ncol=2) inch both",
+             wrap_plots(wrap_plots(tri[1:2], ncol = 1, heights = LH),
+                        wrap_plots(c(tri[3], rest), ncol = 1, heights = RH), ncol = 2))
+    }
+    if (nzchar(Sys.getenv("GAM7_DEBUG", ""))) {
+      message(sprintf("  DEBUG twocol=%s n_tri=%d length(tri)=%d length(rest)=%d length(track_h)=%d map_h_in=%s",
+              twocol, n_tri, length(tri), length(rest), length(track_h),
+              paste(round(map_h_in, 3), collapse = ",")))
+    }
+    body <- if (twocol && length(tri) >= 3) {
+      # tri is c(WT, cKO, difference) - see raw_tri() above. The difference map
+      # travels with the tracks because it is the one the tracks annotate.
+      #
+      # RELATIVE HEIGHTS, NOT INCHES, AND THE REASON MATTERS. patchwork cannot
+      # nest a column carrying absolute unit heights inside another patchwork:
+      # it fails at draw time with
+      #   Error: index out of bounds ("unit" subsetting)
+      # for either column, with or without guide collection. Relative heights
+      # nest fine, and they land on exactly the same inches here, because the
+      # saved canvas height is `tot` plus the chrome - so one relative unit IS
+      # one inch of `tot`. A spacer pads the shorter column so both columns
+      # divide the same total and their rows stay aligned to the same scale.
+      lh  <- rep(map_h_in, 2)
+      rh  <- c(map_h_in, track_h)
+      tot <- max(sum(lh), sum(rh))
+      pad <- function(ps, hs) {
+        d <- tot - sum(hs)
+        if (d > 1e-9) list(p = c(ps, list(patchwork::plot_spacer())), h = c(hs, d))
+        else list(p = ps, h = hs)
+      }
+      L <- pad(tri[1:2], lh)
+      R <- pad(c(tri[3], rest), rh)
+      (wrap_plots(L$p, ncol = 1, heights = L$h / tot) |
+       wrap_plots(R$p, ncol = 1, heights = R$h / tot))
+    } else {
+      wrap_plots(c(tri, rest), ncol = 1, heights = heights)
+    }
+    body +
       plot_layout(guides = "collect") +
       plot_annotation(
         title = sprintf("%s:%.2f-%.2f Mb", chrom, from / 1e6, to / 1e6),
+        # LEGEND HEIGHT IS A HARD CONSTRAINT ON THE SLIDE VARIANT. The canvas
+        # is a fixed 7.5 in and the guides are collected into one column, so
+        # every legend entry added anywhere in the stack eats into the same
+        # budget - and ggplot CLIPS the overflow silently rather than shrinking
+        # it. Adding the 6-entry chromatin-state ribbon pushed LINE/SINE/LTR off
+        # the bottom edge: "LINE" rendered as half a row of letters and SINE and
+        # LTR were not drawn at all. Keys and text are therefore made smaller on
+        # slides, not just closer together.
+        #
+        # SIZE FOR THE WORST CASE, WHICH IS DATA-DEPENDENT. A discrete guide
+        # lists only the levels present, so the legend is a row taller on the
+        # 11 autosomes that have "both" hotspot bins (chr1, 2, 6, 9, 10, 12, 14,
+        # 15, 17, 18, 19 = 9 rows) than on the 8 that do not (8 rows). Tuning
+        # against one chromosome therefore ships a figure that is clipped on
+        # eleven others - which is exactly what happened: chr11 fit and chr14
+        # lost "less in cKO". Verify any change here on a 9-row chromosome.
+        # The slide-only legend sizing is ADDED rather than written as
+        # if (slide) x else y, because the non-slide variants inherit theme_m's
+        # (theme_minimal) legend sizes and render correctly at them; spelling an
+        # "else" value here would silently restyle every other variant too.
         theme = theme(plot.caption = element_text(hjust = 0, size = 7),
                       plot.title = element_text(face = "bold", size = 13),
-                      legend.spacing.y = grid::unit(if (slide) 6 else 12, "pt"),
-                      legend.box.spacing = grid::unit(10, "pt")),
-        caption = if (slide) sprintf(
+                      legend.spacing.y = grid::unit(if (slide) 1 else 12, "pt"),
+                      legend.box.spacing = grid::unit(if (slide) 5 else 10, "pt")) +
+          (if (slide)
+             theme(legend.key.size = grid::unit(6, "pt"),
+                   legend.text     = element_text(size = 6),
+                   legend.title    = element_text(size = 7))
+           else theme()),
+        # The long caption is for the single-column reference renders. A
+        # two-column figure is a presentation object and the ~15-line methods
+        # block below it swamps the plot, so twocol takes the one-line caption
+        # the slide variant uses. The full text still exists on the band and
+        # full single-column variants, and in the report's methods section.
+        caption = wrap_cap(if (slide || twocol) sprintf(
           # ONE LINE, AND IT MUST FIT. ggplot draws plot.caption as a single
           # line and never wraps it, so a caption longer than the canvas is
           # silently cut off mid-word - which is what the longer version with
@@ -1516,13 +1706,19 @@ local({
         "across that position at that scale (condensing), blue = less (melting) - the same sign convention as the difference map above. ",
         "A vertical band of one colour is a change present at every scale; one confined to the bottom rows is local reorganisation only. ",
         "The strips are block-averaged to the same display columns as the map, and grey is missing data (no full square fits there)."
-        ))) &
+        )), fig_width)) &
       theme(legend.justification = "top") -> out
     # Exact figure height: every row plus the title/caption/axis furniture.
     chrome <- if (slide) gam12_h_chrome_slide(length(ismap_panels))
               else gam12_h_chrome
-    attr(out, "gam_map_in") <- list(n = n_tri, h = map_h_in,
-                                    total = n_tri * map_h_in + sum(track_h) + chrome)
+    # THE SAVED CANVAS HEIGHT. Two columns are as tall as the TALLER of them,
+    # not as tall as their sum - getting this wrong does not error, it crops the
+    # figure, which is how this file lost a caption and a band once before.
+    attr(out, "gam_map_in") <- list(
+      n = n_tri, h = map_h_in,
+      total = if (twocol && n_tri >= 3)
+                max(2 * map_h_in, map_h_in + sum(track_h)) + chrome
+              else n_tri * map_h_in + sum(track_h) + chrome)
     out
   }
 
@@ -1578,7 +1774,6 @@ local({
     list("chr3",  30e6,  85e6, "chr3_30-85Mb"),
     list("chr11", 100e6, 125e6, "chr11_100-125Mb"),
     list("chr11", 1e6,   25e6,  "chr11_1-25Mb_lostblock"),
-    list("chr16", NULL,  NULL,  "chr16_full"),
     list("chr16", 70e6,  90e6,  "chr16_73-87Mb_lostblock"),
     list("chr18", 36.6e6, 38.4e6, "chr18_Pcdh"),
     list("chr18", 35.5e6, 39.5e6, "chr18_Pcdh_context"),
@@ -1608,7 +1803,27 @@ local({
     list("chr5",  46.0e6,  67.0e6,  "chr5_47-66Mb_lostblock"),
     list("chr10", 94.0e6,  111.5e6, "chr10_96-110Mb_gainedblock")
   )
+  # EVERY AUTOSOME, WHOLE, IN THE TWO-COLUMN LAYOUT. Generated rather than
+  # listed so the set cannot fall behind gam_autosomes. Each carries its own
+  # variant list, because six renders x 19 whole chromosomes is hours of NPMI
+  # I/O for five variants nobody asked for. chr16 keeps the full set: the
+  # report embeds chr16_full_band_sigonly by name.
+  regions <- c(regions, lapply(gam_autosomes, function(ch)
+    list(ch, NULL, NULL, paste0(ch, "_full"),
+         # One render each: allcells is the whole-chromosome view worth having,
+         # since a full chromosome is about where structure IS, not about which
+         # contacts cleared a significance cut. chr16 keeps the full set because
+         # the report embeds chr16_full_band_sigonly by name.
+         if (identical(ch, "chr16"))
+           "sigonly,allcells,binbalanced,band_sigonly,band_allcells,slide"
+         else "allcells,slide,band_sigonly")))
+
   FIGW <- 11; SIDE <- 2.6
+  # Wider canvas for the two-column renders. At 11 in each column would be
+  # ~4.2 in and a whole-chromosome triangle would halve to 2.1 in; at 16 in it
+  # keeps 3.35 in, close to the 4.2 in of the current single column, and the
+  # figure turns from 1:1.84 portrait into roughly 1:0.7 landscape.
+  FIGW2 <- 16
   # Spot-render one region without re-rendering all of them:
   #   GAM7_REGIONS=chr18_Pcdh Rscript GAM_7_Figures.R
   # Each region loads NPMI matrices, so rendering the whole list to check one
@@ -1642,9 +1857,15 @@ local({
   #
   # crossed with _band (clipped to a band) and _slide (16:9, re-laid-out).
   all_variants <- list(
-    list(id = "sigonly",     mode = "full", dz = TRUE,  bal = FALSE, slide = FALSE),
-    list(id = "allcells",    mode = "full", dz = FALSE, bal = FALSE, slide = FALSE),
-    list(id = "binbalanced", mode = "full", dz = FALSE, bal = TRUE,  slide = FALSE),
+    # THE THREE FULL-TRIANGLE VARIANTS ARE TWO-COLUMN. At three stacked
+    # triangles a whole-chromosome render is ~20 in tall against 11 wide
+    # (1:1.84) and unusable on a slide; raw WT and cKO on the left with the
+    # difference map and the tracks on the right lands near 1:0.7. The band
+    # variants stay single-column - their maps are 0.95 in tall, so splitting
+    # them would buy nothing and cost the shared x axis.
+    list(id = "sigonly",     mode = "full", dz = TRUE,  bal = FALSE, slide = FALSE, twocol = TRUE),
+    list(id = "allcells",    mode = "full", dz = FALSE, bal = FALSE, slide = FALSE, twocol = TRUE),
+    list(id = "binbalanced", mode = "full", dz = FALSE, bal = TRUE,  slide = FALSE, twocol = TRUE),
     list(id = "band_sigonly",  mode = "band", dz = TRUE,  bal = FALSE, slide = FALSE),
     list(id = "band_allcells", mode = "band", dz = FALSE, bal = FALSE, slide = FALSE),
     list(id = "slide",       mode = "full", dz = TRUE,  bal = FALSE, slide = TRUE))
@@ -1675,7 +1896,9 @@ local({
       r <- top[i]
       list(r$chr, r$start, r$end,
            sprintf("blk_%s_%.0f-%.0fMb_%s", r$chr, r$start / 1e6, r$end / 1e6, r$dirn),
-           "band_sigonly")
+           # band for scanning the set, sigonly for the two-column full triangle
+           # when one of them is worth a closer look.
+           "band_sigonly,sigonly")
     })
     regions <- c(regions, blockregs)
     message("block regions: added ", length(blockregs), " from ", basename(bank))
@@ -1690,8 +1913,20 @@ local({
   # Only some regions are worth a slide; the rest would be a 16:9 render nobody
   # asked for. A region named explicitly overrides that, because naming it is
   # the request.
-  slide_regions <- c("chr11_1-25Mb_lostblock", "chr11_100-125Mb", "chr16_full",
-                     "chr3_30-85Mb", "chr18_Pcdh",
+  # EVERY hand-picked region, not a subset. This listed 10 of the 16 named
+  # regions, which left the four derepressed target clusters - the KRAB-ZFP
+  # pair, Vmn and Olfr - and the Pcdh context window with no slide render at
+  # all. Those are deck material, and the slide variant is the only one that
+  # carries the MELTRON insulation strip (every other variant runs with
+  # ismap = "none"), so a region missing from this list silently had no melting
+  # track available anywhere. The blk_* regions generated from
+  # gam12_block_ranking.tsv keep their own "band_sigonly" variant list and are
+  # deliberately not here: there are 40 of them and they are exploratory.
+  slide_regions <- c(paste0(gam_autosomes, "_full"),
+                     "chr11_1-25Mb_lostblock", "chr11_100-125Mb", "chr16_full",
+                     "chr16_73-87Mb_lostblock", "chr3_30-85Mb",
+                     "chr18_Pcdh", "chr18_Pcdh_context",
+                     "chr13_KRABZFP", "chr17_KRABZFP", "chr7_Vmn", "chr2_Olfr",
                      "chr13_71-97Mb_lostblock", "chr3_144-160Mb_gainedblock",
                      "chr2_137-157Mb_lostblock", "chr5_47-66Mb_lostblock",
                      "chr10_96-110Mb_gainedblock")
@@ -1717,7 +1952,8 @@ local({
         # here, or the solved band and the saved height disagree and the figure
         # overflows its canvas.
         trk   <- 0.75 + ismap_n(gam12_ismap_mode) * gam12_h_ismap +
-                 gam12_h_hotcall + gam12_h_ctcf + gam12_h_lad + gam12_h_repeat +
+                 gam12_h_hotcall + (if (gam12_show_ctcf) gam12_h_ctcf else 0) +
+                 gam12_h_state + gam12_h_lad + gam12_h_repeat +
                  2 * gam12_h_mark + gam12_h_gene
         pw    <- max(2, 13.33 - SIDE)
         map_h <- max(1.2, 13.33 * 9 / 16 - trk -
@@ -1743,6 +1979,12 @@ local({
                                show_raw = FALSE, dz_sig = v$dz, balance = v$bal,
                                marks = c("H3K9me3", "H4K20me3"),
                                slide = TRUE, ismap = gam12_ismap_mode)
+             else if (isTRUE(v$twocol))
+               gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
+                               fig_width = FIGW2, side_allow = SIDE,
+                               dz_sig = v$dz, balance = v$bal,
+                               npmi_cap = gam12_npmi_cap,
+                               twocol = TRUE, ismap = gam12_ismap_mode)
              else
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
                                fig_width = FIGW, side_allow = SIDE,
@@ -1759,7 +2001,8 @@ local({
         # flattens the path anyway (regions/chr18/x.png -> regions_chr18_x.png),
         # so this costs nothing downstream.
         save_fig(p, nm, subdir = file.path("regions", r[[1]]),
-                 width = if (v$slide) 13.33 else FIGW, height = h)
+                 width = if (v$slide) 13.33 else if (isTRUE(v$twocol)) FIGW2 else FIGW,
+                 height = h)
       }
     }
   }
@@ -1856,11 +2099,10 @@ local({
       title = "The large one-directional blocks, ranked",
       subtitle = paste0("Every shaded block in large_blocks_genome_wide.png, ordered by magnitude. ",
                         nrow(B), " blocks called genome-wide.  * = we have a region figure for it."),
-      caption = paste0("Bars are the mean per-bin count of significant differential contacts (gained - lost) inside the block. ",
-                       "Blocks are called from the data (|net| > ", gam_block_net_cut,
-                       " sustained over >= ", gam_block_min_mb, " Mb), not chosen.",
-                       "\nThat count integrates out to 5 Mb, so it is slightly generous to the narrowest blocks; every block here is at least ",
-                       gam_block_min_mb, " Mb. Table: gam12_block_ranking.tsv"),
+      # Blocks are called from the data - |net| > gam_block_net_cut sustained over
+      # >= gam_block_min_mb - not chosen; both parameters live in config.R.
+      caption = paste0("Bars are the mean per-bin count of significant differential contacts (gained - lost) inside the block, ",
+                       "integrated out to\n5 Mb, which is slightly generous to the narrowest blocks. Table: gam12_block_ranking.tsv"),
       theme = theme(plot.title = element_text(face = "bold", size = 13),
                     plot.subtitle = element_text(size = 9),
                     plot.caption = element_text(hjust = 0, size = 7, colour = "grey35")))
@@ -1892,54 +2134,75 @@ local({
   f <- file.path(tables_dir, "gam10_perchrom_sums.tsv")
   if (!file.exists(f)) { msg("gam10_perchrom_sums.tsv missing - section B0 skipped"); return(invisible()) }
   P <- fread(f)
-  BANDS_O <- c("<0.2Mb", "0.2-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
-  CLS_LAB <- c(intra_dom = "het-het, same domain", inter_het = "het-het, different domains",
-               het_eu = "het-euchromatin", eu_eu = "euchromatin-euchromatin")
+  BANDS_O <- gam_band_names
   P[, mean_npmi := s / n]
-  W <- dcast(P, chr + cls + band ~ genotype, value.var = c("mean_npmi", "n"))
+  W <- dcast(P, chr + level + pair + band ~ genotype, value.var = c("mean_npmi", "n"))
   W[, pct := 100 * (mean_npmi_HP1gKO / mean_npmi_WT - 1)]
   W[, band := factor(band, BANDS_O)]
   W[, chr  := factor(chr, paste0("chr", 1:19))]
-  W[, cls_lab := factor(CLS_LAB[cls], CLS_LAB)]
-  fwrite(W[order(chr, cls, band)], file.path(tables_dir, "gam15_perchrom_class_band.tsv"), sep = "\t")
+  fwrite(W[order(chr, level, pair, band)],
+         file.path(tables_dir, "gam15_perchrom_class_band.tsv"), sep = "\t")
+  # Level 1 is what the per-chromosome figures below show. Level 2's 21 pairs do
+  # not fit 19 facets legibly and live in the table and in GAM_5's printout.
+  W1 <- W[level == "L1"]
+  L1_LAB <- c("heterochromatin-heterochromatin" = "het-het",
+              "euchromatin-heterochromatin"     = "eu-het",
+              "euchromatin-euchromatin"         = "eu-eu")
+  W1[, cls_lab := factor(L1_LAB[pair], L1_LAB)]
+  W1 <- W1[!is.na(cls_lab)]
 
   # --- panel A: every class on every autosome --------------------------------
-  pA <- ggplot(W[is.finite(pct)], aes(band, pct, colour = cls_lab, group = cls_lab)) +
+  pA <- ggplot(W1[is.finite(pct)], aes(band, pct, colour = cls_lab, group = cls_lab)) +
     geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
     geom_line(linewidth = .5) + geom_point(size = 1.1) +
     facet_wrap(~ chr, ncol = 5) +
-    scale_colour_manual(values = setNames(disc_pal(4), CLS_LAB), name = NULL) +
+    scale_colour_manual(values = setNames(disc_pal(3), L1_LAB), name = NULL) +
     labs(title = "Change in contact frequency by chromatin class and separation, all 19 autosomes",
-         subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT. Read this panel for the ",
-                           "SHAPE across separations within a chromosome;\nits overall level is ",
-                           "confounded by a per-chromosome offset (chr7 up throughout, chr11 down ",
-                           "throughout) - see panel B."),
+         # "see panel B" was a dangling reference: A and B are separate files,
+         # so a reader holding this one had nothing to turn to. Name the file.
+         subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT. Read the SHAPE across ",
+                           "separations, not the level:\na whole-chromosome offset (chr7 up ",
+                           "throughout, chr11 down throughout) moves every class together. ",
+                           "It cancels\nin perchrom_class_contrast_all19, which is the figure ",
+                           "to read for how heterochromatin compares with euchromatin."),
          x = "genomic separation", y = "% change in mean NPMI") +
     theme_m + theme(legend.position = "top",
                     axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
   save_fig(pA, "perchrom_class_band_all19", subdir = fig_sub, width = 12, height = 10)
 
   # --- panel B: the offset-invariant contrast --------------------------------
-  CC <- dcast(W[cls %in% c("inter_het", "eu_eu")], chr + band ~ cls, value.var = "pct")
-  CC[, contrast := inter_het - eu_eu]
+  CC <- dcast(W1[pair %in% c("heterochromatin-heterochromatin", "euchromatin-euchromatin")],
+              chr + band ~ cls_lab, value.var = "pct")
+  CC[, contrast := `het-het` - `eu-eu`]
   CC <- CC[is.finite(contrast)]
   lim <- max(abs(CC$contrast), na.rm = TRUE)
   npos <- CC[, .(n_pos = sum(contrast > 0), n = .N), by = band][order(band)]
-  pB <- ggplot(CC, aes(band, chr, fill = contrast)) +
-    geom_tile(colour = "white", linewidth = .4) +
-    geom_text(aes(label = sprintf("%+.0f", contrast)), size = 2.7,
-              colour = ifelse(abs(CC$contrast) > 0.6 * lim, "white", "grey15")) +
+  # DOT PLOT, not a numbered heatmap. A grid of printed numbers has to be read
+  # cell by cell; size plus colour is seen at a glance, which is the whole point
+  # of a figure that exists to show one direction holding across 19 chromosomes.
+  # Size carries magnitude and colour carries sign, so a dot that is both large
+  # and red cannot be mistaken for a large blue one at a glance.
+  pB <- ggplot(CC, aes(band, chr, size = abs(contrast), fill = contrast)) +
+    geom_vline(xintercept = seq_along(levels(CC$band)), colour = "grey92", linewidth = .3) +
+    geom_point(shape = 21, colour = "grey25", stroke = .3) +
+    scale_size_area(max_size = 9, name = "size of effect\n(% points)") +
     scale_fill_heat0_div(limits = c(-lim, lim), name = "het-het minus\neu-eu (% pts)") +
     scale_y_discrete(limits = rev(paste0("chr", 1:19))) +
     labs(title = "Heterochromatin's gain relative to euchromatin, per autosome",
-         subtitle = paste0("het-het (different domains) minus euchromatin-euchromatin, in percentage ",
-                           "points. A whole-chromosome\noffset cancels in this difference, so it is the ",
-                           "interpretable quantity. Positive on ",
+         # ggplot never wraps plot.subtitle any more than plot.caption, so this
+         # is wrapped here. It overflowed the canvas and was cut mid-word at
+         # "across t" once the band count grew the sentence. The band count is
+         # derived, not written, for the same reason.
+         subtitle = paste(strwrap(paste0(
+                           "Heterochromatin-heterochromatin minus euchromatin-euchromatin, ",
+                           "in percentage points. A whole-chromosome offset cancels in this ",
+                           "difference, so it is the interpretable quantity. Positive on ",
                            paste(sprintf("%d/%d", npos$n_pos, npos$n), collapse = ", "),
-                           " autosomes\nacross the five bands in order."),
-         x = "genomic separation", y = NULL) +
+                           " autosomes, across the ", nrow(npos), " bands in order."),
+                           width = 72), collapse = "\n"),
+         x = "distance between the two bins (Mb = megabases)", y = NULL) +
     theme_m + theme(panel.grid = element_blank())
-  save_fig(pB, "perchrom_class_contrast_all19", subdir = fig_sub, width = 8, height = 7)
+  save_fig(pB, "perchrom_class_contrast_all19", subdir = fig_sub, width = 9, height = 7)
 
   # --- panel C: ONE figure carrying all four variables ------------------------
   # chromosome (y), separation (x), chromatin class (facet) and percent change
@@ -1949,24 +2212,24 @@ local({
   # Grey cells are combinations with no bin pairs: intra-domain pairs only exist
   # on chromosomes that have a large heterochromatin domain, and only out to the
   # separations that domain spans.
-  lim2 <- max(abs(W$pct), na.rm = TRUE)
-  pC <- ggplot(W[is.finite(pct)], aes(band, chr, fill = pct)) +
-    geom_tile(colour = "white", linewidth = .3) +
-    geom_text(aes(label = sprintf("%+.0f", pct)), size = 2.1,
-              colour = ifelse(abs(W[is.finite(pct)]$pct) > 0.6 * lim2, "white", "grey15")) +
+  lim2 <- max(abs(W1$pct), na.rm = TRUE)
+  pC <- ggplot(W1[is.finite(pct)], aes(band, chr, size = abs(pct), fill = pct)) +
+    geom_vline(xintercept = seq_along(levels(W1$band)), colour = "grey92", linewidth = .3) +
+    geom_point(shape = 21, colour = "grey25", stroke = .25) +
+    scale_size_area(max_size = 6, name = "size of change\n(%)") +
     facet_grid(~ cls_lab) +
     scale_fill_heat0_div(limits = c(-lim2, lim2), name = "% change in\nmean NPMI") +
     scale_y_discrete(limits = rev(paste0("chr", 1:19))) +
-    labs(title = "Contact budget: every autosome, chromatin class and separation in one view",
-         subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT. Grey = no bin pairs in that ",
-                           "combination (intra-domain pairs exist only where a\nlarge heterochromatin ",
-                           "domain does). Read ACROSS a row for one chromosome's distance profile, DOWN ",
-                           "a column for how\nconsistent a class and separation are across the genome. ",
-                           "A whole row shifting one way is a per-chromosome offset, not biology."),
-         x = "genomic separation", y = NULL) +
+    labs(title = "Contact change in every autosome, chromatin class and separation",
+         # Read ACROSS a row for one chromosome's distance profile, DOWN a column
+         # for how consistent a class and separation are across the genome.
+         subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT. Dot size is the size of the change, ",
+                           "colour its direction.\nA whole row shifting one way is a per-chromosome offset, not biology. ",
+                           "A missing dot had no bin pairs."),
+         x = "distance between the two bins (Mb = megabases)", y = NULL) +
     theme_m + theme(panel.grid = element_blank(), strip.text = element_text(size = 8, face = "bold"),
                     axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
-  save_fig(pC, "contact_budget_all19_unified", subdir = fig_sub, width = 13.5, height = 7.5)
+  save_fig(pC, "contact_change_all19_unified", subdir = fig_sub, width = 13.5, height = 7.5)
 
   msg("\n=== het-het minus eu-eu, per autosome (percentage points) ===")
   print(dcast(CC, chr ~ band, value.var = "contrast"))
@@ -1980,9 +2243,19 @@ local({
 
 local({
   set.seed(1)
-  FOCUS   <- c("chr3", "chr7", "chr11", "chr16", "chr18")
-  BANDS   <- list(c(2e4, 1e6), c(1e6, 5e6), c(5e6, 1e7), c(1e7, Inf))
-  BANDNM  <- c("0.02-1Mb", "1-5Mb", "5-10Mb", ">10Mb")
+  # FOCUS gates only the budget recomputed FROM THE NPMI MATRICES, which is the
+  # expensive part (two matrices and every upper-triangle pair per chromosome).
+  # The along-chromosome overview needs nothing but the annotated bin table, so
+  # it runs on every autosome - asked for 2026-10-19, and right regardless: a
+  # reader shown five chromosomes cannot tell whether the other fourteen were
+  # looked at and were dull, or were never looked at.
+  FOCUS    <- c("chr3", "chr7", "chr11", "chr16", "chr18")
+  OVERVIEW <- gam_autosomes
+  # Was its own 4-band scheme starting at 20 kb, which is why the findings files
+  # had to say "on different band edges". Same bands as everything else now.
+  BANDS   <- lapply(seq_len(length(gam_band_edges) - 1L),
+                    function(i) gam_band_edges[c(i, i + 1L)])
+  BANDNM  <- gam_band_names
   WIN     <- 2e6                      # smoothing window for the along-chromosome view
   fig_sub <- "chromosomes"
   msg <- function(...) cat(sprintf(...), "\n", sep = "")
@@ -2005,20 +2278,14 @@ local({
   lads <- tryCatch(load_lads(), error = function(e) NULL)
 
   # --- heterochromatin membership (same definition as GAM_13 bin-level) ---------
-  A[, het_frac := {
-    dm <- fread(het_domain_bed, header = FALSE, select = 1:3,
-                col.names = c("chr", "start", "end"))
-    dm[, chr := ifelse(grepl("^chr", chr), chr, paste0("chr", chr))]
-    dm <- dm[chr %in% gam_autosomes]
-    red <- reduce(GRanges(dm$chr, IRanges(dm$start + 1, dm$end)), ignore.strand = TRUE)
-    b <- GRanges(chr, IRanges(start + 1, end))
-    h <- findOverlaps(b, red, ignore.strand = TRUE)
-    w <- width(pintersect(b[queryHits(h)], red[subjectHits(h)], ignore.strand = TRUE))
-    v <- numeric(length(b)); agg <- tapply(w, queryHits(h), sum)
-    v[as.integer(names(agg))] <- as.numeric(agg)
-    pmin(v / width(b), 1)
-  }]
-  A[, is_het := het_frac >= 0.5]
+  # The two-level chromatin partition from config.R. This block used to rebuild
+  # a het/eu binary here with its own hard-coded 0.5 cutoff, a second definition
+  # of the same thing that could drift from GAM_5's - and both of them called
+  # unmarked chromatin "euchromatin".
+  cc <- gam_chromatin_classes(A)
+  A <- merge(A, cc, by = "bin_id", sort = FALSE)
+  setorder(A, chr, start)
+  A[, is_het := class1 == "heterochromatin" & !is.na(class1)]
   stopifnot(sum(A$is_het) > 1000)
 
   if (!is.null(lads)) {
@@ -2073,9 +2340,9 @@ local({
     ggrepel::geom_text_repel(size = 2.8, colour = "grey30", max.overlaps = 20) +
     scale_colour_manual(values = c(`TRUE` = "#b2182b", `FALSE` = "grey65"), guide = "none") +
     labs(title = "Heterochromatin content does not predict a chromosome's contact change",
-         subtitle = sprintf(paste0("Spearman rho = %.3f, p = %.2f over the 19 autosomes. chr7 (most heterochromatic, gains) ",
-                                   "and chr11 (least, loses most)\nare the extremes of both rankings at once, which is not ",
-                                   "the same as a relationship."), ct$estimate, ct$p.value),
+         subtitle = sprintf(paste0("Spearman rho = %.3f, p = %.2f over the 19 autosomes. chr7 and chr11 are the extremes of ",
+                                   "both rankings\nat once, which is not the same as a relationship."),
+                            ct$estimate, ct$p.value),
          x = "fraction of bins heterochromatic", y = "mean net contact change per bin") +
     theme_m
   save_fig(p, "het_content_vs_net", subdir = fig_sub, width = 7.5, height = 5.5)
@@ -2085,9 +2352,11 @@ local({
     geom_col(width = .7) + coord_flip() +
     scale_fill_manual(values = c(`TRUE` = "#b2182b", `FALSE` = "grey75"), guide = "none") +
     labs(title = "Mark-contact coupling by chromosome",
-         subtitle = paste0("Spearman rho between per-bin H4K20me3 log2FC and net contact change. ",
-                           "Red = the five examined here.\nThe whole spread is -0.15 to +0.13 around a ",
-                           "genome-wide 0.012, so the ordering is weak evidence."),
+         # "Red = the five examined here" was a dangling reference - nothing on this
+         # figure says which five. Name them from FOCUS, which is what sets the colour.
+         subtitle = paste0("Spearman rho between per-bin H4K20me3 log2FC and net contact change, per autosome. Red = the ",
+                           "five with\noverview figures (", paste(FOCUS, collapse = ", "),
+                           "). The spread is narrow, so the ordering is weak evidence."),
          x = NULL, y = "Spearman rho") +
     theme_m
   save_fig(p, "chromosome_ranking", subdir = fig_sub, width = 7, height = 6)
@@ -2114,10 +2383,12 @@ local({
     iu <- which(upper.tri(W), arr.ind = TRUE)
     d  <- abs(sub$start[iu[, 2]] - sub$start[iu[, 1]])
     bd <- band_of(d)
-    hi <- sub$is_het[iu[, 1]]; hj <- sub$is_het[iu[, 2]]
-    cls <- fifelse(hi & hj, "het-het", fifelse(!hi & !hj, "eu-eu", "het-eu"))
+    c1 <- as.integer(sub$class1[iu[, 1]]); c2 <- as.integer(sub$class1[iu[, 2]])
+    # levels are 1 = euchromatin, 2 = heterochromatin; NA where the bin has no
+    # ChromHMM coverage, and such pairs drop out at the `ok` filter below.
+    cls <- c("eu-eu", "eu-het", "het-het")[pmin(c1, c2) + pmax(c1, c2) - 1L]
     wv <- W[iu]; kv <- K[iu]
-    ok <- is.finite(wv) & is.finite(kv) & !is.na(bd)
+    ok <- is.finite(wv) & is.finite(kv) & !is.na(bd) & !is.na(cls)
     dt <- data.table(band = BANDNM[bd[ok]], cls = cls[ok], wv = wv[ok], kv = kv[ok])
     budget[[ch]] <- dt[, .(WT = mean(wv), KO = mean(kv), n = .N,
                            pct = (mean(kv) - mean(wv)) / mean(wv) * 100),
@@ -2137,12 +2408,12 @@ local({
     facet_wrap(~ chr, nrow = 1) +
     scale_colour_manual(values = c(`het-het` = "#b2182b", `eu-eu` = "#2166ac",
                                    `het-eu` = "grey60"), name = NULL) +
-    labs(title = "Contact budget by chromatin class and separation",
+    labs(title = "Contact change by chromatin class and separation",
          subtitle = paste0("Percent change in mean NPMI, HP1gKO vs WT. Genome-wide the pattern is het-het up ",
                            "and eu-eu down;\na chromosome that inverts that is the interesting case."),
-         x = "genomic separation", y = "% change in mean NPMI") +
+         x = "distance between the two bins (Mb = megabases)", y = "% change in mean NPMI") +
     theme_m
-  save_fig(p, "contact_budget_by_chromosome", subdir = fig_sub, width = 13, height = 4.4)
+  save_fig(p, "contact_change_by_chromosome", subdir = fig_sub, width = 13, height = 4.4)
 
   # ==============================================================================
   # 3. Along-chromosome overview + a findings file per chromosome
@@ -2157,7 +2428,24 @@ local({
 
   dir.create(file.path(results_dir, "chromosomes"), showWarnings = FALSE, recursive = TRUE)
 
-  for (ch in FOCUS) {
+  # The budget fallback for the fourteen chromosomes FOCUS does not cover.
+  # Section B0 writes gam15_perchrom_class_band.tsv from GAM_5's per-chromosome
+  # sums, so it spans all 19 at no I/O cost and measures the same thing: percent
+  # change in mean NPMI, per chromatin class, per separation. It differs in two
+  # ways the findings file has to state rather than paper over - finer bands
+  # (<0.2Mb and 0.2-1Mb where the matrix budget has one 0.02-1Mb), and het-het
+  # split into same-domain and different-domain pairs.
+  CB_BANDS <- gam_band_names
+  CB <- tryCatch(fread(file.path(tables_dir, "gam15_perchrom_class_band.tsv")),
+                 error = function(e) NULL)
+  if (!is.null(CB) && all(c("chr", "level", "pair", "band", "pct") %in% names(CB))) {
+    CB <- CB[level == "L1", .(chr, cls = unname(
+      c("heterochromatin-heterochromatin" = "het-het",
+        "euchromatin-heterochromatin"     = "het-eu",
+        "euchromatin-euchromatin"         = "eu-eu")[pair]), band, pct)][!is.na(cls)]
+  } else CB <- NULL
+
+  for (ch in OVERVIEW) {
     sub <- copy(A[chr == ch]); setorder(sub, start)
     sub[, `:=`(net_s = roll(net, kw), h4_s = roll(H4K20me3, kw),
                ins_s = if ("insulation_delta" %in% names(sub)) roll(insulation_delta, kw) else NA_real_)]
@@ -2175,9 +2463,13 @@ local({
         geom_line(colour = "#53426b", na.rm = TRUE) +
         labs(y = "H4K20me3\nlog2FC", x = NULL) + theme_m +
         theme(axis.text.x = element_blank(), axis.title.y = element_text(size = 7)),
+      # het_frac is the H3K9me3/H4K20me3 PEAK coverage, which is the level-2
+      # H3K9me3 class - not level-1 heterochromatin, which also takes in
+      # Polycomb and quiescent and covers most of the genome. Labelled for the
+      # narrower thing it actually shows.
       ggplot(sub, aes(mid, het_frac)) +
         geom_area(fill = "grey55", na.rm = TRUE) +
-        labs(y = "het\nfraction", x = sprintf("%s (Mb)", ch)) + theme_m +
+        labs(y = "H3K9me3/K20\npeak cover", x = sprintf("%s (Mb)", ch)) + theme_m +
         theme(axis.title.y = element_text(size = 7)))
     if ("frac_cLAD" %in% names(sub)) {
       tracks <- append(tracks, list(
@@ -2194,6 +2486,19 @@ local({
     # --- the findings file ---
     bl <- if (!is.null(blocks)) blocks[chr == ch] else NULL
     bu <- BUD[chr == ch]
+    if (nrow(bu)) {
+      bnm  <- BANDNM
+      bsrc <- "recomputed directly from this chromosome's NPMI matrices"
+      bhet <- "Heterochromatin = Polycomb + H3K9me3 + quiescent; euchromatin = TSS + enhancer + transcribed."
+    } else if (!is.null(CB) && nrow(CB[chr == ch])) {
+      bu   <- CB[chr == ch]
+      bnm  <- CB_BANDS
+      bsrc <- paste0("`gam15_perchrom_class_band.tsv`, built from GAM_5's per-chromosome sums ",
+                     "(the matrix-derived budget covers only ", paste(FOCUS, collapse = ", "), ")")
+      bhet <- "Both sources use the same level-1 classes, on different band edges."
+    } else {
+      bnm <- BANDNM; bsrc <- "unavailable"; bhet <- ""
+    }
     f <- file.path(results_dir, "chromosomes", sprintf("%s.md", ch))
     con <- file(f, "w")
     writeLines(c(
@@ -2207,33 +2512,43 @@ local({
               as.numeric(cor(A$H4K20me3, A$net, method = "spearman", use = "complete.obs"))),
       sprintf("- Median H4K20me3 log2FC here %.3f, against %.3f genome-wide.",
               rk[chr == ch, med_H4K20me3], median(A$H4K20me3, na.rm = TRUE)),
-      sprintf("- %.1f%% of bins are heterochromatic (>=50%% coverage by the merged H3K9me3/H4K20me3 set), against %.1f%% genome-wide.",
-              100 * rk[chr == ch, frac_het], 100 * mean(A$is_het)), "",
+      sprintf("- %.1f%% of bins are heterochromatin at level 1 (Polycomb + H3K9me3 + quiescent), against %.1f%% genome-wide.",
+              100 * rk[chr == ch, frac_het], 100 * mean(A$is_het)),
+      sprintf("- %.1f%% are the H3K9me3 sub-class specifically, against %.1f%% genome-wide.",
+              100 * mean(A[chr == ch]$class2 == "H3K9me3", na.rm = TRUE),
+              100 * mean(A$class2 == "H3K9me3", na.rm = TRUE)), "",
       "## Contact budget", "",
       "Percent change in mean NPMI, HP1gKO vs WT, by chromatin class and separation.", "",
-      "| class | 0.02-1Mb | 1-5Mb | 5-10Mb | >10Mb |", "|---|---|---|---|---|"),
+      sprintf("Source: %s. %s", bsrc, bhet), "",
+      paste0("| class | ", paste(bnm, collapse = " | "), " |"),
+      paste0("|---|", paste(rep("---", length(bnm)), collapse = "|"), "|")),
       con)
     for (cl in c("het-het", "het-eu", "eu-eu")) {
-      r <- sapply(BANDNM, function(b) { v <- bu[cls == cl & band == b, pct]
-                                        if (length(v)) sprintf("%+.1f%%", v) else "-" })
+      r <- sapply(bnm, function(b) { v <- bu[cls == cl & band == b, pct]
+                                     if (length(v)) sprintf("%+.1f%%", v) else "-" })
       writeLines(sprintf("| %s | %s |", cl, paste(r, collapse = " | ")), con)
     }
     # A single averaged verdict is misleading here: chr11 averages to "follows"
     # while losing 33.8% of het-het contacts at 5-10 Mb, which is the opposite of
     # the genome-wide gain. State the contrast per band and let it speak.
-    dif <- sapply(BANDNM, function(b) {
+    dif <- sapply(bnm, function(b) {
       h <- bu[cls == "het-het" & band == b, pct]; e <- bu[cls == "eu-eu" & band == b, pct]
       if (length(h) && length(e)) h - e else NA_real_
     })
     writeLines(c("",
       "het-het minus eu-eu, per band (genome-wide this is positive: heterochromatin gains while euchromatin loses):", "",
-      paste0("| ", paste(BANDNM, collapse = " | "), " |"),
-      paste0("|", paste(rep("---", length(BANDNM)), collapse = "|"), "|"),
+      paste0("| ", paste(bnm, collapse = " | "), " |"),
+      paste0("|", paste(rep("---", length(bnm)), collapse = "|"), "|"),
       paste0("| ", paste(ifelse(is.finite(dif), sprintf("%+.1f", dif), "-"), collapse = " | "), " |"),
       "",
-      sprintf("Bands where this chromosome runs against the genome-wide direction: %s.",
-              { neg <- BANDNM[is.finite(dif) & dif < 0]
-                if (length(neg)) paste(neg, collapse = ", ") else "none" }), ""), con)
+      # "none" has to be distinguishable from "no budget was available", or a
+      # chromosome with no data reads exactly like a chromosome that conforms.
+      if (!any(is.finite(dif)))
+        "No contact budget was available for this chromosome, so the per-band contrast is not computed."
+      else
+        sprintf("Bands where this chromosome runs against the genome-wide direction: %s.",
+                { neg <- bnm[is.finite(dif) & dif < 0]
+                  if (length(neg)) paste(neg, collapse = ", ") else "none" }), ""), con)
     if (!is.null(bl) && nrow(bl)) {
       writeLines(c("## Large one-directional blocks (GAM_6)", "",
         sprintf("%d block(s) on this chromosome, %.1f Mb in total.", nrow(bl),
