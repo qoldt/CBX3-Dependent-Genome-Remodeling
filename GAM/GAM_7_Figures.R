@@ -331,7 +331,57 @@ local({
   # caption is not a fixed height - a region below gam12_cov_warn coverage gains
   # a DATA COVERAGE WARNING line (chr7_Vmn is 29% measured), and the figure must
   # fit its longest caption, not its typical one.
-  gam12_h_chrome <- 3.00
+  # ...and 3.00 is still right for the SHORT caption, but not for the long one.
+  #
+  # wrap_cap() was added later, so the long single-column caption would stop
+  # being cut at the RIGHT edge. That turned its 8 authored lines into 28
+  # wrapped ones and nothing told this constant, so the very same text then ran
+  # off the BOTTOM edge instead - silently, because every row in this figure is
+  # an absolute height and overflow crops rather than shrinks. Measured on
+  # k9dom_chr7_19.7-24.0Mb_band_sigonly.png: last ink row 3502 of a 3502 px
+  # canvas, i.e. ZERO slack, with 20 of the 28 caption lines drawn. The band
+  # variants had been shipping without their last four paragraphs - the
+  # clipping note, the diff-contact and hotspot-bin definitions, and the
+  # LAD/CTCF provenance - which is exactly the part a reader needs to know what
+  # the tracks are.
+  #
+  # So size the chrome from the text that will actually be drawn. 0.105 in per
+  # caption line is measured off that render (line pitch 31.4 px at 300 dpi),
+  # not derived from the point size, so it already carries the theme lineheight.
+  # The 1.30 fixed term is the title, the x axis and the outer margins, and it
+  # was MEASURED TWICE: 0.90 recovered three of the four lost paragraphs and
+  # still cut the LAD/CTCF line in half, so it is not a quantity to reason about
+  # from point sizes. Re-check it by rendering a band variant and asserting the
+  # last ink row is strictly inside the canvas - zero slack means it is still
+  # cropping, and the figure gives no other sign.
+  #
+  # The 3.00 floor keeps every variant that renders correctly today exactly
+  # where it is: the two-column and slide figures take the one-line caption and
+  # never reach it.
+  # MEASURE the caption, do not model it. grobHeight on the wrapped string is
+  # exact for any number of lines, which a per-line constant is not: the first
+  # two attempts here (0.0875 and 0.1047 in per line over a counted n) each
+  # recovered some of the lost text and still cropped, because the caption this
+  # figure draws is not a fixed shape - a region below gam12_cov_warn gains a
+  # DATA COVERAGE WARNING line, and a region with an insulation strip gains a
+  # whole INSULATION STRIPS paragraph.
+  #
+  # Only the fixed furniture is a constant, and 2.00 is measured, not reasoned:
+  # at 1.325 in of furniture (chrome 4.545 against a 3.220 in caption) the
+  # insulation paragraph was still cut off the bottom.
+  # 2.40, converged by rendering: 1.325 cut four paragraphs, 2.00 cut the last
+  # line of the insulation one. grobHeight also runs ~0.09 in under what ggplot
+  # actually draws for 31 lines (it measures the glyph block, not the drawn line
+  # pitch), so the surplus here is doing real work and is not padding.
+  gam12_h_chrome_fixed <- 2.40   # title + x axis + outer margins
+  gam12_h_chrome <- function(cap = "") {
+    if (!(length(cap) == 1L && !is.na(cap) && nzchar(cap))) return(3.00)
+    capH <- grid::convertHeight(
+      grid::grobHeight(grid::textGrob(
+        cap, gp = grid::gpar(fontsize = 7, lineheight = 0.9))),
+      "in", valueOnly = TRUE)
+    max(3.00, gam12_h_chrome_fixed + capH)
+  }
   # Width of ONE column's non-panel furniture (y-axis titles + tick labels) in
   # the two-column layout. The single-column layout folds this into side_allow
   # along with the legend; a second column needs its own axis block, and it is
@@ -1882,8 +1932,20 @@ local({
         )), fig_width)) &
       theme(legend.justification = "top") -> out
     # Exact figure height: every row plus the title/caption/axis furniture.
+    # Read the caption back off the assembled figure rather than rebuilding it:
+    # it is wrapped by now, and the WRAPPED line count is what costs height.
+    cap_txt <- tryCatch(out$patches$annotation$caption, error = function(e) "")
+    if (!is.character(cap_txt) || length(cap_txt) != 1L) cap_txt <- ""
     chrome <- if (slide) gam12_h_chrome_slide(length(ismap_panels))
-              else gam12_h_chrome
+              else gam12_h_chrome(cap_txt)
+    if (nzchar(Sys.getenv("GAM7_CHROME", ""))) {
+      nl <- length(strsplit(cap_txt, "\n", fixed = TRUE)[[1]])
+      gh <- grid::convertHeight(grid::grobHeight(grid::textGrob(
+              cap_txt, gp = grid::gpar(fontsize = 7, lineheight = 0.9))),
+              "in", valueOnly = TRUE)
+      cat(sprintf("  CHROME: caption %d chars / %d wrapped lines; grobHeight %.3f in; chrome %.3f in\n",
+                  nchar(cap_txt), nl, gh, chrome))
+    }
     # THE SAVED CANVAS HEIGHT. Two columns are as tall as the TALLER of them,
     # not as tall as their sum - getting this wrong does not error, it crops the
     # figure, which is how this file lost a caption and a band once before.
@@ -2109,6 +2171,35 @@ local({
     regions <- c(regions, blockregs)
     message("block regions: added ", length(blockregs), " from ", basename(bank))
   }
+
+  # LARGE H3K9me3-DOMINANT H4K20me3 DOMAINS. GAM_5's domain-size analysis finds
+  # the contact response scales with domain size inside H3K9me3 chromatin and
+  # not inside quiescent chromatin: intra-domain NPMI rises +2.2% -> +4.1% ->
+  # +5.3% across the size strata below 0.2 Mb, and inside the largest domains
+  # it reaches +8.6% at 0.2-1 Mb and +8.5% at 1-5 Mb. These are those domains,
+  # so the per-region figures can be looked at directly.
+  #
+  # NAMED FOR WHAT THEY ARE, NOT FOR WHAT THEY MIGHT DO. The local gain is
+  # solid; the matching distal LOSS is not - external contacts at 10-50 Mb come
+  # out at -5.3% with a CI of [-15.6, +3.4], i.e. consistent with zero, because
+  # these domains concentrate on a few chromosomes (chr7 holds 24 of 112) and
+  # the bootstrap is over chromosomes. So the folder says "large K9 domains",
+  # not "domains that lose distal contacts".
+  #
+  # CONTEXT WINDOW, not the domain alone: a figure cropped to the domain cannot
+  # show that its surroundings behave differently. Each render spans the domain
+  # plus a flank of its own width (min 2 Mb each side).
+  kbank <- file.path(tables_dir, "gam12_k9_large_domains.tsv")
+  if (file.exists(kbank)) {
+    KD <- fread(kbank); setorder(KD, -width)   # biggest first: most informative early
+    kregs <- lapply(seq_len(nrow(KD)), function(i) {
+      r <- KD[i]; fl <- max(2e6, r$width)
+      list(r$chr, max(0, r$start - fl), r$end + fl, r$name,
+           "band_sigonly", "regions/k9_large_domains")
+    })
+    regions <- c(regions, kregs)
+    message("K9 domain regions: added ", length(kregs), " from ", basename(kbank))
+  }
   gam12_region_list <<- regions
   only <- Sys.getenv("GAM7_REGIONS", "")
   if (nzchar(only)) {
@@ -2207,7 +2298,10 @@ local({
         # which is also how you want to browse them. The published artifact
         # flattens the path anyway (regions/chr18/x.png -> regions_chr18_x.png),
         # so this costs nothing downstream.
-        save_fig(p, nm, subdir = file.path("regions", r[[1]]),
+        # A 6th list element overrides the per-chromosome folder, so a themed
+        # set lands together instead of being scattered across 19 directories.
+        save_fig(p, nm, subdir = if (length(r) >= 6 && nzchar(r[[6]])) r[[6]]
+                                 else file.path("regions", r[[1]]),
                  width = if (v$slide) 13.33 else if (isTRUE(v$twocol)) FIGW2 else FIGW,
                  height = h)
       }

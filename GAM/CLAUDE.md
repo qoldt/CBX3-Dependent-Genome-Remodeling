@@ -699,6 +699,46 @@ whose annotation it carries.
 **Sex is unrecorded and decides what the chrX figure means** - METHODS question
 11. chrY is on disk and deliberately not rendered.
 
+### The figure height must be measured against the caption, not a constant
+
+`gam12_h_chrome` is the height of everything that is not a map or track panel.
+It was a literal `3.00` in, and `wrap_cap()` was added later so the long
+single-column caption would stop being cut at the **right** edge. That turned
+its 8 authored lines into 31 wrapped ones with nothing telling the constant, so
+the same text ran off the **bottom** edge instead - silently, because every row
+in these figures is absolute and overflow crops rather than shrinks.
+
+Every `_band_*` figure shipped without the last four paragraphs of its caption
+until 2026-10-20: the off-scale-clipping note, the diff-contact and hotspot-bin
+definitions, the LAD/CTCF provenance and the whole INSULATION STRIPS block -
+i.e. precisely the part that says what the tracks are.
+
+`gam12_h_chrome(cap)` now **measures** the wrapped caption with
+`grobHeight(textGrob(cap, gpar(fontsize = 7, lineheight = 0.9)))` and adds
+`gam12_h_chrome_fixed` (2.40 in of title, x axis and outer margins), floored at
+the old 3.00 so the two-column and slide variants - which take the one-line
+caption - are untouched.
+
+**Do not model this per line.** Two attempts did (0.0875 and 0.1047 in per
+counted line); each recovered some of the lost text and each still cropped,
+because the caption is not a fixed shape - a region under `gam12_cov_warn`
+gains a DATA COVERAGE WARNING line and a region with an insulation strip gains
+a five-line paragraph. `grobHeight` also measures ~0.09 in under what ggplot
+draws for 31 lines, which is why the fixed term carries a surplus.
+
+**How to re-check it.** `GAM7_CHROME=1` prints the caption's character count,
+wrapped line count, measured height and the chrome allocated. Then assert on
+the render that the last ink row is strictly inside the canvas:
+
+```sh
+GAM7_CHROME=1 GAM7_REGIONS=<one> GAM7_VARIANTS=band_sigonly Rscript GAM_7_Figures.R
+Rscript -e 'library(png); m <- readPNG(f); h <- dim(m)[1]
+            cat(h - max(which(apply(m[,,1],1,mean) < 0.999)))'   # 0 means still cropping
+```
+
+**Zero slack is the only symptom.** A cropped caption looks exactly like a
+caption that happened to end there, so the figure never reports it.
+
 **Never edit a stage file while a run of it is in flight.** R reads a `--file`
 script incrementally, so rewriting it mid-run makes the parser read a mix of old
 and new bytes. The symptom is a bogus parse error - `Error: unexpected symbol in
