@@ -160,3 +160,28 @@ data owner before this file can be treated as complete.
     positions) and ideally the targeting construct, so the affected interval can
     be masked in both assays. Until then the Cbx3 bin should be excluded from
     any per-bin analysis rather than read as a result. Related: question 5.
+
+11. **What sex were the mice, and were WT and cKO matched for it?** Nothing
+    delivered with the segregation tables records sex. This does not touch any
+    autosome result, but it decides what a chrX figure means: males have one X
+    and no Xi, females two Xs of which one is inactive and structurally
+    distinct (the Xi is a bipartite megadomain structure in Hi-C, not a
+    compartmentalised chromosome), so a mixed-sex pool averages two different
+    chromosomes and a WT/cKO difference on chrX could be a difference in sex
+    composition rather than a genotype effect. `regions/chrX/chrX_full_allcells`
+    exists because the NPMI matrices carry chrX, and it is drawn with the
+    caveat stated on the figure; do not read a chrX difference as a genotype
+    effect until the sex of every profile in both pools is known.
+
+    Note also what chrX does *not* have. GAM_1's annotated 20 kb grid is
+    chr1-19, so the five mark tracks, the repeat fractions and the chromatin
+    class are absent even though the source annotations themselves cover chrX
+    (ChromHMM 22,668 segments, RepeatMasker ~230k elements) - that is a grid
+    limit, not a data limit, and extending it is a pipeline-wide change because
+    every stage reads `A`. The delivered `Diff_contacts` and `Hotspots` files
+    are 19 chromosomes x 2 selections with no chrX, so the hotspot tracks and
+    the significance-masked difference map are a genuine data limit; the
+    difference drawn is our own distance-z-scored NPMI difference instead. The
+    cLAD/ciLAD ribbon is an external BED that does cover chrX and is drawn; the
+    CTCF BED covers chrX too but the CTCF strip is off on every figure in this
+    pipeline (`gam12_show_ctcf`), for reasons unrelated to chromosome.

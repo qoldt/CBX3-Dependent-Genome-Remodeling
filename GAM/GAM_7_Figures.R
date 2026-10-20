@@ -311,9 +311,11 @@ local({
   # by the output raster (see the aggregation block below), so blocks are small
   # enough for the mask to stay sparse and the alpha channel to mean something.
   #
-  # GAM7_DZ_SIG=0 renders the unmasked map instead, into *_alldz files, so both
-  # can sit side by side. Note the suffix moved: the masked map is now the one
-  # with the plain name.
+  # This is now only the DEFAULT of gam_region_plot()'s dz_sig argument. Every
+  # region figure comes from the all_variants table, which passes dz_sig
+  # explicitly, so GAM7_DZ_SIG=0 no longer changes any region render and there
+  # is no *_alldz file - the masked and unmasked maps are the _sigonly and
+  # _binbalanced variants, and _allcells carries both.
   gam12_dz_significant_only <- !identical(Sys.getenv("GAM7_DZ_SIG", "1"), "0")
   # Caption is ~10 wrapped lines now that the two mark-track references are stated
   # in full, so this has to cover more than it used to.
@@ -549,6 +551,29 @@ local({
                               # (1:1.84); splitting it lands near 1:0.7, which
                               # is both readable and slide-shaped.
                               twocol = FALSE,
+                              # DUAL DIFFERENCE MAPS. Draw the variant's own
+                              # difference map (dz_sig/balance) AND the
+                              # significance-masked one, so the two-column
+                              # layout can carry three triangles on the left
+                              # (WT, cKO, the unmasked map) and the masked map
+                              # on the right above the tracks.
+                              #
+                              # WHY, and it is a layout reason rather than a
+                              # scientific one. Two triangles on the left
+                              # against one map plus 6.1 in of tracks on the
+                              # right left the left column 2.97 in short, and
+                              # patchwork pads the shorter column with a
+                              # spacer - so a third of the bottom-left of every
+                              # whole-chromosome figure was blank. A third
+                              # triangle fills it almost exactly: 3 x 3.11 in =
+                              # 9.34 against the right column's 9.20.
+                              #
+                              # It also puts the pair that most wants comparing
+                              # side by side. The masked map answers "which
+                              # contacts cleared the cut", the unmasked one
+                              # "what does the whole field look like", and
+                              # before this they were separate files.
+                              dual = FALSE,
                               # INSULATION-SCORE MAP STRIPS under the difference
                               # map (WT, cKO, cKO - WT). On by default in slide
                               # mode, where the point of the figure is the change
@@ -569,10 +594,42 @@ local({
                               # with no insulation data still degrades to no
                               # strip rather than failing. "none" remains
                               # available per call.
-                              ismap = gam12_ismap_mode) {
+                              ismap = gam12_ismap_mode,
+                              # TRACKS. Off makes a maps-only figure: the
+                              # triangles, the gene track and nothing else.
+                              # Forced off on a chromosome outside GAM_1's
+                              # annotation grid - see the fallback below - so a
+                              # caller never has to remember.
+                              tracks = TRUE) {
     diff_mode <- match.arg(diff_mode)
 
     reg <- A[chr == chrom]
+    # CHROMOSOMES OUTSIDE THE ANALYSIS GRID. GAM_1 annotates chr1-19 only, so
+    # A has no rows for chrX or chrY, and the marks, hotspot counts, repeats and
+    # chromatin class are all built from A or from a table on the same grid.
+    # (The LAD and CTCF strips are NOT - they are external BEDs subset by
+    # overlap, they cover chrX, and they are deliberately left on. CTCF still
+    # does not appear, because gam12_show_ctcf is FALSE for every figure in
+    # this pipeline - a reason that has nothing to do with chromosome.) The NPMI
+    # matrices DO carry chrX and chrY, so the maps are drawable. Falling back to the
+    # plain bin grid gives the maps the bin ids they need; `tracks` then
+    # switches off everything that would have come from A, rather than letting
+    # each panel fail its own way on a zero-row subset.
+    #
+    # Not a silent degradation: it prints, and the caption says on the figure
+    # which panels are absent and why.
+    has_annot <- nrow(reg) > 0
+    if (!has_annot) {
+      gr  <- gam_bins(chrom)
+      reg <- data.table(bin_id = gam_bin_id(gr),
+                        chr    = as.character(GenomicRanges::seqnames(gr)),
+                        start  = GenomicRanges::start(gr) - 1L,   # A is 0-based
+                        end    = GenomicRanges::end(gr))
+      message("  ", chrom, " is outside GAM_1's annotation grid: maps, genes",
+              " and LADs only - no marks, repeats, chromatin class or hotspots",
+              " (CTCF is off on every figure, see gam12_show_ctcf)")
+    }
+    tracks <- isTRUE(tracks) && has_annot
     if (is.null(from)) from <- min(reg$start)
     if (is.null(to))   to   <- max(reg$end)
     reg <- reg[start >= from & end <= to]
@@ -649,7 +706,52 @@ local({
     #   coloured  measured and significant
     #   grey      measured, not significant
     #   white     not measured in one or both genotypes
-    D <- if (identical(diff_mode, "deltaz") && dz_sig) {
+    # TWO DIFFERENCE MAPS IN ONE FIGURE (`dual`). The two-column layout draws the
+    # unmasked map in the left column, below the two raw triangles, and the
+    # significance-masked one at the top of the right column, above the tracks
+    # it annotates. Both are built in this one pass: re-calling the function to
+    # get the second map would re-read the NPMI matrices, and that I/O dominates
+    # this stage's runtime.
+    #
+    # `maps` is the spec: one entry per difference map, in drawing order, each
+    # carrying its own masking and balancing. A single-map variant is the
+    # one-element case, so there is one code path rather than two.
+    maps <- c(list(list(sig = isTRUE(dz_sig), bal = isTRUE(balance))),
+              if (isTRUE(dual)) list(list(sig = TRUE, bal = FALSE)))
+    # The masked map is read from the delivered Diff_contacts files, which exist
+    # for chr1-19 only. Without them the mask has nothing to say, and an empty
+    # triangle beside three full ones is exactly the failure this repo guards
+    # against - an absence of measurement that reads as a result. So the masked
+    # entry is dropped and the figure falls back to the maps that remain (dual
+    # then lands on the three-triangle layout).
+    have_diff <- all(file.exists(vapply(c("selWT", "selcKO"),
+                                        function(sl) diff_file(chrom, sl), "")))
+    if (!have_diff && identical(diff_mode, "deltaz")) {
+      drop <- vapply(maps, `[[`, logical(1), "sig")
+      if (all(drop)) {
+        message("  no differential contacts delivered for ", chrom,
+                " - drawing the unmasked map instead of the masked one")
+        maps <- lapply(maps, function(m) { m$sig <- FALSE; m })
+      } else if (any(drop)) {
+        message("  no differential contacts delivered for ", chrom,
+                " - the masked map is omitted")
+        maps <- maps[!drop]
+      }
+    }
+    want_sig <- identical(diff_mode, "deltaz") &&
+                any(vapply(maps, `[[`, logical(1), "sig"))
+    want_all <- !identical(diff_mode, "deltaz") ||
+                any(!vapply(maps, `[[`, logical(1), "sig"))
+    # ORDER MATTERS FOR MEMORY. D_all is the only one of the two that needs
+    # `mats`, which on chr1 is four 9.7k x 9.7k matrices (~3 GB), so it is built
+    # first and `mats` dropped before the masked map is assembled from the
+    # delivered files. Building them the other way round held both at once.
+    D_all <- if (!want_all) NULL
+             else if (identical(diff_mode, "deltaz"))
+               mats$KO$z[ids, ids] - mats$WT$z[ids, ids]
+             else K0 - W0
+    rm(mats); gc(FALSE)
+    D_sig <- if (!want_sig) NULL else {
       dz <- matrix(NA_real_, length(ids), length(ids), dimnames = list(ids, ids))
       for (sel in c("selWT", "selcKO")) {
         dc <- tryCatch(load_diff_contacts(chrom, sel,
@@ -666,14 +768,14 @@ local({
         dz[cbind(j[ok], i[ok])] <- -dc$deltaz[ok]
       }
       dz
-    } else if (identical(diff_mode, "deltaz")) {
-      mats$KO$z[ids, ids] - mats$WT$z[ids, ids]
-    } else K0 - W0
+    }
+    # diff_mode = "raw" has no masked form: the code here before `maps` ignored
+    # dz_sig in that mode and drew K0 - W0, so a sig entry resolves to the raw
+    # difference and behaves exactly as it did.
+    mat_for <- function(sig) if (sig && !is.null(D_sig)) D_sig else D_all
     # measured = finite raw NPMI in both genotypes; used to separate grey from white
-    MEAS <- if (identical(diff_mode, "deltaz") && dz_sig)
-              is.finite(W0) & is.finite(K0) else NULL
+    MEAS <- if (want_sig) is.finite(W0) & is.finite(K0) else NULL
     pos <- as.numeric(sub("-.*", "", sub(".*:", "", ids)))
-    rm(mats); gc(FALSE)
 
     # DATA COVERAGE, stated on the figure. A region whose bins are detected in few
     # nuclear profiles has mostly NA in the NPMI matrix, and an NA map renders as
@@ -725,7 +827,17 @@ local({
     target <- min(max(2, fig_width - side_allow) * gam12_dpi, gam12_map_cols_max)
     fac <- max(1L, round(n / target))
     dbin <- fac * gam_binsize
+    # Display tile side, in Mb. Tiles overlap 2x on the rotated lattice, which
+    # fills it. Shared by raw_tri() and by every difference map, so it lives
+    # here and not inside either - raw_tri() reading it out of diff_map()'s
+    # frame was how the first dual render failed ("object 'tw' not found").
+    tw  <- dbin / 1e6
     grp <- ((seq_len(n) - 1L) %/% fac) + 1L
+    # Block mean over a group, ignoring NA, and NA where a block held nothing.
+    agg1 <- function(M) { Zz <- M; nz <- is.finite(Zz); Zz[!nz] <- 0
+      a1 <- rowsum(Zz, grp); b1 <- rowsum(nz * 1, grp)
+      a2 <- t(rowsum(t(a1), grp)); b2 <- t(rowsum(t(b1), grp))
+      R <- a2 / pmax(b2, 1); R[b2 == 0] <- NA; R }
     if (fac > 1L) {
       # COLOUR FROM THE SIGNIFICANT CELLS, TRANSPARENCY FROM HOW MANY THERE WERE.
       # Two wrong ways to aggregate a sparse significant map were tried first.
@@ -736,141 +848,175 @@ local({
       # So: the block keeps the mean delta-z of its significant cells, which is
       # the direction of change and should read at full strength, and the
       # FRACTION significant is carried as alpha. Sparse blocks fade; blocks with
-      # a consistent, dense change are solid.
-      if (dz_sig && !is.null(MEAS)) {
-        sg <- rowsum(is.finite(D) * 1, grp); sg <- t(rowsum(t(sg), grp))
-        ms <- rowsum(MEAS * 1, grp);         ms <- t(rowsum(t(ms), grp))
+      # a consistent, dense change are solid. It belongs to the MASKED matrix
+      # only - the unmasked one has every measured cell and no fraction to show.
+      if (!is.null(D_sig) && !is.null(MEAS)) {
+        sg <- rowsum(is.finite(D_sig) * 1, grp); sg <- t(rowsum(t(sg), grp))
+        ms <- rowsum(MEAS * 1, grp);             ms <- t(rowsum(t(ms), grp))
         FRAC <- sg / pmax(ms, 1); FRAC[ms == 0] <- NA
-      } else FRAC <- NULL
-      Z <- D; nn <- is.finite(Z); Z[!nn] <- 0
-      S1 <- rowsum(Z, grp); N1 <- rowsum(nn * 1, grp)
-      S2 <- t(rowsum(t(S1), grp)); N2 <- t(rowsum(t(N1), grp))
-      D <- S2 / pmax(N2, 1); D[N2 == 0] <- NA
-      agg1 <- function(M) { Zz <- M; nz <- is.finite(Zz); Zz[!nz] <- 0
-        a1 <- rowsum(Zz, grp); b1 <- rowsum(nz * 1, grp)
-        a2 <- t(rowsum(t(a1), grp)); b2 <- t(rowsum(t(b1), grp))
-        R <- a2 / pmax(b2, 1); R[b2 == 0] <- NA; R }
+      }
+      if (!is.null(D_sig)) D_sig <- agg1(D_sig)
+      if (!is.null(D_all)) D_all <- agg1(D_all)
       W0 <- agg1(W0); K0 <- agg1(K0)
       if (!is.null(MEAS)) {
         mz <- rowsum(MEAS * 1, grp); mz <- t(rowsum(t(mz), grp))
         MEAS <- mz > 0            # a display block counts as measured if any cell was
       }
       pos <- as.numeric(tapply(pos, grp, mean))
-      rm(Z, nn, S1, N1, S2, N2); gc(FALSE)
+      gc(FALSE)
     }
-    # Light 2D smooth of the DIFFERENCE map. Differencing two noisy matrices
-    # leaves a diagonal streak texture that reads as structure but is not; a 3x3
-    # box filter suppresses it while preserving domain-scale features. Display
-    # only - every statistic elsewhere uses the unsmoothed values. (The Pombo
-    # 2026 preprint applies a Gaussian filter for the same reason.)
-    if (gam12_smooth_diff && smooth_map && nrow(D) > 9 && !dz_sig) {
-      Z <- D; nn <- is.finite(Z); Z[!nn] <- 0
-      k <- 1L; mm <- nrow(Z)
-      cs <- function(M) { M <- apply(M, 2, cumsum); rbind(0, M) }
-      box <- function(M) {
-        P <- cs(M); idx <- seq_len(mm)
-        lo <- pmax(1L, idx - k); hi <- pmin(mm, idx + k)
-        R <- (P[hi + 1L, , drop = FALSE] - P[lo, , drop = FALSE])
-        t(apply(R, 1, function(r) { Q <- c(0, cumsum(r))
-          (Q[hi + 1L] - Q[lo]) }))
-      }
-      num <- box(Z); den <- box(nn * 1)
-      D <- num / pmax(den, 1); D[den == 0] <- NA
-      rm(Z, nn, num, den); gc(FALSE)
-    }
-    # PER-BIN BALANCING. Roughly a fifth to a quarter of a difference map is an
-    # ADDITIVE PER-BIN term - a window detected in systematically more or fewer
-    # nuclear profiles in one genotype shifts its whole row and column. Measured
-    # by fitting Dz[i,j] ~ a[i] + a[j]: 22.8% of the variance at chr2 Olfr, 26.5%
-    # at Pcdh, 18.0% on the chr11 block, 27.9% in a plain chr3 control window.
-    # It is NOT a property of odd regions; it is everywhere.
+    # ONE DIFFERENCE MAP, BUILT FROM A SPEC. Everything from the display smooth
+    # down to the finished panel is a pure function of (matrix, masked?,
+    # balanced?), so it lives in a function and `maps` above decides how many
+    # times it runs. Before `dual` this was straight-line code reading the
+    # dz_sig and balance ARGUMENTS, which is why a figure could only ever hold
+    # one difference map.
     #
-    # z-scoring within genomic distance cannot touch it - that removes a
-    # per-DISTANCE offset, which is orthogonal - so it survives into the map and
-    # draws the criss-cross plaid lattice. The significance mask hides it by
-    # dropping low-coverage cells; drawing every cell exposes it.
-    #
-    # This removes it the standard way, by fitting the row/column effect and
-    # subtracting. Off by default: it changes the displayed values, so it is its
-    # own variant rather than a silent correction of the others.
-    # Balancing a MASKED map would be meaningless: the row means would be fitted
-    # on a sparse, significance-SELECTED subset, so the per-bin term estimated
-    # would be a property of the selection and not of the bin. No variant does
-    # it, but the argument combination was reachable, so refuse it out loud.
-    if (isTRUE(balance) && dz_sig) {
-      message("  balance=TRUE ignored: it is only defined for the unmasked map")
-      balance <- FALSE
-    }
-    if (isTRUE(balance) && nrow(D) > 9) {
-      A <- D; diag(A) <- NA
-      aa <- rep(0, nrow(A))
-      for (it in 1:60) aa <- (aa + rowMeans(sweep(A, 2, aa, "-"), na.rm = TRUE)) / 2
-      aa[!is.finite(aa)] <- 0
-      D <- D - outer(aa, aa, "+")
-    }
-    m <- nrow(D)
-    ij <- CJ(i = seq_len(m), j = seq_len(m))[j > i]
-    ij[, d := pos[j] - pos[i]]
-    ij <- ij[d <= maxdist]
-    ij[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = D[cbind(i, j)])]
-    if (dz_sig && !is.null(MEAS)) {
-      ij[, meas := MEAS[cbind(i, j)]]
-      ij <- ij[meas %in% TRUE]            # drop unmeasured: those stay white
-      # alpha only where blocks were aggregated; at native resolution every
-      # drawn cell is one significant contact and there is no fraction to show.
-      ij[, al := if (is.null(FRAC)) 1 else FRAC[cbind(i, j)]]
-      if (!is.null(FRAC)) {
-        q <- stats::quantile(ij$al[ij$al > 0], 0.90, na.rm = TRUE)
-        ij[, al := pmax(0.12, pmin(1, al / max(q, 1e-9)))]
+    # Scoping it also fixes a real bug. The balancing step below used `A` as its
+    # scratch matrix, and `A` is this file's bin annotation table - so after a
+    # balanced render the chromatin-state panel's own guard,
+    # !("class2" %in% names(A)), saw a matrix, found no "class2", and silently
+    # returned NULL. The _binbalanced variant was shipping without its
+    # chromatin-state ribbon. Renamed to Abal as well, so the name cannot come
+    # back.
+    diff_map <- function(D, dz_sig, balance, over_tracks = TRUE) {
+      # Light 2D smooth of the DIFFERENCE map. Differencing two noisy matrices
+      # leaves a diagonal streak texture that reads as structure but is not; a 3x3
+      # box filter suppresses it while preserving domain-scale features. Display
+      # only - every statistic elsewhere uses the unsmoothed values. (The Pombo
+      # 2026 preprint applies a Gaussian filter for the same reason.)
+      if (gam12_smooth_diff && smooth_map && nrow(D) > 9 && !dz_sig) {
+        Z <- D; nn <- is.finite(Z); Z[!nn] <- 0
+        k <- 1L; mm <- nrow(Z)
+        cs <- function(M) { M <- apply(M, 2, cumsum); rbind(0, M) }
+        box <- function(M) {
+          P <- cs(M); idx <- seq_len(mm)
+          lo <- pmax(1L, idx - k); hi <- pmin(mm, idx + k)
+          R <- (P[hi + 1L, , drop = FALSE] - P[lo, , drop = FALSE])
+          t(apply(R, 1, function(r) { Q <- c(0, cumsum(r))
+            (Q[hi + 1L] - Q[lo]) }))
+        }
+        num <- box(Z); den <- box(nn * 1)
+        D <- num / pmax(den, 1); D[den == 0] <- NA
+        rm(Z, nn, num, den); gc(FALSE)
       }
-      ij[!is.finite(al), al := 0.12]
-    } else { ij <- ij[is.finite(v)]; ij[, al := 1] }
-    lim <- if (identical(diff_mode, "deltaz")) gam12_dz_lim
-           else as.numeric(quantile(abs(ij$v[is.finite(ij$v)]), 0.99, na.rm = TRUE))
-    tw <- dbin / 1e6   # tiles overlap 2x on the rotated lattice, which fills it
+      # PER-BIN BALANCING. Roughly a fifth to a quarter of a difference map is an
+      # ADDITIVE PER-BIN term - a window detected in systematically more or fewer
+      # nuclear profiles in one genotype shifts its whole row and column. Measured
+      # by fitting Dz[i,j] ~ a[i] + a[j]: 22.8% of the variance at chr2 Olfr, 26.5%
+      # at Pcdh, 18.0% on the chr11 block, 27.9% in a plain chr3 control window.
+      # It is NOT a property of odd regions; it is everywhere.
+      #
+      # z-scoring within genomic distance cannot touch it - that removes a
+      # per-DISTANCE offset, which is orthogonal - so it survives into the map and
+      # draws the criss-cross plaid lattice. The significance mask hides it by
+      # dropping low-coverage cells; drawing every cell exposes it.
+      #
+      # This removes it the standard way, by fitting the row/column effect and
+      # subtracting. Off by default: it changes the displayed values, so it is its
+      # own variant rather than a silent correction of the others.
+      # Balancing a MASKED map would be meaningless: the row means would be fitted
+      # on a sparse, significance-SELECTED subset, so the per-bin term estimated
+      # would be a property of the selection and not of the bin. No variant does
+      # it, but the argument combination was reachable, so refuse it out loud.
+      if (isTRUE(balance) && dz_sig) {
+        message("  balance=TRUE ignored: it is only defined for the unmasked map")
+        balance <- FALSE
+      }
+      if (isTRUE(balance) && nrow(D) > 9) {
+        Abal <- D; diag(Abal) <- NA
+        aa <- rep(0, nrow(Abal))
+        for (it in 1:60) aa <- (aa + rowMeans(sweep(Abal, 2, aa, "-"), na.rm = TRUE)) / 2
+        aa[!is.finite(aa)] <- 0
+        D <- D - outer(aa, aa, "+")
+      }
+      m <- nrow(D)
+      ij <- CJ(i = seq_len(m), j = seq_len(m))[j > i]
+      ij[, d := pos[j] - pos[i]]
+      ij <- ij[d <= maxdist]
+      ij[, `:=`(x = (pos[i] + pos[j]) / 2e6, y = d / 2e6, v = D[cbind(i, j)])]
+      if (dz_sig && !is.null(MEAS)) {
+        ij[, meas := MEAS[cbind(i, j)]]
+        ij <- ij[meas %in% TRUE]            # drop unmeasured: those stay white
+        # alpha only where blocks were aggregated; at native resolution every
+        # drawn cell is one significant contact and there is no fraction to show.
+        ij[, al := if (is.null(FRAC)) 1 else FRAC[cbind(i, j)]]
+        if (!is.null(FRAC)) {
+          q <- stats::quantile(ij$al[ij$al > 0], 0.90, na.rm = TRUE)
+          ij[, al := pmax(0.12, pmin(1, al / max(q, 1e-9)))]
+        }
+        ij[!is.finite(al), al := 0.12]
+      } else { ij <- ij[is.finite(v)]; ij[, al := 1] }
+      lim <- if (identical(diff_mode, "deltaz")) gam12_dz_lim
+             else as.numeric(quantile(abs(ij$v[is.finite(ij$v)]), 0.99, na.rm = TRUE))
 
-    p_map <- ggplot(ij, aes(x, y, fill = pmax(-lim, pmin(lim, v)), alpha = al)) +
-      geom_tile(width = tw, height = tw) +
-      scale_alpha_identity() +
-      scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim),
-                           na.value = if (dz_sig) "grey88" else "transparent",
-                           name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
-                           # Shorter on a slide: the collected legend column is
-                           # the binding constraint there (see the theme block).
-                           guide = guide_colourbar(
-                             barheight = grid::unit(if (slide) 1.2 else 2.8, "cm"))) +
-      { if (gam12_hotline / 2 < maxdist / 2)
-          geom_hline(yintercept = gam12_hotline / 2e6, linetype = 2, linewidth = .3,
-                     colour = "grey30") } +
-      { if (gam12_hotline / 2 < maxdist / 2)
-          annotate("text", x = from / 1e6, y = gam12_hotline / 2e6, hjust = -0.04, vjust = -0.5,
-                   size = 2.3, colour = "grey30", label = "max hotspot distance") } +
-      scale_y_continuous(expand = c(0, 0), name = "Genomic\ndistance\n(Mb)") +
-      scale_x_continuous(expand = c(0, 0)) +
-      coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
-      # THE FILTER IS NAMED ON THE PANEL, not only in the caption. A masked map is
-      # a map of a THRESHOLD as much as of the data, and a reader who cannot see
-      # which threshold cannot tell whether a white cell is "not different",
-      # "not different enough" or "too little contact to call". The numbers come
-      # from gam_z / gam_npmi in config.R, which are also what build the
-      # Diff_contacts filenames, so the panel cannot claim a cutoff other than
-      # the one that produced the file it just read. The criterion is the
-      # collaborators', not ours - stated in the caption, which has room for the
-      # provenance this line does not.
-      labs(subtitle = if (identical(diff_mode, "deltaz"))
-             if (!dz_sig) sprintf("delta-z, cKO - WT - every measured cell drawn%s",
-                     if (isTRUE(balance)) ", per-bin (row/column) effect removed" else
-                       "  (unsmoothed; a per-bin effect is ~20-28% of this)")
-             else sprintf("delta-z, cKO - WT, significant contacts only: |delta-z| > %s and max NPMI > %s%s",
-                     format(gam_z), format(gam_npmi),
-                     if (fac > 1L) "  (colour = mean delta-z of the significant cells; faded = few of them)"
-                     else "  (grey = measured, not significant)")
-           else "cKO - WT NPMI") +
-      theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
-                      axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
-                                                  size = 7, lineheight = 0.95),
-                      plot.subtitle = element_text(size = 9),
-                      plot.margin = margin(2, 4, 1, 4))
+      p_map <- ggplot(ij, aes(x, y, fill = pmax(-lim, pmin(lim, v)), alpha = al)) +
+        geom_tile(width = tw, height = tw) +
+        scale_alpha_identity() +
+        scale_fill_gradientn(colours = diff_cols, limits = c(-lim, lim),
+                             na.value = if (dz_sig) "grey88" else "transparent",
+                             name = if (identical(diff_mode, "deltaz")) "KO - WT\ndelta-z" else "KO - WT\nNPMI",
+                             # Shorter on a slide: the collected legend column is
+                             # the binding constraint there (see the theme block).
+                             guide = guide_colourbar(
+                               barheight = grid::unit(if (slide) 1.2 else 2.8, "cm"))) +
+        # The 5 Mb line is the integration window of the hotspot tracks, so it
+        # is drawn only on the map those tracks actually sit under. It was on
+        # every map, which in the two-column layout put "max hotspot distance"
+        # at the bottom of the left column, pointing at nothing - and on an
+        # off-grid chromosome it labelled a window with no hotspot file at all.
+        { if (tracks && over_tracks && gam12_hotline / 2 < maxdist / 2)
+            geom_hline(yintercept = gam12_hotline / 2e6, linetype = 2, linewidth = .3,
+                       colour = "grey30") } +
+        { if (tracks && over_tracks && gam12_hotline / 2 < maxdist / 2)
+            annotate("text", x = from / 1e6, y = gam12_hotline / 2e6, hjust = -0.04, vjust = -0.5,
+                     size = 2.3, colour = "grey30", label = "max hotspot distance") } +
+        scale_y_continuous(expand = c(0, 0), name = "Genomic\ndistance\n(Mb)") +
+        scale_x_continuous(expand = c(0, 0)) +
+        coord_fixed(ratio = 1, xlim = c(from, to) / 1e6, expand = FALSE) +
+        # THE FILTER IS NAMED ON THE PANEL, not only in the caption. A masked map is
+        # a map of a THRESHOLD as much as of the data, and a reader who cannot see
+        # which threshold cannot tell whether a white cell is "not different",
+        # "not different enough" or "too little contact to call". The numbers come
+        # from gam_z / gam_npmi in config.R, which are also what build the
+        # Diff_contacts filenames, so the panel cannot claim a cutoff other than
+        # the one that produced the file it just read. The criterion is the
+        # collaborators', not ours - stated in the caption, which has room for the
+        # provenance this line does not.
+        labs(subtitle = if (identical(diff_mode, "deltaz"))
+               if (!dz_sig) sprintf("delta-z, cKO - WT - every measured cell drawn%s",
+                       if (isTRUE(balance)) ", per-bin (row/column) effect removed" else
+                         "  (unsmoothed; a per-bin effect is ~20-28% of this)")
+               # ONE LINE, AND IT MUST FIT THE PANEL. ggplot does not wrap
+               # plot.subtitle any more than it wraps plot.caption, and wrapping
+               # it by hand is worse than it sounds here: a two-line subtitle
+               # eats into a map row whose height is already fixed, and
+               # coord_fixed then shrinks the triangle in BOTH directions so it
+               # no longer lines up with the other column or the tracks. At
+               # fig_width 16 the two-column panel is 6.23 in, about 102
+               # characters at this size; the version carrying the colour and
+               # alpha clauses was 149 and ran to within 2 px of the canvas
+               # edge. Those two clauses moved to the caption, which does wrap.
+               else sprintf("delta-z, cKO - WT, significant contacts only: |delta-z| > %s, max NPMI > %s%s",
+                       format(gam_z), format(gam_npmi),
+                       if (fac > 1L) "" else "  (grey = measured, not significant)")
+             else "cKO - WT NPMI") +
+        theme_m + theme(axis.title.x = element_blank(), axis.text.x = element_blank(),
+                        axis.title.y = element_text(angle = 0, hjust = 1, vjust = 0.5,
+                                                    size = 7, lineheight = 0.95),
+                        plot.subtitle = element_text(size = 9),
+                        plot.margin = margin(2, 4, 1, 4))
+      p_map
+    }
+    # Drawn in `maps` order: the first entry is the panel this variant is named
+    # after, the second (dual only) the masked map that travels with the tracks.
+    # The LAST entry is the map the tracks are drawn under - see the two-column
+    # assembly, which gives the right column the last triangle plus every track.
+    p_maps <- lapply(seq_along(maps), function(i) {
+      sp <- maps[[i]]
+      diff_map(mat_for(sp$sig), sp$sig, sp$bal, over_tracks = (i == length(maps)))
+    })
+    p_map  <- p_maps[[1]]
 
     # --- hotspots: ONE net track, signed like the difference map above it -------
     # These counts ARE contacts: per 20 kb bin, how many significant differential
@@ -895,7 +1041,7 @@ local({
     # those reciprocal bins are exactly where contacts are being redistributed
     # rather than simply removed. Net answers "which way"; the heatmap answers
     # "how much traffic, each way".
-    p_count_hm <- local({
+    p_count_hm <- if (!tracks) NULL else local({
       hm <- melt(reg[, .(mid = (start + end) / 2e6,
                          `lost in cKO` = n_contacts_lost,
                          `gained in cKO` = n_contacts_gained)],
@@ -917,7 +1063,7 @@ local({
                         panel.grid = element_blank(), plot.margin = margin(1, 4, 1, 4))
     })
 
-    p_count_net <- local({
+    p_count_net <- if (!tracks) NULL else local({
       hd <- reg[, .(mid = (start + end) / 2e6,
                     net = n_contacts_gained - n_contacts_lost)]
       # Symmetric limit so the two directions are drawn on one scale; without it a
@@ -958,7 +1104,7 @@ local({
     # used by GAM_1 to emit domains); that one is deliberately NOT what is drawn
     # here, because these panels are showing the collaborators' own track under
     # the collaborators' own cutoff. Whichever is meant has to be said out loud.
-    p_hotspot <- local({
+    p_hotspot <- if (!tracks) NULL else local({
       # ONE row, direction carried by colour. Only 26 bins genome-wide (0.1% of
       # hotspot bins) are called in both directions, so a single row loses almost
       # nothing - but those 26 get their own colour rather than letting whichever
@@ -1005,28 +1151,37 @@ local({
 
     # "both" (the default) stacks net count over per-direction count; either way
     # the hotspot CALL is a separate track below them.
-    hot_panels <- switch(gam12_count_mode,
+    hot_panels <- if (!tracks) NULL else
+                  switch(gam12_count_mode,
                          net   = list(p_count_net),
                          split = list(p_count_hm),
                          list(p_count_net, p_count_hm))
-    hot_h <- switch(gam12_count_mode,
+    hot_h <- if (!tracks) numeric(0) else
+             switch(gam12_count_mode,
                     net   = gam12_h_hot,
                     split = gam12_h_hotmap,
                     c(gam12_h_hot, gam12_h_hotmap))
-    hot_panels <- c(hot_panels, list(p_hotspot))
-    hot_h      <- c(hot_h, gam12_h_hotcall)
+    if (tracks) {
+      hot_panels <- c(hot_panels, list(p_hotspot))
+      hot_h      <- c(hot_h, gam12_h_hotcall)
+    }
 
     # --- LAD ribbon -------------------------------------------------------------
     # Constitutive LADs (Peric-Hupkes 2010, lifted to mm39). External to both our
     # genotypes and all five marks, so it is the one axis in this figure that
     # cannot be circular. Drawn as a thin ribbon rather than a track because the
     # only question asked of it is "is this stretch peripheral or not".
+    # NOT gated on `tracks`. Both this and the CTCF strip below are external
+    # BEDs subset by overlap with the region, so they never read A and they do
+    # cover chrX (cLAD 331 intervals, ciLAD 192, CTCF 2208 peaks). Switching
+    # them off with everything else was over-broad: the rule is "does it come
+    # from GAM_1's grid", not "is this an autosome".
     lads <- tryCatch(load_lads(), error = function(e) NULL)
     # CHROMATIN STATE, level 2. Same geometry as the LAD ribbon below it, so the
     # two read as a pair: which compartment-scale domain a position is in, and
     # what chromatin it is made of. Colours come from gam_class2_colours in
     # config.R, which the exported BED uses too.
-    p_state <- if (!("class2" %in% names(A))) NULL else {
+    p_state <- if (!tracks || !("class2" %in% names(A))) NULL else {
       sd <- A[chr == chrom & end > from & start < to & !is.na(class2),
               .(s = pmax(start, from) / 1e6, e = pmin(end, to) / 1e6,
                 class2 = factor(as.character(class2), levels = gam_class2_levels))]
@@ -1047,6 +1202,7 @@ local({
       lg <- as.data.table(as.data.frame(
         IRanges::subsetByOverlaps(lads, GRanges(chrom, IRanges(from, to)))))
       lg <- lg[, .(s = pmax(start, from) / 1e6, e = pmin(end, to) / 1e6, class)]
+      if (!nrow(lg)) NULL else
       ggplot(lg) +
         geom_rect(aes(xmin = s, xmax = e, ymin = 0, ymax = 1, fill = class)) +
         scale_fill_manual(values = c(cLAD = "#53426b", ciLAD = "#cbbddc"),
@@ -1078,7 +1234,7 @@ local({
     # the panel is scaled by what is actually in this region. SINE is genome-wide
     # the smallest (median 0.055 against 0.120 LINE, 0.091 LTR), so a fixed 0-1
     # axis would flatten it to the baseline everywhere.
-    p_rep <- if (!isTRUE(repeats)) NULL else local({
+    p_rep <- if (!tracks || !isTRUE(repeats)) NULL else local({
       cols <- c("frac_LINE", "frac_SINE", "frac_LTR")
       if (!all(cols %in% names(reg))) {
         message("  repeat tracks: frac_LINE/SINE/LTR not in gam_bins_annotated.rds - omitted")
@@ -1334,7 +1490,8 @@ local({
 
     # One panel per mark; the legend is collected onto the last one only, so the
     # key appears once for the whole stack rather than beside every mark.
-    panels <- lapply(seq_along(marks), function(i)
+    panels <- if (!tracks) list() else
+              lapply(seq_along(marks), function(i)
                      mk_panel(marks[i], FALSE, show_key = (i == length(marks))))
     panels <- Filter(Negate(is.null), panels)
 
@@ -1403,9 +1560,12 @@ local({
       v  <- c(W0[cbind(kk$i, kk$j)], K0[cbind(kk$i, kk$j)])
       as.numeric(quantile(v[is.finite(v)], gam12_npmi_qcap, na.rm = TRUE))
     })
-    tri <- if (show_raw) list(raw_tri(W0, pos, "WT", npmi_cap),
-                              raw_tri(K0, pos, "HP1gKO", npmi_cap), p_map)
-           else list(p_map)
+    # Order IS the layout contract read by the body assembly below:
+    #   3 entries  WT, cKO, difference
+    #   4 entries  WT, cKO, this variant's difference, the masked difference
+    tri <- if (show_raw) c(list(raw_tri(W0, pos, "WT", npmi_cap),
+                                raw_tri(K0, pos, "HP1gKO", npmi_cap)), p_maps)
+           else p_maps
 
     # --- insulation-score map strips --------------------------------------------
     # Block-averaged to the SAME display column count as the contact map above, so
@@ -1506,7 +1666,7 @@ local({
     # prepare_CTCF_annotation.R. Drawn as segments rather than filled rects
     # because at a whole-chromosome width ~90k peaks would otherwise merge into a
     # solid bar; one tick per peak keeps the density readable.
-    ctcf <- tryCatch(load_ctcf(), error = function(e) NULL)
+    ctcf <- tryCatch(load_ctcf(), error = function(e) NULL)   # external; see load_lads above
     # CTCF OFF BY DEFAULT. It validated our insulation boundaries once (1.72x at
     # +/-5 kb, in the CTCF section) and that result stands, but as a per-region
     # track it is a near-uniform picket fence that earns none of its row.
@@ -1580,8 +1740,8 @@ local({
               paste(round(map_h_in, 3), collapse = ",")))
     }
     body <- if (twocol && length(tri) >= 3) {
-      # tri is c(WT, cKO, difference) - see raw_tri() above. The difference map
-      # travels with the tracks because it is the one the tracks annotate.
+      # tri is c(WT, cKO, difference) or, with dual, c(WT, cKO, unmasked
+      # difference, masked difference) - see the tri assignment above.
       #
       # RELATIVE HEIGHTS, NOT INCHES, AND THE REASON MATTERS. patchwork cannot
       # nest a column carrying absolute unit heights inside another patchwork:
@@ -1592,7 +1752,13 @@ local({
       # saved canvas height is `tot` plus the chrome - so one relative unit IS
       # one inch of `tot`. A spacer pads the shorter column so both columns
       # divide the same total and their rows stay aligned to the same scale.
-      lh  <- rep(map_h_in, 2)
+      # LEFT takes every triangle but the last; RIGHT takes the last one plus
+      # every track, because the tracks annotate the map directly above them.
+      # At length 3 that is the original split (WT, cKO | difference); at 4
+      # (dual) the unmasked map moves down the left column and the masked one
+      # keeps its place above the tracks.
+      nL  <- length(tri) - 1L
+      lh  <- rep(map_h_in, nL)
       rh  <- c(map_h_in, track_h)
       tot <- max(sum(lh), sum(rh))
       pad <- function(ps, hs) {
@@ -1600,8 +1766,8 @@ local({
         if (d > 1e-9) list(p = c(ps, list(patchwork::plot_spacer())), h = c(hs, d))
         else list(p = ps, h = hs)
       }
-      L <- pad(tri[1:2], lh)
-      R <- pad(c(tri[3], rest), rh)
+      L <- pad(tri[seq_len(nL)], lh)
+      R <- pad(c(tri[length(tri)], rest), rh)
       (wrap_plots(L$p, ncol = 1, heights = L$h / tot) |
        wrap_plots(R$p, ncol = 1, heights = R$h / tot))
     } else {
@@ -1645,7 +1811,14 @@ local({
         # block below it swamps the plot, so twocol takes the one-line caption
         # the slide variant uses. The full text still exists on the band and
         # full single-column variants, and in the report's methods section.
-        caption = wrap_cap(if (slide || twocol) sprintf(
+        caption = wrap_cap(if (!has_annot) sprintf(
+          # OFF-GRID CHROMOSOME. The autosome caption names the repeat and mark
+          # tracks, which this figure does not have, so it gets its own line
+          # saying what is missing and why rather than describing panels that
+          # are not there.
+          "GAM %s, cKO vs WT, 20 kb. NO GAM_1 GRID HERE: the annotated 20 kb grid and the delivered differential contacts and hotspots are chr1-19, so the mark, repeat, chromatin-class and hotspot tracks and the significance-masked map are absent. The cLAD/ciLAD ribbon is external and is drawn. Difference is our own distance-z-scored NPMI, unmasked, per-bin effect removed. NPMI measured: %.0f%%.",
+          chrom, 100 * npmi_cov)
+        else if (slide || twocol) sprintf(
           # ONE LINE, AND IT MUST FIT. ggplot draws plot.caption as a single
           # line and never wraps it, so a caption longer than the canvas is
           # silently cut off mid-word - which is what the longer version with
@@ -1656,7 +1829,7 @@ local({
           # addition here costs characters somewhere else - adding the repeat
           # sentence overflowed it and cut the measured fraction mid-number.
           # Keep this under ~210 characters at 13.33 in.
-          "GAM %s, cKO vs WT, 20 kb. Map: delta-z (cKO - WT)%s; red = more contact in cKO%s. Repeats: LINE/SINE/LTR fraction per bin. Marks: mean coverage. NPMI measured: %.0f%%.",
+          "GAM %s, cKO vs WT, 20 kb. Map: delta-z (cKO - WT)%s; red = more contact in cKO%s. On the masked map a display block takes the mean delta-z of its significant cells and fades where few of them were significant. Repeats: LINE/SINE/LTR fraction per bin. Marks: mean coverage. NPMI measured: %.0f%%.",
           chrom,
           if (is.null(ismap_panels)) "" else
             sprintf("; %s: insulation by square size (240-1040 kb)",
@@ -1717,7 +1890,7 @@ local({
     attr(out, "gam_map_in") <- list(
       n = n_tri, h = map_h_in,
       total = if (twocol && n_tri >= 3)
-                max(2 * map_h_in, map_h_in + sum(track_h)) + chrome
+                max((n_tri - 1) * map_h_in, map_h_in + sum(track_h)) + chrome
               else n_tri * map_h_in + sum(track_h) + chrome)
     out
   }
@@ -1817,6 +1990,29 @@ local({
          if (identical(ch, "chr16"))
            "sigonly,allcells,binbalanced,band_sigonly,band_allcells,slide"
          else "allcells,slide,band_sigonly")))
+  # chrX, WHICH IS NOT AN AUTOSOME AND NOT LIKE THEM. The NPMI matrices carry
+  # chrX and chrY; nothing else in this pipeline does - GAM_1's annotated grid
+  # is chr1-19, and so are the delivered Diff_contacts and Hotspots files. So
+  # this is a contact-map figure and the function degrades to it on its own (see
+  # the has_annot fallback in gam_region_plot): three triangles, the gene track,
+  # and a caption that says what is absent.
+  #
+  # ONE VARIANT, and it is allcells. sigonly and the band variants are built
+  # from the delivered significant contacts, which do not exist here - the
+  # masked map would be an empty triangle, and the slide variant's whole point
+  # is the masked map. The difference drawn is our own: both genotypes'
+  # matrices z-scored within genomic distance and subtracted, per-bin effect
+  # removed, every measured cell.
+  #
+  # SEX IS AN OPEN QUESTION, and it matters more on chrX than anywhere else. The
+  # sex of the mice behind these segregation tables is not recorded in anything
+  # delivered with them, and X copy number and Xi status differ between males
+  # and females, so a mixed-sex pool averages two different chromosomes. The
+  # autosome figures do not depend on this; a chrX figure does. METHODS.md
+  # carries it as an open question - read that before interpreting this figure.
+  # chrY is on disk too but is not rendered: it is ~91 Mb of mostly
+  # unmappable repeat and the matrix is almost entirely NA.
+  regions <- c(regions, list(list("chrX", NULL, NULL, "chrX_full", "allcells")))
 
   FIGW <- 11; SIDE <- 2.6
   # Wider canvas for the two-column renders. At 11 in each column would be
@@ -1835,25 +2031,28 @@ local({
   # that - a re-render of "all the figures" was not all of them. The variants are
   # now a list this loop walks, so one run leaves a consistent set on disk.
   #
-  #   <name>            masked difference map, full triangle
-  #   <name>_band       masked, clipped to a band (skipped when the full
-  #                     triangle is already compact - see band_maxdist)
-  #   <name>_alldz      every measured cell drawn, full triangle
-  #   <name>_band_alldz every measured cell drawn, band
-  #   <name>_slide      masked, 16:9, re-laid-out for presenting
+  # GAM7_VARIANTS restricts the set (comma-separated, e.g. "slide" or
+  # "allcells,slide"); GAM7_SLIDE=1 is kept as a shorthand so existing
+  # invocations still work. GAM7_DZ_SIG no longer reaches a region figure: the
+  # variant table below passes dz_sig explicitly, so the env var only moves the
+  # default of an argument every caller already sets.
   #
-  # GAM7_VARIANTS restricts it (comma-separated, e.g. "slide" or "full,slide").
-  # GAM7_SLIDE=1 and GAM7_DZ_SIG are kept as shorthands for the same thing so
-  # existing invocations still work.
   # EVERY FILENAME SAYS WHAT IT IS. There used to be a bare <name>.png whose
   # meaning changed under people mid-project - it was the unmasked map, then the
   # masked one - and an "_alldz" suffix that reads as "all" without hinting that
-  # the other file is the filtered one. Now no region figure has a bare name and
-  # every suffix is a word:
+  # the other file is the filtered one. Neither exists now; no region figure has
+  # a bare name and every suffix is a word:
   #
-  #   _sigonly              significant contacts only (the one to read)
-  #   _allcells             every measured cell drawn
-  #   _allcells_binbalanced every measured cell, per-bin row/column effect removed
+  #   _sigonly      significant contacts only, one difference map
+  #   _allcells     FOUR triangles - WT, cKO and the unmasked bin-balanced
+  #                 difference down the left column, the masked difference and
+  #                 the tracks on the right. Named for its left-column map,
+  #                 which is still "every measured cell drawn"; it gained the
+  #                 masked map when the third triangle filled the left column.
+  #   _binbalanced  that left-column map on its own, with the tracks
+  #
+  # The suffix IS the variant id below. An earlier version of this comment
+  # listed "_allcells_binbalanced", which no file has ever been called.
   #
   # crossed with _band (clipped to a band) and _slide (16:9, re-laid-out).
   all_variants <- list(
@@ -1864,7 +2063,14 @@ local({
     # variants stay single-column - their maps are 0.95 in tall, so splitting
     # them would buy nothing and cost the shared x axis.
     list(id = "sigonly",     mode = "full", dz = TRUE,  bal = FALSE, slide = FALSE, twocol = TRUE),
-    list(id = "allcells",    mode = "full", dz = FALSE, bal = FALSE, slide = FALSE, twocol = TRUE),
+    # allcells is FOUR triangles: WT, cKO and the unmasked bin-balanced
+    # difference down the left column, the masked difference above the tracks on
+    # the right. It is the whole-chromosome figure rendered for every autosome,
+    # so it is the one that has to stand on its own, and this way it carries
+    # both readings of the difference instead of one. Bin-balanced rather than
+    # plain, because an unmasked unbalanced map draws the per-bin row/column
+    # plaid (~20-28% of its variance) on top of everything else.
+    list(id = "allcells",    mode = "full", dz = FALSE, bal = TRUE,  slide = FALSE, twocol = TRUE, dual = TRUE),
     list(id = "binbalanced", mode = "full", dz = FALSE, bal = TRUE,  slide = FALSE, twocol = TRUE),
     list(id = "band_sigonly",  mode = "band", dz = TRUE,  bal = FALSE, slide = FALSE),
     list(id = "band_allcells", mode = "band", dz = FALSE, bal = FALSE, slide = FALSE),
@@ -1983,6 +2189,7 @@ local({
                gam_region_plot(r[[1]], r[[2]], r[[3]], maxdist = md,
                                fig_width = FIGW2, side_allow = SIDE,
                                dz_sig = v$dz, balance = v$bal,
+                               dual = isTRUE(v$dual),
                                npmi_cap = gam12_npmi_cap,
                                twocol = TRUE, ismap = gam12_ismap_mode)
              else

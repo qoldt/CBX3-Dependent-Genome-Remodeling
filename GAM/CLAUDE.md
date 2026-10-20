@@ -623,11 +623,14 @@ Anything added there has to be taken out somewhere else.
 
 ## The masked difference map is the default now
 
-`gam12_dz_significant_only` defaults to TRUE and the **suffix moved**: the masked
-map carries the plain name, `GAM7_DZ_SIG=0` writes the unmasked one to
-`*_alldz`. The unmasked map spends its colour range on cells near zero and the
-structure washes out - the same contrast the collaborators' own figure shows
-between its pale delta-z panel and its significant panel.
+`gam12_dz_significant_only` defaults to TRUE, and it is now only the **default
+of the `dz_sig` argument**: every region figure comes from the `all_variants`
+table, which passes `dz_sig` explicitly, so `GAM7_DZ_SIG=0` no longer changes
+any region render and there is no `*_alldz` file. The masked and unmasked maps
+are the `_sigonly` and `_binbalanced` variants, and `_allcells` carries both.
+The unmasked map spends its colour range on cells near zero and the structure
+washes out - the same contrast the collaborators' own figure shows between its
+pale delta-z panel and its significant panel.
 
 The old argument for keeping the mask off was that at ~350 display columns a
 block is ~14x14 native cells, so almost every block contains a significant cell
@@ -635,11 +638,80 @@ and the mask fills in like the unmasked map. That was an argument about the
 display bin, not the mask, and it expired when the bin started tracking the
 output raster.
 
-## Region plots: three variants, and the slide one carries the Pombo strips
+## Region plots: six variants, a two-column layout, and the Pombo strips
 
-`GAM_7_Figures.R` section A renders each region as `<name>` (full triangle) and
-`<name>_band` (distance capped so the panel is 0.95 in tall). `GAM7_SLIDE=1`
-renders a third, `<name>_slide`, for four regions at exactly 13.33 x 7.5 in.
+**The variant list is in `all_variants` and the suffix IS the id.** Six of them:
+`_sigonly`, `_allcells`, `_binbalanced`, `_band_sigonly`, `_band_allcells`,
+`_slide`. There has never been a `_allcells_binbalanced`, whatever an older
+comment in the file or the report said.
+
+**`_allcells` is the whole-chromosome figure and it holds FOUR triangles**, via
+`dual = TRUE`: WT, cKO and the unmasked **bin-balanced** difference down the
+left column, the significance-**masked** difference at the top of the right
+column with every track under it. It is the only variant rendered for all 19
+autosomes, so it has to stand alone, and this way it carries both readings of
+the difference in one file.
+
+The third triangle is there for a layout reason as much as a scientific one.
+Two triangles on the left (2 x 3.11 = 6.23 in) against one map plus 6.09 in of
+tracks on the right (9.20 in) left the left column 2.97 in short, and patchwork
+pads the shorter column with a spacer - a third of the bottom-left of every
+whole-chromosome figure was blank. Three triangles is 9.34 against 9.20, so the
+columns now balance to 0.14 in. **Do not "fix" that remaining gap by shrinking
+the track heights**: the left column is now the taller one, so a shorter track
+stack moves the whitespace to the right and makes the figure no shorter and the
+maps no bigger. The figure's height is `max(columns) + chrome` and `map_h_in` is
+pinned by `coord_fixed` to half the panel width, which `fig_width` sets.
+
+**`dual` builds both difference matrices in one pass** (`maps` is the spec, one
+entry per map; `diff_map()` turns one entry into one panel). Calling the
+function twice would re-read the NPMI matrices, and that I/O dominates the
+stage. `D_all` is built first because it is the one that needs `mats`, which is
+~3 GB on chr1 and is dropped before the masked map is assembled from the
+delivered files.
+
+**chrX renders, and the rule for what it gets is "does this come from GAM_1's
+grid", not "is this an autosome".** `gam_region_plot` detects the situation
+itself (`has_annot`, from `A` having no rows for the chromosome), falls back to
+the plain bin grid for the ids, sets `tracks = FALSE`, drops the masked map
+from `maps`, and says so in the caption.
+
+| | chrX | why |
+|---|---|---|
+| contact maps, genes | **yes** | NPMI matrices carry chrX and chrY; TxDb is genome-wide |
+| cLAD / ciLAD | **yes** | external BED subset by overlap, never reads `A` (331 / 192 chrX intervals) |
+| CTCF | would, but off | external BED too (2,208 chrX peaks), and no longer gated on `tracks` - but `gam12_show_ctcf` is FALSE for **every** figure, because as a per-region track it is a near-uniform picket fence |
+| marks, repeats, chromatin class | no | reach the figure as columns of `A`, which GAM_1 builds on `gam_autosomes` |
+| hotspot counts and calls, masked map | no | the delivered `Diff_contacts/` and `Hotspots/` are 19 chromosomes x 2 selections, no chrX |
+
+Only the last row is a real data limit. The middle row is a grid question: the
+source annotations **do** cover chrX (ChromHMM 22,668 segments, RepeatMasker
+~230k elements), and extending GAM_1 would be plain BED overlaps for class and
+repeats, a 45-bigWig quantification for the marks. **It would also add chrX rows
+to `A`, which every stage reads** - audit each stage's filters before doing it,
+because anything aggregating over `A` without restricting to `gam_autosomes`
+would silently start including chrX and move numbers already published.
+
+Gating LAD and CTCF off along with everything else was the first version of
+this and it was wrong: the LAD ribbon had been switched off on a chromosome
+whose annotation it carries.
+
+**Sex is unrecorded and decides what the chrX figure means** - METHODS question
+11. chrY is on disk and deliberately not rendered.
+
+**Never edit a stage file while a run of it is in flight.** R reads a `--file`
+script incrementally, so rewriting it mid-run makes the parser read a mix of old
+and new bytes. The symptom is a bogus parse error - `Error: unexpected symbol in
+"ere is"` - reported *after* the last section's completion message, which reads
+exactly like a code bug in a file that parses cleanly on its own.
+
+
+`GAM_7_Figures.R` section A renders each region as `<name>_<variant>`: a full
+triangle, or `_band_*` with the distance capped so the panel is 0.95 in tall, or
+`_slide` at exactly 13.33 x 7.5 in. The three full-triangle variants are
+two-column (`twocol = TRUE`, `fig_width` 16); the band variants stay
+single-column, because their maps are 0.95 in tall and splitting them would buy
+nothing and cost the shared x axis.
 
 **Slide mode is a re-layout, not a resize.** A full region figure is ~1.09:1 and
 cannot be squashed into 16:9, so slide mode drops the two raw NPMI maps, cuts the

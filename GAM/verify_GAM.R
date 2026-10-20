@@ -293,6 +293,28 @@ if (!is.null(E) && "fold_rotated" %in% names(E)) {
            src = "gam4_hotspot_annotation_enrichment.tsv")
   }
 }
+# THE THREE-NULL COMPARISON, SPLIT BY DIRECTION OF EFFECT. The report used to
+# read the hypergeometric's 18-of-104 as it being conservative. It is computed
+# one-sided on the upper tail, so it cannot call a depletion at all, and half
+# the table is depletions - on the half it can see it calls MORE than the
+# rotation, which is what the _INFLATED in the column name means. Both halves
+# are checked so neither the headline nor the split can go stale.
+if (!is.null(E) && all(c("fold_rotated", "p_hypergeom_INFLATED",
+                         "p_shuffled", "p_rotated") %in% names(E))) local({
+  cnt <- function(txt, v) grepl(sprintf("\\b%d\\b", v), txt, perl = TRUE)
+  for (half in list(list(sel = quote(fold_rotated >  1), lab = "enriched"),
+                    list(sel = quote(fold_rotated <= 1), lab = "depleted"))) {
+    H <- E[eval(half$sel)]
+    for (nl in list(list(col = "p_hypergeom_INFLATED", id = "hypergeom"),
+                    list(col = "p_shuffled",           id = "shuffle"),
+                    list(col = "p_rotated",            id = "rotation"))) {
+      fact(sprintf("hotspot.nulls_%s_%s", nl$id, half$lab),
+           sum(H[[nl$col]] < 0.05, na.rm = TRUE), cnt, c("make_report.R"),
+           sprintf("%s cells significant at 0.05 under the %s null", half$lab, nl$id),
+           src = "gam4_hotspot_annotation_enrichment.tsv")
+    }
+  }
+})
 
 # --- coupling -----------------------------------------------------------------
 CS <- rd(file.path(tables_dir, "coupling_spearman.tsv"))
