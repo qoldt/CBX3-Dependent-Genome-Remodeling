@@ -279,7 +279,7 @@ local({
       scale_colour_disc(name = NULL) +
       labs(title = "Only H3K9me3 heterochromatin keeps gaining contact past 1 Mb",
            subtitle = paste0("Self-pairs only (both bins in the same class), HP1gKO vs WT. ",
-                             "Ribbons are 95% CIs over the 19 autosomes.\n",
+                             "Bars are 95% bootstrap CIs over the 19 autosomes.\n",
                              "Polycomb and quiescent chromatin rise below 0.2 Mb and then fall ",
                              "with euchromatin - the gain is not repression in general."),
            x = "distance between the two bins (Mb = megabases)",
@@ -287,6 +287,57 @@ local({
       theme_m + theme(legend.position = "top", text = element_text(size = 13))
     save_fig(p2, "contact_classes_level2", subdir = "heterochromatin",
              width = 11, height = 7)
+  }
+
+  # --- LEVEL 2, the heterochromatin pairs INCLUDING the mixed ones ------------
+  # The self-pair figure above cannot answer the question it raises. "H3K9me3
+  # gains" has two readings - H3K9me3 bins find each OTHER, or H3K9me3 bins gain
+  # contact with whatever is nearby - and they are told apart only by the MIXED
+  # pair. H3K9me3-quiescent is the discriminator, and it was in the table and in
+  # no figure.
+  #
+  # Six lines, not 21: the three heterochromatin classes crossed with themselves
+  # and each other. That is the comparison the conclusion rests on and it stays
+  # readable; the full 21 are in gam10_class_change.tsv.
+  # PAIR NAMES ARE ORDERED BY LEVEL, NOT ALPHABETICALLY. The table builds a pair
+  # as lo-hi on gam_class2_levels, so it says "Polycomb-H3K9me3"; sort() would
+  # ask for "H3K9me3-Polycomb" and match nothing, and the figure would silently
+  # lose a line rather than fail.
+  hetc <- c("Polycomb", "H3K9me3", "Quiescent")
+  hp   <- unique(unlist(lapply(hetc, function(x) vapply(hetc, function(y) {
+            k <- sort(match(c(x, y), gam_class2_levels))
+            paste(gam_class2_levels[k], collapse = "-") }, ""))))
+  pw3  <- W[level == "L2" & pair %in% hp]
+  if (nrow(pw3)) {
+    pw3[, band := factor(band, BAND_NAMES)]
+    # Self-pairs solid, mixed pairs dashed, so the two kinds are separable
+    # without reading six legend entries against six colours.
+    pw3[, mixed := sub("-.*$", "", pair) != sub("^.*-", "", pair)]
+    pw3[, pair := factor(pair, hp)]
+    dg3 <- position_dodge(width = 0.5)
+    p3 <- ggplot(pw3, aes(band, pct, colour = pair, group = pair)) +
+      geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
+      geom_errorbar(aes(ymin = lo, ymax = hi), width = 0, linewidth = .45,
+                    alpha = .45, position = dg3) +
+      geom_line(aes(linetype = mixed), linewidth = .8, position = dg3) +
+      geom_point(size = 2.3, position = dg3) +
+      scale_linetype_manual(values = c(`FALSE` = "solid", `TRUE` = "22"),
+                            guide = "none") +
+      scale_colour_disc(name = NULL) +
+      labs(title = "H3K9me3 gains contact with itself, not with the quiescent chromatin around it",
+           subtitle = paste(strwrap(paste0(
+             "The three heterochromatin classes, self-pairs (solid) and mixed pairs (dashed), ",
+             "HP1gKO vs WT. Bars are 95% bootstrap CIs over the 19 autosomes. Past 0.2 Mb the ",
+             "three separate: H3K9me3-H3K9me3 keeps rising, H3K9me3-quiescent is flat and ",
+             "quiescent-quiescent falls - so the gain is specific to H3K9me3 self-association ",
+             "and does not spread to its neighbours. Quiescent chromatin is 69% of the genome ",
+             "and is what the LAD- and LINE-rich domains that LOSE contacts are made of."),
+             width = 110), collapse = "\n"),
+           x = "distance between the two bins (Mb = megabases)",
+           y = "change in mean NPMI (%)") +
+      theme_m + theme(legend.position = "top", text = element_text(size = 13))
+    save_fig(p3, "contact_classes_level2_mixed", subdir = "heterochromatin",
+             width = 11, height = 7.5)
   }
   cat("\nGAM_10 complete.\n")
 })

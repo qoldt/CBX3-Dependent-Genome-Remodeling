@@ -67,9 +67,26 @@ external to both contact matrices (active-chromatin axis mean Δ −0.00018, 95%
 −0.00213 to +0.00186, p = 0.62; TSS-density axis p = 0.74) — but see the
 provenance note below before relying on those two numbers.
 
-**Conclusion.** The architectural consequence of HP1γ loss is a short-range gain
-in heterochromatin self-association over LAD/LINE-rich quiescent domains, not
-compartment-scale reorganisation.
+**Conclusion.** HP1γ loss has **two separable architectural consequences**, not
+one, and they act on different chromatin. H3K9me3 domains gain self-association
+at short range and keep gaining out to 5 Mb (**+4.13%** below 0.2 Mb, **+5.91%**
+at 0.2–1 Mb, **+4.59%** at 1–5 Mb). LAD- and LINE-rich **quiescent** chromatin
+does the opposite beyond 0.2 Mb (quiescent–quiescent +1.43% below 0.2 Mb, −0.96%
+at 0.2–1 Mb with a CI spanning 0, then **−4.34%** at 1–5 Mb), and the mixed
+H3K9me3–quiescent pair sits between them (+1.93%, −0.07%, −2.53%). That is the
+same asymmetry the domain result shows from the other side: the domains that
+*lose* contacts are the LAD-associated (1.35×), LINE-rich (1.24×) quiescent
+ones, while those that *gain* are indistinguishable from background. The large
+one-directional blocks are where this is visible — chr11:2.7–23.3 Mb (LINE
+1.21×, cLAD 1.16×, 74.6% quiescent, 6.6% H3K9me3) and chr16:73.1–87.1 Mb (LINE
+1.29×, SINE 0.43×, cLAD 1.78×, 88.8% quiescent, 3.3% H3K9me3) both lose heavily.
+Neither effect is compartment-scale reorganisation.
+
+An earlier version of this conclusion read "a short-range gain in heterochromatin
+self-association over LAD/LINE-rich quiescent domains", which welded the two
+findings into one and attributed the gain to the chromatin that is in fact
+losing. Quiescent chromatin is 69% of the genome and is what LAD/LINE-rich
+domains are made of; only H3K9me3, 9% of bins, gains past 0.2 Mb.
 
 ---
 

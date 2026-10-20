@@ -207,6 +207,29 @@ if (!is.null(CC) && all(c("level", "pair", "band", "pct") %in% names(CC))) {
          c("results/GAM_REPORT.html", "../ABSTRACT.md"),
          "level-2 H3K9me3-H3K9me3 below 0.2 Mb, % change in mean NPMI",
          src = "gam10_class_change.tsv")
+  # THE SEPARATION ITSELF, which is what the conclusion now rests on. Below
+  # 0.2 Mb every heterochromatin pair rises together, so that band alone cannot
+  # distinguish "H3K9me3 self-association" from "heterochromatin in general".
+  # Past it they diverge - H3K9me3-H3K9me3 up, H3K9me3-quiescent flat,
+  # quiescent-quiescent down - and ABSTRACT.md quotes all three. An earlier
+  # conclusion attributed the gain to LAD/LINE-rich quiescent domains, i.e. to
+  # the chromatin that is losing; these facts are here so that cannot recur
+  # silently.
+  for (f in list(
+        list(id = "contacts.k9_k9_mid",     pr = "H3K9me3-H3K9me3",   bd = "0.2-1Mb"),
+        list(id = "contacts.k9_k9_1_5",     pr = "H3K9me3-H3K9me3",   bd = "1-5Mb"),
+        list(id = "contacts.k9_quies_short",pr = "H3K9me3-Quiescent", bd = "<0.2Mb"),
+        list(id = "contacts.k9_quies_mid",  pr = "H3K9me3-Quiescent", bd = "0.2-1Mb"),
+        list(id = "contacts.k9_quies_1_5",  pr = "H3K9me3-Quiescent", bd = "1-5Mb"),
+        list(id = "contacts.quies_short",   pr = "Quiescent-Quiescent", bd = "<0.2Mb"),
+        list(id = "contacts.quies_mid",     pr = "Quiescent-Quiescent", bd = "0.2-1Mb"),
+        list(id = "contacts.quies_1_5",     pr = "Quiescent-Quiescent", bd = "1-5Mb"))) {
+    vv <- CC[level == "L2" & pair == f$pr & band == f$bd, pct]
+    if (length(vv) == 1)
+      fact(f$id, vv, m_near(0.06), c("../ABSTRACT.md"),
+           sprintf("level-2 %s at %s, %% change in mean NPMI", f$pr, f$bd),
+           src = "gam10_class_change.tsv")
+  }
 }
 
 # --- the per-chromosome contrast behind "17 of 19 autosomes" -----------------
