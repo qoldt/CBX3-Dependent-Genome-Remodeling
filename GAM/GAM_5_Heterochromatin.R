@@ -325,14 +325,11 @@ local({
                             guide = "none") +
       scale_colour_disc(name = NULL) +
       labs(title = "H3K9me3 gains contact with itself, not with the quiescent chromatin around it",
-           subtitle = paste(strwrap(paste0(
-             "The three heterochromatin classes, self-pairs (solid) and mixed pairs (dashed), ",
-             "HP1gKO vs WT. Bars are 95% bootstrap CIs over the 19 autosomes. Past 0.2 Mb the ",
-             "three separate: H3K9me3-H3K9me3 keeps rising, H3K9me3-quiescent is flat and ",
-             "quiescent-quiescent falls - so the gain is specific to H3K9me3 self-association ",
-             "and does not spread to its neighbours. Quiescent chromatin is 69% of the genome ",
-             "and is what the LAD- and LINE-rich domains that LOSE contacts are made of."),
-             width = 110), collapse = "\n"),
+           # ONE LINE. The argument for this figure - why the mixed pair is the
+           # discriminator, and what it means that quiescent is 69% of the
+           # genome - belongs in the report prose beside it, not wrapped across
+           # five lines under the title.
+           subtitle = "Self-pairs solid, mixed pairs dashed \u00b7 95% bootstrap CIs over the 19 autosomes",
            x = "distance between the two bins (Mb = megabases)",
            y = "change in mean NPMI (%)") +
       theme_m + theme(legend.position = "top", text = element_text(size = 13))
@@ -358,6 +355,13 @@ local({
   a <- as.data.table(x$annot); setorder(a, chr, start)
   a[, h4 := x$l2fc[match(bin_id, rownames(x$l2fc)), "H4K20me3"]]
   a[, k9 := x$l2fc[match(bin_id, rownames(x$l2fc)), "H3K9me3"]]
+  # H4K20me3 baseMean, carried only so the dose-response table can report how
+  # much signal each decile actually had. A log2FC over a near-empty bin is a
+  # ratio of noise, and the extreme deciles are where such bins collect.
+  local({
+    S <- as.data.table(as.data.frame(x$stats))[mark == "H4K20me3"]
+    a[, bm_h4 := S$baseMean[match(bin_id, S$bin_id)]]
+  })
 
   # --- variable 1: heterochromatin identity from the ChIP domains --------------
   dm <- fread(het_domain_bed, header = FALSE, select = 1:3, col.names = c("chr","start","end"))
@@ -395,7 +399,7 @@ local({
   KEEP <- c("het_lost-het_lost", "het_lost-het_kept", "het_kept-het_kept",
             "het_lost-eu", "het_kept-eu", "eu-eu")
 
-  acc <- list()
+  acc <- list(); acc2 <- list()
   for (ch in gam_autosomes) {
     ids <- a[chr == ch]; if (nrow(ids) < 50) next
     for (g in c("WT", "HP1gKO")) {
@@ -413,7 +417,24 @@ local({
       acc[[length(acc) + 1]] <- data.table(chr = ch, genotype = g, cls = cls[ok],
         band = as.character(band[ok]), v = m[ok])[, .(s = sum(v), n = .N),
         by = .(chr, genotype, cls, band)]
-      rm(m, band, cls, ok); gc(FALSE)
+      # PER-BIN accumulation for the H4K20me3 dose-response below. Same pass,
+      # because the NPMI read is what costs; the arithmetic is free beside it.
+      # BOTH TRIANGLES here, unlike the pair accumulation above: this asks what
+      # happens to ONE bin's contacts, so a bin needs its partners on both
+      # sides, and the diagonal is excluded rather than halved away.
+      fin <- is.finite(m); diag(fin) <- FALSE
+      bi  <- matrix(as.integer(band), n, n)
+      for (bk in seq_along(BAND_NAMES)) {
+        sel <- fin & !is.na(bi) & bi == bk
+        if (!any(sel)) next
+        mm <- m; mm[!sel] <- 0
+        nb <- rowSums(sel)
+        acc2[[length(acc2) + 1]] <- data.table(
+          chr = ch, genotype = g, bin_id = keep, band = BAND_NAMES[bk],
+          s = rowSums(mm), n = nb)[n > 0L]
+        rm(mm, sel, nb); gc(FALSE)
+      }
+      rm(m, band, cls, ok, fin, bi); gc(FALSE)
     }
     cat("  ", ch, "done\n")
   }
@@ -491,6 +512,154 @@ local({
          x = "contact distance", y = "change in mean NPMI (%)") +
     theme_m + theme(legend.position = "top", text = element_text(size = 13))
   save_fig(p, "mark_change_contact_classes", subdir = "heterochromatin", width = 12, height = 7)
+
+  # ==========================================================================
+  # CONTACT CHANGE AS A FUNCTION OF H4K20me3 LOSS, FACETED BY DISTANCE
+  # --------------------------------------------------------------------------
+  # The figure above answers a PAIR question - what happened to the mark at
+  # BOTH ends - on a 3-level stratification restricted to heterochromatin, and
+  # it is hard to read as a dose-response because its x axis is distance and
+  # its legend is the pair class. The question underneath it is simpler and is
+  # about ONE bin: does the amount of H4K20me3 a bin lost predict how much
+  # contact it gained or lost? That is a per-bin quantity, so it gets a per-bin
+  # figure: x = how much mark was lost, y = how much contact changed, one panel
+  # per distance band.
+  #
+  # IT IS A REAL POSSIBILITY THAT THE ANSWER IS "NO RELATIONSHIP", and the
+  # figure has to be able to say that clearly rather than leaving it ambiguous.
+  # Two things make the absence readable: the x axis carries the decile's own
+  # MEAN log2FC rather than its rank, so the reader sees the real range the
+  # strata span, and each panel is annotated with Spearman rho computed over
+  # the individual bins in it, not over the ten decile means (ten points
+  # correlate spuriously well).
+  #
+  # REGRESSION DILUTION IS THE LIMIT, and it is stated on the figure. Per-bin
+  # ChIP log2FC at 20 kb is noise-dominated (per-bin sd 0.14-0.16 for the broad
+  # marks), so deciles of it are deciles of signal plus noise and a true
+  # relationship would be flattened toward zero. A flat result here bounds the
+  # relationship; it does not prove its absence.
+  cat("\n=== contact change vs H4K20me3 loss, per bin, by distance band ===\n")
+  B2 <- rbindlist(acc2); rm(acc2); gc(FALSE)
+  if (nrow(B2)) {
+    B2[, mean_npmi := s / n]
+    PB <- dcast(B2, chr + bin_id + band ~ genotype,
+                value.var = c("mean_npmi", "n"))
+    setnames(PB, c("mean_npmi_WT", "mean_npmi_HP1gKO", "n_WT", "n_HP1gKO"),
+             c("WT", "KO", "nWT", "nKO"))
+    # A bin needs enough measured partners in the band for its own mean to mean
+    # anything, and it needs them in BOTH genotypes or the ratio is comparing
+    # different sets of partners.
+    MINP <- 10L
+    PB <- PB[is.finite(WT) & is.finite(KO) & WT > 0 & nWT >= MINP & nKO >= MINP]
+    PB[, pct := 100 * (KO - WT) / WT]
+    PB <- merge(PB, a[, .(bin_id, h4, bm = bm_h4)], by = "bin_id")
+    cls <- gam_chromatin_classes(a)
+    PB <- merge(PB, cls[, .(bin_id, class2)], by = "bin_id", all.x = TRUE)
+    PB <- PB[is.finite(h4)]
+    # CACHED, because the NPMI pass above is the whole cost of this section and
+    # the figure below went through several versions. Anything that only
+    # re-draws can read this instead of re-reading 38 matrices.
+    saveRDS(PB, file.path(rds_dir, "gam11_perbin_contact_change.rds"))
+
+    # DECILES WITHIN CHROMATIN CLASS, NOT OVER THE WHOLE GENOME, and this is the
+    # point of the figure rather than a refinement of it. Deciles cut on the
+    # whole genome are very nearly deciles of chromatin class: decile 1 is 98.1%
+    # heterochromatin and 44.3% H3K9me3, decile 10 is 46.1% and 1.6%. Drawn that
+    # way the panel below shows a clean monotone rise at short range - from
+    # +0.55% to +2.62%, CIs not overlapping - which reads as a dose-response and
+    # is almost certainly the H3K9me3 self-association result re-expressed,
+    # since H3K9me3 bins gain +4.1% below 0.2 Mb on their own.
+    #
+    # Cutting the deciles INSIDE each class asks the question the figure claims
+    # to ask: among bins of the SAME chromatin, does the one that lost more
+    # H4K20me3 change its contacts more? A trend that survives is a
+    # dose-response; one that vanishes was chromatin class all along.
+    #
+    # Three classes, which is 98% of bins: H3K9me3 (9%) because it is where the
+    # mark is, Quiescent (69%) because it is most of the genome and most of the
+    # LAD/LINE-rich domains, and Tx (20%) as the euchromatic control.
+    PB <- PB[class2 %in% c("H3K9me3", "Quiescent", "Tx")]
+    PB[, class2 := factor(as.character(class2), c("H3K9me3", "Quiescent", "Tx"))]
+    PB[, dec := {
+      q <- quantile(h4, probs = seq(0, 1, 0.1), na.rm = TRUE)
+      q[1] <- -Inf; q[length(q)] <- Inf
+      cut(h4, q, labels = FALSE, right = FALSE)
+    }, by = class2]
+    PB <- PB[is.finite(dec)]
+
+    pool2 <- function(d) d[, .(pct = mean(pct), x = mean(h4), bm = median(bm, na.rm = TRUE),
+                               n_bins = .N), by = .(band, class2, dec)]
+    DEC <- pool2(PB)
+    chrs2 <- unique(PB$chr); set.seed(42)
+    bt <- rbindlist(lapply(seq_len(gam11_nboot), function(i) {
+      smp <- sample(chrs2, length(chrs2), replace = TRUE)
+      d <- rbindlist(lapply(smp, function(cj) PB[chr == cj]))
+      d[, .(pct = mean(pct)), by = .(band, class2, dec)][, rep := i]
+    }))
+    ci2 <- bt[, .(lo = quantile(pct, .025, na.rm = TRUE),
+                  hi = quantile(pct, .975, na.rm = TRUE)), by = .(band, class2, dec)]
+    DEC <- merge(DEC, ci2, by = c("band", "class2", "dec"))
+    # Spearman over the BINS, which is the honest correlation; the correlation
+    # of the ten decile means would be a statement about the smoothing, not
+    # about the data. Reported WITHIN class, and also pooled across classes so
+    # the confounded version is on the record beside the controlled one.
+    RHO <- PB[, .(rho = suppressWarnings(stats::cor(h4, pct, method = "spearman",
+                                                    use = "complete.obs")),
+                  n_bins = .N), by = .(band, class2)]
+    RHO_ALL <- PB[, .(class2 = "ALL (confounded)",
+                      rho = suppressWarnings(stats::cor(h4, pct, method = "spearman",
+                                                        use = "complete.obs")),
+                      n_bins = .N), by = band]
+    RHO <- rbind(RHO[, .(band, class2 = as.character(class2), rho, n_bins)], RHO_ALL)
+    DEC[, band := factor(band, BAND_NAMES)]; RHO[, band := factor(band, BAND_NAMES)]
+    setorder(DEC, band, class2, dec); setorder(RHO, band, class2)
+    fwrite(DEC, file.path(tables_dir, "gam11_h4k20_decile_contact.tsv"), sep = "\t")
+    fwrite(RHO, file.path(tables_dir, "gam11_h4k20_contact_rho.tsv"), sep = "\t")
+
+    cat(sprintf("  bins used: %s (H3K9me3/Quiescent/Tx only); per-bin log2FC spans %.2f to %.2f,\n",
+                format(length(unique(PB$bin_id)), big.mark = ","), min(PB$h4), max(PB$h4)))
+    cat(sprintf("  but the decile MEANS span only %.2f to %.2f - the distribution is tight,\n",
+                min(DEC$x), max(DEC$x)))
+    cat("  so this tests a narrow contrast, not the full range.\n\n")
+    cat("  Spearman rho over bins. ALL is the whole-genome decile, which is confounded\n")
+    cat("  with chromatin class (decile 1 is 44% H3K9me3, decile 10 is 2%); the three\n")
+    cat("  class rows cut their deciles WITHIN class and are the controlled answer.\n")
+    cat(sprintf("  %-10s %-18s %9s %12s\n", "band", "class", "rho", "bins"))
+    for (i in seq_len(nrow(RHO)))
+      cat(sprintf("  %-10s %-18s %+9.3f %12s\n", as.character(RHO$band[i]),
+                  RHO$class2[i], RHO$rho[i], format(RHO$n_bins[i], big.mark = ",")))
+
+    lab <- RHO[class2 != "ALL (confounded)"][
+      , .(lab = paste(sprintf("%s %+.3f", substr(class2, 1, 4), rho), collapse = "   ")),
+      by = band]
+    # Y RANGE FROM THE FIVE COMPARABLE BANDS. The >50 Mb band is not comparable
+    # across chromosomes (chr19 contributes 50-61 Mb against chr1's 50-195) and
+    # its intervals here reach +/-50%, which on a shared axis squashes the five
+    # bands that carry the result into a sliver around zero. coord_cartesian
+    # clips rather than drops, so the >50 Mb points are still drawn and their
+    # bars simply run off the panel - stated in the subtitle.
+    rng <- range(c(DEC[band != ">50Mb", lo], DEC[band != ">50Mb", hi]), na.rm = TRUE)
+    pad <- 0.45 * diff(rng)
+    p4 <- ggplot(DEC, aes(x, pct, colour = class2, group = class2)) +
+      geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
+      geom_errorbar(aes(ymin = lo, ymax = hi), width = 0, linewidth = .35, alpha = .5) +
+      geom_line(linewidth = .7) +
+      geom_point(size = 1.9) +
+      geom_text(data = lab, aes(x = Inf, y = Inf, label = lab), inherit.aes = FALSE,
+                hjust = 1.03, vjust = 1.5, size = 2.9, colour = "grey25") +
+      facet_wrap(~ band, nrow = 2) +
+      coord_cartesian(ylim = c(rng[1], rng[2] + pad)) +
+      scale_colour_disc(name = NULL) +
+      labs(title = "Within one kind of chromatin, losing more H4K20me3 does not change contact",
+           subtitle = "Deciles cut within chromatin class \u00b7 mean per-bin change \u00b7 95% bootstrap CIs over the 19 autosomes",
+           x = "H4K20me3 log2FC (KO/WT), decile mean within class",
+           y = "change in that bin's mean NPMI (%)") +
+      theme_m + theme(text = element_text(size = 12), legend.position = "top",
+                      plot.subtitle = element_text(size = 8.5),
+                      strip.text = element_text(face = "bold"))
+    save_fig(p4, "h4k20_loss_vs_contact_change", subdir = "heterochromatin",
+             width = 13, height = 8.5)
+  }
   cat("\nGAM_11 complete.\n")
 })
 
