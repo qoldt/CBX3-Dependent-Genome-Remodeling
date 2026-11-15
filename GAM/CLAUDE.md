@@ -23,6 +23,8 @@ GAM_2_NPMI_Compartments.R     NPMI -> PC1/compartments/insulation/decay         
   ├── GAM_3_Coupling.R        does contact remodelling coincide with the mark loss?
   ├── GAM_4_Large_Scale.R     10-25 Mb one-directional blocks + block contact budget
   ├── GAM_5_Heterochromatin.R heterochromatin domains, intra vs inter, mark strata  (heavy)
+  │    sections A-E; D = domain size vs contacts, E = significant contacts vs
+  │    H4K20me3. GAM5_ONLY=D,E runs a subset, GAM5_REDO=1 ignores D/E's caches
   ├── GAM_6_Targets.R         HUSH families, repeats, protocadherin, the Pcdh TAD
   ├── GAM_8_Block_Classes.R   chromatin classes of the contacts INSIDE the blocks  (heavy)
   │    needs GAM_4's gam6_large_blocks.tsv; see results/LARGE_BLOCKS.md

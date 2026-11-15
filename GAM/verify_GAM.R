@@ -232,6 +232,31 @@ if (!is.null(CC) && all(c("level", "pair", "band", "pct") %in% names(CC))) {
   }
 }
 
+# --- domain SIZE sets the response only in H3K9me3 domains (GAM_5 section D) --
+# The claim the report and the abstract make is a CONTRAST: inside H3K9me3-
+# dominant domains the short-range gain grows with domain size, and inside
+# Quiescent-dominant ones it does not. Both arms are pinned, because quoting
+# only the H3K9me3 arm would let the comparison it is half of go stale.
+local({
+  f <- file.path(tables_dir, "gam13_domain_size_change_ci.tsv")
+  if (!file.exists(f)) return(invisible())
+  DS <- fread(f)
+  for (g in list(
+      list(id = "domsize.k9_small",  dc = "H3K9me3-dominant",   sz = "<80kb",    bd = "<0.2Mb"),
+      list(id = "domsize.k9_mid",    dc = "H3K9me3-dominant",   sz = "80-320kb", bd = "<0.2Mb"),
+      list(id = "domsize.k9_large",  dc = "H3K9me3-dominant",   sz = ">320kb",   bd = "<0.2Mb"),
+      list(id = "domsize.quies_small", dc = "Quiescent-dominant", sz = "<80kb",    bd = "<0.2Mb"),
+      list(id = "domsize.quies_large", dc = "Quiescent-dominant", sz = ">320kb",   bd = "<0.2Mb"),
+      list(id = "domsize.k9_large_mid_band", dc = "H3K9me3-dominant", sz = ">320kb", bd = "0.2-1Mb"))) {
+    vv <- DS[kind == "intra" & dclass == g$dc & size == g$sz & band == g$bd, pct]
+    if (length(vv) == 1)
+      fact(g$id, vv, m_near(0.06), c("make_report.R"),
+           sprintf("intra-domain %s %s at %s, %% change in mean NPMI",
+                   g$dc, g$sz, g$bd),
+           src = "gam13_domain_size_change_ci.tsv")
+  }
+})
+
 # --- the per-chromosome contrast behind "17 of 19 autosomes" -----------------
 # This was quoted in the plan stock-take and in ABSTRACT.md but computed nowhere
 # that persists, so nothing could catch it drifting. The claim is that
@@ -600,6 +625,9 @@ writer_map <- list(
   "gam4_hotspot_annotation_enrichment.tsv" = "GAM_4_Large_Scale.R",
   "gam10_class_change.tsv"          = "GAM_5_Heterochromatin.R",
   "gam12_block_ranking.tsv"         = "GAM_7_Figures.R",
+  "gam12_k9_large_domains.tsv"      = "GAM_7_Figures.R",
+  "gam13_domain_size_change_ci.tsv" = "GAM_5_Heterochromatin.R",
+  "gam11_sig_vs_h4k20_rho.tsv"      = "GAM_5_Heterochromatin.R",
   "gam14_pcdh_tad_summary.tsv"      = "GAM_6_Targets.R",
   "coupling_spearman.tsv"           = "GAM_3_Coupling.R",
   "gam2c_melting_covariate_rho.tsv" = "GAM_2c_Meltron.R",

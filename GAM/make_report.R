@@ -226,6 +226,28 @@ try({
   num$ok        <- TRUE
 }, silent = TRUE)
 
+# Domain size vs contact response (GAM_5 section D). Computed FROM the table so
+# the prose cannot drift from it - the rule verify_GAM.R enforces.
+num$ds_ok <- FALSE
+try({
+  dsf <- file.path(tables_dir, "gam13_domain_size_change_ci.tsv")
+  if (file.exists(dsf)) {
+    DS <- fread(dsf)
+    g <- function(dc, sz, bd = "<0.2Mb")
+      DS[kind == "intra" & dclass == dc & size == sz & band == bd]
+    num$ds <- list(
+      k9_s = g("H3K9me3-dominant",   "<80kb"),
+      k9_m = g("H3K9me3-dominant",   "80-320kb"),
+      k9_l = g("H3K9me3-dominant",   ">320kb"),
+      q_s  = g("Quiescent-dominant", "<80kb"),
+      q_l  = g("Quiescent-dominant", ">320kb"),
+      k9_l_mid = g("H3K9me3-dominant", ">320kb", "0.2-1Mb"),
+      k9_ext   = DS[kind == "external" & dclass == "H3K9me3-dominant" &
+                    size == ">320kb" & band == "10-50Mb"])
+    num$ds_ok <- all(vapply(num$ds, nrow, 0L) == 1L)
+  }
+}, silent = TRUE)
+
 num$is_ok <- FALSE
 try({
   isf <- file.path(rds_dir, "meltron_is.rds")
@@ -1179,6 +1201,49 @@ parts$hetclass <- sec("Contact classes and mark-change strata",
             "Deciles of H4K20me3 log2FC cut within chromatin class, against that bin's own change in mean NPMI, by distance band."),
   tbl("gam11_h4k20_contact_rho.tsv", "Spearman over bins, per band and class, with the confounded whole-genome version for comparison."),
   tbl("gam11_h4k20_decile_contact.tsv", "Per decile: mean change, the decile's own mean log2FC, bootstrap CI, bin count and median baseMean."),
+  "<h3>Does the SIZE of the domain set the response?</h3>",
+  p_("The per-bin question above is about how much mark a bin lost. This one is about the",
+     "<em>object</em> the bin sits in: among domains of the same chromatin class, does a big one",
+     "behave differently from a small one? Domains are the H4K20me3 consensus peaks gap-merged at",
+     "10&nbsp;kb &mdash; the correction section C of GAM_5 documents &mdash; and each is called",
+     "H3K9me3-dominant or Quiescent-dominant by whether at least half its bins carry that class.",
+     "Mixed domains are dropped rather than assigned."),
+  if (!isTRUE(num$ds_ok)) "" else p_(
+     "<strong>Size matters in H3K9me3 domains and not in quiescent ones, and that is the whole",
+     "result.</strong> Inside H3K9me3-dominant domains the short-range (&lt;0.2&nbsp;Mb) gain rises",
+     "with size &mdash;", sg_(num$ds$k9_s$pct), "for domains under 80&nbsp;kb,", sg_(num$ds$k9_m$pct),
+     "at 80&ndash;320&nbsp;kb and", sg_(num$ds$k9_l$pct), "above 320&nbsp;kb, with non-overlapping",
+     "intervals at the ends. Inside Quiescent-dominant domains it does not move at all:",
+     sg_(num$ds$q_s$pct), "against", sg_(num$ds$q_l$pct), "across the same range. The largest",
+     "H3K9me3 domains go further still at longer internal separations,", sg_(num$ds$k9_l_mid$pct),
+     "at 0.2&ndash;1&nbsp;Mb, so this is a block compacting against itself over megabases rather",
+     "than a near-diagonal artefact."),
+  "<div class='warn'><strong>The distal-loss half of this is NOT supported.</strong> It is tempting",
+  "to read the internal gain as contacts being withdrawn from elsewhere, but the external arm",
+  "&mdash; the same large H3K9me3 domains against non-domain chromatin at 10&ndash;50&nbsp;Mb",
+  "&mdash; has an interval that spans zero",
+  if (!isTRUE(num$ds_ok)) "." else paste0("(", sg_(num$ds$k9_ext$pct), ", CI ",
+     sprintf("%+.2f to %+.2f", num$ds$k9_ext$lo, num$ds$k9_ext$hi), ")."),
+  "A compacting block and a block that sheds distal contact are different claims and only the",
+  "first one is measured here.</div>",
+  p_("<strong>Two limits.</strong> The size strata are confounded with chromatin class in the",
+     "genome at large &mdash; big H4K20me3 domains are disproportionately H3K9me3 &mdash; which is",
+     "why the comparison is made inside each class and never across them. And the intervals are",
+     "bootstrap over the 19 autosomes, so they carry between-chromosome variation only; with 2 vs 2",
+     "merged replicates there is no within-genotype variance to test against."),
+  embed_fig("heterochromatin/domain_size_vs_contact_change.png",
+            "Change in mean NPMI by domain size, separation and partner kind, split by the domain's chromatin class."),
+  tbl("gam13_domain_size_change_ci.tsv", "Every size x band x partner-kind cell with its bootstrap CI and pair count.", max_rows = 25L),
+
+  "<h3>Do the SIGNIFICANT contacts prefer the bins that lost the mark?</h3>",
+  p_("The figures above use raw NPMI with no significance mask. This asks the same question of the",
+     "delivered differential contacts instead &mdash; the thresholded side &mdash; on raw per-bin",
+     "counts rather than deciles, so the absence of a relationship is visible rather than asserted.",
+     "Bins with no called contact are kept at zero: the delivered files list only called contacts,",
+     "so a plain join would silently condition on having one."),
+  embed_fig("heterochromatin/sig_contacts_vs_h4k20.png",
+            "Every autosomal bin: H4K20me3 log2FC against its number of significant contacts, by direction and distance band."),
+  tbl("gam11_sig_vs_h4k20_rho.tsv", "Spearman over bins per direction and band, with the median count."),
   tbl("gam11_stratum_pair_change.tsv", max_rows = 25L),
   tbl("gam11_lost_vs_kept.tsv"),
   tbl("gam10_intra_vs_inter.tsv"))

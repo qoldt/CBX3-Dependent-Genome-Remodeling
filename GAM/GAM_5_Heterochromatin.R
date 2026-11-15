@@ -21,6 +21,18 @@
 #                   fragments happened to be long. C builds domains three ways
 #                   and runs A's contrast on all three.
 #
+#   D (new)         Does the SIZE of an H4K20me3 domain set its contact
+#                   response? Merged domains, split by size WITHIN chromatin
+#                   class, resolved by separation and by whether the partner is
+#                   in the same domain, another domain, or none.
+#   E (new)         The same dose-response question as B, but asked of the
+#                   DELIVERED significant contacts rather than raw NPMI, on raw
+#                   per-bin counts with the zeros kept.
+#
+# D and E are the thresholded and unthresholded halves of one question, and both
+# are null for H4K20me3: B and E find no per-bin coupling, while D finds the only
+# size effect in the file - and it is H3K9me3's, not H4K20me3's.
+#
 # SO SECTION C SUPERSEDES SECTION A's intra-vs-inter contrast, and A is kept
 # because it also carries the eu-eu baseline and the per-chromosome sums that
 # nothing else writes. Where they disagree, trust C. They currently agree: the
@@ -33,11 +45,31 @@
 # that should be made and reported on its own.
 #
 # Output file names are unchanged (gam10_*, gam11_*, gam13_*) so every existing
-# consumer, the report generator included, keeps working.
+# consumer, the report generator included, keeps working. D and E follow the
+# same rule: D writes gam13_* because it is a merged-domain analysis like C, E
+# writes gam11_* because it extends B. The prefix is a LEGACY SECTION number,
+# not the stage - see GAM/CLAUDE.md, and verify_GAM.R check C3c pins it.
+#
+# GAM5_ONLY=D,E runs a subset; GAM5_REDO=1 forces D and E to recompute their
+# NPMI / diff-contact passes instead of reusing the cached sums.
 # ================================================================
 source("config.R")
 suppressPackageStartupMessages({
   library(ggplot2); library(data.table); library(GenomicRanges); library(IRanges)
+})
+
+# Five sections, every one of them a sustained NPMI or diff-contact pass. When
+# only one is being worked on, GAM5_ONLY=D (or "D,E") runs just that one; unset,
+# every section runs, so run_GAM.R and the overnight batch are unaffected.
+# Plain concatenation, NOT sprintf: sections D and E pass strings that already
+# went through sprintf, and a formatted "12.3%" fed to sprintf a second time is
+# an invalid format spec. Section C keeps its own sprintf-style msg() locally.
+msg <- function(...) cat(..., "\n", sep = "")
+
+run_section <- local({
+  want <- Sys.getenv("GAM5_ONLY", "")
+  want <- if (nzchar(want)) trimws(strsplit(want, ",", fixed = TRUE)[[1]]) else character(0)
+  function(id) !length(want) || id %in% want
 })
 
 
@@ -46,7 +78,7 @@ suppressPackageStartupMessages({
 # SECTION A - intra-domain vs inter-domain contacts            (was GAM_10)
 # ==============================================================================
 
-local({
+if (run_section("A")) local({
   gam10_min_domain <- 100000L   # smallest domain in which an intra contact is measurable
   gam10_het_cut    <- 0.5       # bin counts as heterochromatic above this coverage
   gam10_nboot      <- 2000L
@@ -344,7 +376,7 @@ local({
 # SECTION B - does losing the mark decouple the domain?        (was GAM_11)
 # ==============================================================================
 
-local({
+if (run_section("B")) local({
   gam11_het_cut <- 0.5
   gam11_nboot   <- 2000L
 
@@ -668,7 +700,7 @@ local({
 # SECTION C - domains built properly, and A's contrast redone  (was GAM_13)
 # ==============================================================================
 
-local({
+if (run_section("C")) local({
   set.seed(1)
   N_BOOT  <- 2000L
   # Keeps its own near-diagonal band (one 0.02-1Mb bin, deliberately excluding
@@ -960,4 +992,290 @@ local({
   }
 
   msg("\nGAM_13 complete.")
+})
+
+
+# ==============================================================================
+# SECTION D - does the SIZE of an H4K20me3 domain set its contact response?
+# ==============================================================================
+# Sections A-C ask what happens to heterochromatin contacts. This asks whether
+# the answer depends on how big the domain is, resolved by how far apart the two
+# bins are - i.e. the question "is a 2 Mb block behaving like a 40 kb one".
+#
+# THREE PARTNER KINDS, and the distinction is the whole point. For a bin inside
+# a domain, its partner is in the SAME domain (intra), in ANOTHER H4K20me3
+# domain (inter), or in no domain at all (external). Pooling them would average
+# a domain's internal compaction against its external contacts, which move in
+# opposite directions here.
+#
+# DOMAINS ARE MERGED, not raw peaks - the mistake section C documents. The
+# H4K20me3 consensus master peaks are gap-merged at 10 kb, which is what makes
+# "size" mean a domain's size rather than a peak's.
+#
+# THE SIZE STRATA ARE CONFOUNDED WITH CHROMATIN CLASS, so the result is reported
+# WITHIN class. A domain is called H3K9me3-dominant or Quiescent-dominant by
+# whether at least half its bins carry that class2; "mixed" domains are dropped
+# rather than assigned, because a 50/50 domain is not evidence about either.
+if (run_section("D")) local({
+  msg("\n=== H4K20me3 domain size vs contact change, by separation ===")
+  BE <- gam_band_edges; BN <- gam_band_names
+  KIND <- c("intra", "inter", "external")   # partner: same domain / another / none
+  cache_f <- file.path(rds_dir, "gam13_domain_size_contacts.rds")
+
+  # --- merged H4K20me3 domains ------------------------------------------------
+  pk <- fread(file.path(chip_peaks_dir, "master_peaks_consensus",
+                        "H4K20me3_consensus_masterPeak.bed"),
+              header = FALSE, select = 1:3, col.names = c("chr", "start", "end"))
+  pk[, chr := ifelse(grepl("^chr", chr), chr, paste0("chr", chr))]   # peaks are NCBI
+  pk <- pk[chr %in% gam_autosomes]
+  DOM <- GenomicRanges::reduce(GRanges(pk$chr, IRanges(pk$start + 1, pk$end)),
+                               min.gapwidth = 10001L)
+  D <- data.table(dom = seq_along(DOM), chr = as.character(GenomicRanges::seqnames(DOM)),
+                  start = GenomicRanges::start(DOM) - 1L,
+                  end   = GenomicRanges::end(DOM),
+                  width = GenomicRanges::width(DOM))
+  msg(sprintf("  domains: %d, %.1f Mb total, median %d bp",
+              nrow(D), sum(D$width) / 1e6, as.integer(median(D$width))))
+
+  # --- bin -> domain by LARGEST overlap ---------------------------------------
+  # A 20 kb bin can straddle two domains; assigning it to both would double-count
+  # it into two size strata, so it goes to the one it overlaps most.
+  X  <- readRDS(file.path(rds_dir, "gam_bins_annotated.rds"))
+  A  <- as.data.table(X$annot)[chr %in% gam_autosomes]
+  cc <- gam_chromatin_classes(A)
+  A  <- merge(A, cc[, .(bin_id, class2)], by = "bin_id")
+  bg <- GRanges(A$chr, IRanges(A$start + 1, A$end))
+  h  <- GenomicRanges::findOverlaps(bg, DOM)
+  ov <- data.table(q = S4Vectors::queryHits(h), s = S4Vectors::subjectHits(h),
+                   w = GenomicRanges::width(IRanges::pintersect(
+                         bg[S4Vectors::queryHits(h)], DOM[S4Vectors::subjectHits(h)])))
+  setorder(ov, q, -w); ov <- ov[!duplicated(q)]
+  A[, dom := 0L]; A[ov$q, dom := ov$s]
+  # The GAM grid and the ChIP peaks are different objects; assert they meet.
+  stopifnot(mean(A$dom > 0) > 0.05)
+  msg(sprintf("  bins in a domain: %d of %d (%.1f%%)",
+              sum(A$dom > 0), nrow(A), 100 * mean(A$dom > 0)))
+  D <- merge(D, A[dom > 0, .(n_bins = .N), by = dom], by = "dom")
+
+  # --- NPMI pass: per domain x band x partner-kind sums ------------------------
+  # Sums, not means, so the bootstrap below can add chromosomes together.
+  if (file.exists(cache_f) && !nzchar(Sys.getenv("GAM5_REDO", ""))) {
+    o <- readRDS(cache_f); D <- o$D; A <- o$A; N <- o$N
+    msg(sprintf("  reusing %s (%d rows) - GAM5_REDO=1 to recompute",
+                basename(cache_f), nrow(N)))
+  } else {
+    acc <- list()
+    for (ch in gam_autosomes) {
+      W <- tryCatch(load_npmi("WT", ch),     error = function(e) NULL)
+      K <- tryCatch(load_npmi("HP1gKO", ch), error = function(e) NULL)
+      if (is.null(W) || is.null(K)) next
+      a   <- A[chr == ch]
+      ids <- intersect(intersect(rownames(W), rownames(K)), a$bin_id)
+      W <- W[ids, ids]; K <- K[ids, ids]
+      pos  <- as.numeric(sub("-.*", "", sub(".*:", "", ids)))
+      domv <- a$dom[match(ids, a$bin_id)]; domv[is.na(domv)] <- 0L
+      for (d in unique(domv[domv > 0L])) {
+        ri <- which(domv == d); nri <- length(ri)
+        Wm <- W[ri, , drop = FALSE]; Km <- K[ri, , drop = FALSE]
+        # A pair counts only where BOTH genotypes measured it, so the change is
+        # never a difference between two different sets of contacts.
+        fin <- is.finite(Wm) & is.finite(Km)
+        dst <- abs(outer(pos[ri], pos, "-"))
+        bnd <- .bincode(dst, BE, right = FALSE, include.lowest = FALSE)
+        kc  <- ifelse(domv == d, 1L, ifelse(domv > 0L, 2L, 3L))
+        knd <- matrix(rep(kc, each = nri), nrow = nri)
+        ok  <- fin & !is.na(bnd) & dst > 0
+        if (!any(ok)) next
+        g <- (bnd[ok] - 1L) * 3L + knd[ok]
+        r <- rowsum(cbind(Wm[ok], Km[ok], 1), g, reorder = TRUE)
+        gi <- as.integer(rownames(r))
+        acc[[length(acc) + 1L]] <- data.table(
+          dom = d, band = BN[((gi - 1L) %/% 3L) + 1L],
+          kind = KIND[((gi - 1L) %% 3L) + 1L],
+          sW = r[, 1], sK = r[, 2], n = r[, 3])
+        rm(Wm, Km, fin, dst, bnd, knd, ok)
+      }
+      rm(W, K); gc(FALSE)
+      msg(sprintf("    %s done", ch))
+    }
+    N <- rbindlist(acc)
+    A <- A[, .(bin_id, chr, dom, class2, start, end)]
+    saveRDS(list(D = D, A = A, N = N), cache_f)
+  }
+  N <- merge(N, D[, .(dom, chr, width, n_bins)], by = "dom")
+
+  # --- domain chromatin class, and the size strata -----------------------------
+  dc <- A[dom > 0 & !is.na(class2),
+          .(k9 = mean(class2 == "H3K9me3"), q = mean(class2 == "Quiescent")), by = dom]
+  dc[, dclass := fifelse(k9 >= 0.5, "H3K9me3-dominant",
+                  fifelse(q  >= 0.5, "Quiescent-dominant", "mixed"))]
+  msg(sprintf("  domains by class: %s",
+              paste(sprintf("%s %d", dc[, .N, by = dclass]$dclass,
+                            dc[, .N, by = dclass]$N), collapse = ", ")))
+  N2 <- merge(N, dc[, .(dom, dclass)], by = "dom")[dclass != "mixed"]
+  N2[, size := cut(width, c(0, 80e3, 320e3, Inf),
+                   labels = c("<80kb", "80-320kb", ">320kb"))]
+
+  # --- bootstrap over chromosomes, on SUFFICIENT STATISTICS ---------------------
+  # The pooled statistic reduces to 100*(sum(sK) - sum(sW))/sum(sW): the pair
+  # count cancels out of (sum(sK)/sum(n) - sum(sW)/sum(n)) / (sum(sW)/sum(n)).
+  # So a replicate needs only each chromosome's group sums, and resampling is
+  # adding up 19 rows per group instead of rebuilding the whole table 2000 times.
+  CH <- N2[, .(sW = sum(sW), sK = sum(sK), np = sum(n)),
+           by = .(chr, dclass, size, band, kind)]
+  key <- c("dclass", "size", "band", "kind")
+  pool <- function(d) d[, .(pct = 100 * (sum(sK) - sum(sW)) / sum(sW), np = sum(np)),
+                        by = key]
+  EST <- pool(CH)
+  chrs <- unique(CH$chr); set.seed(42); B <- 2000L
+  bt <- rbindlist(lapply(seq_len(B), function(i) {
+    cs <- sample(chrs, length(chrs), TRUE)
+    pool(CH[.(cs), on = "chr", allow.cartesian = TRUE])[, .(dclass, size, band, kind, pct)]
+  }))
+  ci <- bt[, .(lo = quantile(pct, .025, na.rm = TRUE),
+               hi = quantile(pct, .975, na.rm = TRUE)), by = key]
+  # np > 2000 drops strata thin enough that the CI is noise, not a measurement.
+  R <- merge(EST, ci, by = key)[np > 2000]
+  R[, band := factor(band, BN)]
+  setorder(R, kind, dclass, size, band)
+  fwrite(R, file.path(tables_dir, "gam13_domain_size_change_ci.tsv"), sep = "\t")
+
+  msg("\n  INTRA-domain, <0.2Mb (the size comparison that is fair):")
+  print(R[kind == "intra" & band == "<0.2Mb",
+          .(dclass, size, pct = round(pct, 2),
+            CI = sprintf("[%+.2f, %+.2f]", lo, hi), pairs = np)])
+  msg("\n  INTRA-domain, the largest domains at longer internal separation:")
+  print(R[kind == "intra" & size == ">320kb",
+          .(dclass, band, pct = round(pct, 2),
+            CI = sprintf("[%+.2f, %+.2f]", lo, hi), pairs = np)])
+
+  # --- figure ------------------------------------------------------------------
+  RF <- copy(R)
+  RF[, size := factor(size, c("<80kb", "80-320kb", ">320kb"))]
+  RF[, kind := factor(kind, KIND,
+       labels = c("within the same domain", "with another H4K20me3 domain",
+                  "with non-domain chromatin"))]
+  RF[, dclass := factor(dclass, c("H3K9me3-dominant", "Quiescent-dominant"))]
+  dg <- position_dodge(width = .6)
+  p <- ggplot(RF, aes(band, pct, colour = size, group = size)) +
+    geom_hline(yintercept = 0, linewidth = .3, colour = "grey50") +
+    geom_errorbar(aes(ymin = lo, ymax = hi), width = 0, linewidth = .45,
+                  alpha = .55, position = dg) +
+    geom_line(linewidth = .7, position = dg) +
+    geom_point(size = 2, position = dg) +
+    facet_grid(dclass ~ kind) +
+    scale_colour_disc(name = "H4K20me3 domain size") +
+    labs(title = "Only in H3K9me3 domains does size change the contact response",
+         subtitle = "Change in mean NPMI, HP1gKO vs WT · 95% bootstrap CIs over the 19 autosomes",
+         x = "separation between the two bins", y = "change in mean NPMI (%)") +
+    theme_m + theme(legend.position = "top", text = element_text(size = 12),
+                    strip.text = element_text(face = "bold"),
+                    axis.text.x = element_text(angle = 30, hjust = 1))
+  save_fig(p, "domain_size_vs_contact_change", subdir = "heterochromatin",
+           width = 13, height = 7.5)
+
+  msg("\nGAM_13d complete.")
+})
+
+
+# ==============================================================================
+# SECTION E - do SIGNIFICANT contacts prefer the bins that lost H4K20me3?
+# ==============================================================================
+# Section B's dose-response works on the raw NPMI change. This asks the same
+# question of the delivered differential contacts instead: a bin that lost more
+# H4K20me3 - does it carry more contacts that were called significant?
+#
+# RAW COUNTS, NO DECILES. The decile version answers "is there a monotone trend
+# across strata" and hides the spread; this draws every bin, so the absence of a
+# relationship is visible as an absence rather than asserted as a flat line.
+#
+# ZEROS ARE THE POINT. The delivered Diff_contacts files list only called
+# contacts, so a join against them keeps exactly the bins that have the thing
+# being measured and silently conditions on it. The full bin x band x direction
+# grid is built first and missing counts filled with 0.
+#
+# THIS IS THE THRESHOLDED SIDE. y here is a count of calls that already passed
+# |delta-z| > 2 and NPMI > 0.1; section B's y is raw NPMI with no mask. They are
+# complementary, and a null in both is a stronger statement than either alone.
+if (run_section("E")) local({
+  msg("\n=== significant contacts vs H4K20me3 loss, per bin ===")
+  BE <- gam_band_edges; BN <- gam_band_names
+  pb_f  <- file.path(rds_dir, "gam11_perbin_contact_change.rds")
+  if (!file.exists(pb_f)) { msg("  no gam11_perbin_contact_change.rds - run section B first"); return(invisible()) }
+  PB <- readRDS(pb_f)
+  sig_f <- file.path(rds_dir, "gam11_perbin_sig_counts.rds")
+
+  if (file.exists(sig_f) && !nzchar(Sys.getenv("GAM5_REDO", ""))) {
+    SG <- readRDS(sig_f)
+    msg(sprintf("  reusing %s (%d rows)", basename(sig_f), nrow(SG)))
+  } else {
+    acc <- list()
+    for (ch in gam_autosomes) for (dirn in c("lost", "gained")) {
+      d <- tryCatch(load_diff_contacts(ch, dirn,
+             select = c("start_x", "end_x", "start_y", "end_y", "bindist")),
+             error = function(e) NULL)
+      if (is.null(d) || !nrow(d)) next
+      d[, band := cut(bindist, BE, labels = BN, right = FALSE)]
+      d <- d[!is.na(band)]
+      # BOTH ends count: a contact is evidence about each of its two bins.
+      acc[[length(acc) + 1L]] <- rbind(
+        d[, .(bin_id = sprintf("%s:%d-%d", ch, start_x, end_x), band)],
+        d[, .(bin_id = sprintf("%s:%d-%d", ch, start_y, end_y), band)]
+      )[, .(n_sig = .N), by = .(bin_id, band)][, dirn := dirn][]
+    }
+    SG <- rbindlist(acc)
+    saveRDS(SG, sig_f)
+  }
+
+  base <- unique(PB[, .(bin_id, band, h4, class2, nWT, nKO)])
+  full <- base[rep(seq_len(.N), 2)][, dirn := rep(c("lost", "gained"), each = nrow(base))]
+  full <- merge(full, SG, by = c("bin_id", "band", "dirn"), all.x = TRUE)
+  full[is.na(n_sig), n_sig := 0L]
+  full[, band := factor(as.character(band), BN)]
+  full[, dirn := factor(dirn, c("gained", "lost"))]
+  msg(sprintf("  rows: %d, of which %.1f%% carry no significant contact",
+              nrow(full), 100 * mean(full$n_sig == 0)))
+
+  RHO <- full[, .(rho = suppressWarnings(cor(h4, n_sig, method = "spearman",
+                                             use = "complete.obs")),
+                  n_bins = .N, median_sig = as.numeric(median(n_sig))),
+              by = .(dirn, band)][order(dirn, band)]
+  fwrite(RHO, file.path(tables_dir, "gam11_sig_vs_h4k20_rho.tsv"), sep = "\t")
+  print(RHO)
+
+  # --- figure ------------------------------------------------------------------
+  if (!requireNamespace("hexbin", quietly = TRUE)) {
+    msg("  hexbin not installed - table written, figure skipped")
+  } else {
+    xl <- quantile(full$h4, c(0.002, 0.998), na.rm = TRUE)
+    d  <- full[is.finite(h4) & h4 >= xl[1] & h4 <= xl[2]]
+    # The red line is a SMOOTHER over the cloud, not a re-binning of it: every
+    # point is still drawn underneath. That is the difference from the decile
+    # figure, where the strata are the data.
+    d[, xs := cut(h4, breaks = seq(xl[1], xl[2], length.out = 41), labels = FALSE)]
+    trend <- d[!is.na(xs), .(x = mean(h4), y = as.numeric(median(n_sig))),
+               by = .(dirn, band, xs)]
+    lab <- d[, .(rho = suppressWarnings(cor(h4, n_sig, method = "spearman",
+                                            use = "complete.obs"))), by = .(dirn, band)]
+    lab[, txt := sprintf("rho %+.3f", rho)]
+    p <- ggplot(d, aes(h4, n_sig)) +
+      geom_hex(bins = 55) +
+      scale_fill_heat0(trans = "log10", name = "bins") +
+      geom_line(data = trend, aes(x, y), inherit.aes = FALSE,
+                colour = "grey20", linewidth = .7) +
+      geom_text(data = lab, aes(x = Inf, y = Inf, label = txt), inherit.aes = FALSE,
+                hjust = 1.08, vjust = 1.5, size = 3, colour = "grey20") +
+      facet_grid(dirn ~ band, scales = "free_y") +
+      scale_y_continuous(trans = "log1p", breaks = c(0, 1, 3, 10, 30, 100, 300, 1000)) +
+      labs(title = "H4K20me3 loss does not predict how many significant contacts a bin has",
+           subtitle = "Every autosomal bin, raw counts, zeros included · line is the median per x slice",
+           x = "H4K20me3 log2FC (KO/WT), per bin",
+           y = "significant contacts for that bin (log1p scale)") +
+      theme_m + theme(text = element_text(size = 12),
+                      strip.text = element_text(face = "bold"))
+    save_fig(p, "sig_contacts_vs_h4k20", subdir = "heterochromatin",
+             width = 14, height = 7)
+  }
+
+  msg("\nGAM_11e complete.")
 })
