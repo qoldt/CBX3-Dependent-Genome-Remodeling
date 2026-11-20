@@ -13,11 +13,8 @@ Run from the **`GAM/` directory** (no `setwd()`):
 config.R                      parameters, path builders, loaders (single source of truth)
 GAM_1_Bins_and_Signal.R       ChIP signal/stats + annotation on the 20 kb grid     (heavy)
   │  writes results/rds/gam_bins_annotated.rds
-GAM_2_NPMI_Compartments.R     NPMI -> PC1/compartments/insulation/decay            (heavy)
-  │  needs GAM_1 (PC1 orientation); writes results/rds/npmi_bin_features.rds
-  ├── GAM_2b_Shared_Axis.R    ONE A/B axis, both genotypes scored on it     (heavy)
-  │    needs GAM_1 + NPMI only; writes results/rds/shared_axis_scores.rds
-  │    GAM_6 joins its score_delta, so run it before GAM_6
+GAM_2_NPMI_Features.R         NPMI -> insulation / distance bands / decay          (heavy)
+  │  needs NPMI only; writes results/rds/npmi_bin_features.rds
   ├── GAM_2c_Meltron.R        MELTRON melting / condensation                (heavy)
   │    needs NPMI only; writes meltron_is.rds + meltron_scores.rds
   ├── GAM_3_Coupling.R        does contact remodelling coincide with the mark loss?
@@ -163,9 +160,7 @@ files' own completion messages. The current mapping:
 | `GAM_8_Block_Classes.R` | `gam16_*` |
 
 So `gam6_block_characterisation.tsv` is a **GAM_4** output; `gam10_class_change.tsv`
-is **GAM_5**. (GAM_4 *does* read the shared axis as of 2026-10-19 - see the
-A/B section below - so `GAM_2b` must run before it, as it already must before
-`GAM_6`.) The files print the old
+is **GAM_5**. The files print the old
 section number on completion for the same reason ("GAM_10 complete" inside
 `GAM_5_Heterochromatin.R`).
 
@@ -209,7 +204,7 @@ It also runs at the end of `run_GAM.R`, advisory only.
 **Why it exists.** Every correction made on 2026-10-18 was the same defect: a
 number written in PROSE disagreeing with the TABLE it cites. Stale BEDs built
 from a since-replaced input; a header comment describing behaviour the code now
-forbids; `BIN_BALANCING.md` claiming no statistic used balancing two commits
+forbids; a methods note claiming no statistic used balancing two commits
 after one did; this file carrying pre-v8 quality numbers; `make_report.R`
 hard-coding "38 of 38" in prose so re-running the report could not fix it, which
 published a page contradicting a table cited in its own paragraph. **No
@@ -230,18 +225,16 @@ old ones, so a change-note that says "previously 38 of 38, now 27 of 38" passes
 
 **What it covers.** Three families:
 
-- **A. Quoted statistics** - the compartment quality numbers, the five ChIP
-  median log2FCs on the GAM grid, the 20 kb grid size, both hotspot domain
-  counts, the LAD and LINE enrichment folds, the central het-het and eu-eu
-  contact changes, and the headline coupling rho with its n. Checked across
-  `CLAUDE.md`, `make_report.R`, `results/COMPARTMENTS.md`,
-  `results/BIN_BALANCING.md` and `export_compartment_beds.R`.
+- **A. Quoted statistics** - the five ChIP median log2FCs on the GAM grid, the
+  20 kb grid size, both hotspot domain counts, the LAD and LINE enrichment
+  folds, the central het-het and eu-eu contact changes, the domain-size result,
+  and the headline coupling rho with its n. Checked across `CLAUDE.md`,
+  `make_report.R` and `../ABSTRACT.md`.
 - **B. Freshness** - every derived file newer than what it is built from.
-- **C. Invariants** - every oriented axis agrees with its orientation check; a
-  stored method version matches the script that would write it;
-  `net = log2((gained+1)/(lost+1))` so positive = gained = cKO = red; no fill
-  scale inverts gained/lost; the compartment BEDs cover every chromosome that
-  has a shared axis.
+- **C. Invariants** - a stored method version matches the script that would
+  write it; `net = log2((gained+1)/(lost+1))` so positive = gained = cKO = red;
+  no fill scale inverts gained/lost; each legacy table prefix maps to the stage
+  that writes it.
 
 **Two things worth knowing before you trust a failure.**
 
@@ -261,213 +254,52 @@ resolution - re-run the consumer - is cheap and exercises the repo rule that
 `results/` stays fully regenerable. A warning would be ignored, which is how
 the BEDs went four hours stale in the first place.
 
-## A/B compartments: axis weakly determined; NO strength change (2026-10-17)
+## A/B compartments are not called (removed 2026-11-20)
 
-The compartment call runs and is not artefactual, but it is **not reliable on
-most chromosomes**. Do not report an A/B assignment, a net A<->B shift, or
-`compartment_switch` without restating the quality numbers below.
+**Do not call A/B compartments from these matrices.** The pipeline used to:
+observed-minus-expected NPMI, a correlation matrix, eigenvector selection
+against an active-chromatin ruler, a shared axis across genotypes (`GAM_2b`),
+saddles and switch counts. All of it was removed on 2026-11-20. NPMI is already
+a normalised quantity, so its eigenvectors do not recover compartments - the
+leading one was per-bin detectability, which is why the axis was weak and why
+WT and cKO kept selecting different eigenvectors - and the collaborating lab
+(Pombo) confirmed this is the wrong input.
 
-**What was wrong and is now fixed.** The first draft ranked candidate
-eigenvectors purely by correlation with an active-chromatin reference. That
-picks the wrong vector: the LEADING eigenvector is systematically degenerate
-(`frac_A` 0.04-0.13 - nearly every bin on one side) yet often correlates
-slightly *better* with active marks than the real compartment vector. Balance is
-now a precondition over 4 eigenvectors, not a tiebreak. Result: implausible
-`frac_A` 13/38 -> 0/38, PC1 chosen 2/38 instead of 19/38.
+Removed with it: `GAM_2b_Shared_Axis.R`, `export_compartment_beds.R`,
+`results/COMPARTMENTS.md`, `results/BIN_BALANCING.md`, the `pc1_*` /
+`compartment_*` / `compartment_switch` columns of `npmi_bin_features.rds`,
+`shared_axis_scores.rds`, the A-shift half of the GAM_6 target verdict, the
+A/B switch tables in GAM_3, the shared-axis columns in GAM_4, the IGV
+compartment tracks, the compartment-strength null, and every report section and
+`verify_GAM.R` fact built on them. The old code is in git history before this
+commit if it is ever needed for reference.
 
-**What is still wrong (re-measured 2026-10-18 after balance-before-PCA, v8).**
-Only **27 of 38** chromosome x genotype combinations orient at all; of those,
-usable axis (|rho| > 0.4) is **8 of 27** and median |rho| is **0.356**. Both
-genotypes orient on just **10 of 19 autosomes**, and on **6 of those 10** they
-pick the same eigenvector. The switch table is near-symmetric; **do not read it
-as "no net shift"** - scores are median-centred per chromosome, so A->B and
-B->A are forced exactly equal BY CONSTRUCTION, and ~28% of bins switching is
-what axis noise looks like.
+**Not affected, despite the name:** `compartment_abs` / `compartment_centred`
+from GAM_1 are the ChIP mark-loss groups (`stable`, `H4K20me3_only`,
+`co_loss`), not A/B, and stay. Neither are the chromHMM / chromatin classes,
+insulation, `npmi_short` / `npmi_long`, `decay_slope`, LADs, or anything built
+on the differential-contact calls.
 
-Balancing before the PCA (v8) fixed the eigenvector hunt, not the agreement:
-PC1 now carries the compartment on **16 of 27** (was 2 of 24), while median
-|rho| moved only 0.340 -> 0.356. The ceiling is the data. See
-`results/COMPARTMENTS.md` section 4b and `results/BIN_BALANCING.md` section 5.
+If compartments are needed again, they need a different input - the
+segregation tables or co-segregation counts (METHODS Q8), not NPMI - and should
+be agreed with the collaborating lab first.
 
-**Usable without reservation** (none depend on the PC): insulation,
-`npmi_short` / `npmi_long`, `decay_slope`, and the raw NPMI.
+## "Protocadherin loses short-range contact" is a matched-background claim, NOT a ranking
 
-### Settled 2026-10-17 - do not re-derive any of this
-
-1. **Resolution is NOT the limitation. The old lead 1 is dead.** Tested 100 kb,
-   240 kb, 500 kb and 1 Mb on chr1/7/11/16/19. |rho| is flat across the whole
-   range (chr11 0.465 -> 0.425, chr19 0.250 -> 0.306, chr16 0.469 -> 0.548).
-   Beagrie 2017 validated GAM compartments at 1 Mb, so this was the obvious fix
-   and it does nothing. **The comment in `config.R` attributing the weak axis to
-   resolution is wrong** and should not be used as justification.
-2. **The real defect is that WT and cKO do not select the same eigenvector.**
-   Mean squared cosine between the two genotypes' leading 4-eigenvector subspaces
-   is only **0.27-0.57**, the 4th principal angle is near-orthogonal, and the
-   selected PC differs between genotypes on 4 of 5 chromosomes tested. The
-   eigengap lambda1/lambda2 is 1.2-3.1, so the leading vectors are close to an
-   arbitrary rotation of each other. Any per-genotype PC1-vs-PC1 comparison is
-   comparing two different objects.
-3. **A shared axis is constructible and generalises.** Build it from the averaged
-   correlation matrix, fit its direction once against the active-chromatin
-   reference, score both genotypes on it. Held-out rho (weights fitted on odd
-   coarse bins, evaluated on even) matches in-sample: chr16 0.555 -> 0.565,
-   chr11 0.519 -> 0.553, chr1 0.435 -> 0.437. k = 4 and k = 8 agree. This is a
-   real improvement over per-genotype selection **as a definition of the axis**.
-4. **Never measure compartment STRENGTH along an eigen-derived axis.** It is
-   circular: the axis fits whichever genotype's matrix built it. Same data, k=4,
-   100 kb, median strength ratio cKO/WT by axis source - **WT axis 0.540
-   (28/28 below 1), averaged axis 0.786 (25/28), cKO axis 1.207 (8/28)**. The
-   direction of the answer is set by the choice of axis. An earlier
-   "compartments are less defined in the cKO" claim came from the averaged axis
-   and is **retracted**.
-5. **There is no detectable compartment-strength change.** Measured on axes
-   EXTERNAL to both contact matrices, so neither genotype can be favoured, all
-   19 autosomes at 100 kb, bootstrap over chromosomes:
-   - active-chromatin axis (WT H3K4me3 + H3K36me3 z): mean delta **-0.00018**,
-     95% CI -0.00213 to +0.00186, negative on 10/19, paired Wilcoxon p = 0.62
-   - TSS-density axis (no ChIP at all): mean delta +0.00019, CI -0.00057 to
-     +0.00103, negative on 11/19, p = 0.74
-
-   Two independent rulers, both null. Report this as a negative result, not as
-   "not yet tested".
-6. **lambda1 falls ~20% in the cKO** (ratio 0.58-1.02, median 0.81). That is a
-   global property of the correlation matrix affecting every direction equally,
-   not a compartment-specific effect, and it is what made the biased test look
-   positive. Normalising by each genotype's own lambda1 on the averaged axis
-   gives a strength ratio of 0.953 - i.e. nothing.
-7. **Detection frequency explains chr7 and chr11, and only those.** A leading
-   eigenvector tracks per-bin `n_valid` at |rho| 0.34-0.47 on chr7 and chr11,
-   versus 0.01-0.23 on chr1, chr16 and chr19. Those are exactly the two
-   chromosomes showing whole-chromosome contact offsets, so treat them as
-   coverage-affected rather than biologically opposite.
-8. **Our strength statistic is additive and is NOT comparable to published
-   values.** The field computes saddle strength as (AA+BB)/(AB+BA) on
-   **observed/expected**, which is positive so the ratio is defined. NPMI is
-   already log-scale and goes negative, so GAM_2 subtracts the distance
-   expectation rather than dividing; on O-E the AB denominator crosses zero and
-   the ratio returns nonsense (it was producing negative "strengths"). Use
-   **(AA+BB)/2 - AB**. Never quote it against a Hi-C paper's number.
-
-### How the field does this, for when it is picked up again
-
-- **dcHiC** is the standard differential-compartment tool: SVD per sample, PC
-  selected and sign-phased against GC content or gene density, **quantile
-  normalisation of the compartment scores across all samples** to put them on a
-  common scale, then a per-bin Mahalanobis distance with a chi-square p and
-  IHW/FDR. Note it assumes the same PC is selected in every sample - an
-  assumption **our data violates** (point 2), which is why it cannot simply be
-  run as-is here.
-- **GENOVA / Imakaev saddle** for strength: O/E matrix, subtract 1, eigen
-  decompose, first eigenvector scaled by sqrt(eigenvalue); phase by correlating
-  the arm-wise score with an active mark (H3K4me1) and flipping on a negative
-  correlation. Strength from the top/bottom 20% of score-ranked quantile groups.
-  Our phasing against H3K4me3+H3K36me3 is the same idea.
-- **HiCDOC** is the newer alternative that does prediction plus differential
-  analysis with replicates.
-
-**Cache gotcha:** `gam2_params$version` must be bumped whenever the compartment
-METHOD changes, not only its parameters - a cached per-chromosome reduction
-carries the PC it was computed with. Currently **version 8** (`GAM_2`) and
-**version 2** (`GAM_2b`); both now balance before the decomposition.
-
-## The shared A/B axis (GAM_2b) supersedes pc1_delta for WT vs cKO
-
-`pc1_WT` and `pc1_HP1gKO` are each genotype's OWN selected eigenvector, and
-settled point 2 above says those are different objects. Measured on all 19
-autosomes after v8: both genotypes orient on only **10**, and on those they
-select the same eigenvector on **6 of 10**. `pc1_delta` is therefore a
-difference between two different vectors on most of the genome, and is blank on
-the rest; it must not be used for a genotype comparison.
-
-`GAM_2b_Shared_Axis.R` implements settled point 3. One axis from the AVERAGED
-correlation matrix at 100 kb, phased once against `active_chromatin_ref()`, then
-both genotypes scored on it as `s_g = C_g %*% a` (one power-iteration step, so
-if `a` were C_g's own eigenvector the score returns that eigenvector back).
-
-**It is measurably better, and the comparison is in the output rather than
-asserted.** Against the same active-chromatin reference, autosomes only:
-
-| axis | median rho | reaches rho > 0.4 |
-|---|---|---|
-| WT's own | 0.174 | |
-| cKO's own | 0.173 | |
-| **shared (balanced, v2)** | **0.391** | **7 of 19** |
-
-The shared axis still beats both per-genotype axes by a wide margin. Per
-chromosome in `gam2b_shared_axis_summary.tsv`.
-
-**`GAM_2b` also balances before the decomposition now (params v2, 2026-10-18),
-and the result is a TRADE, not a win.** Read it before quoting the table above.
-
-| | unbalanced (v1) | balanced (v2) |
-|---|---|---|
-| compartment on **PC1** | 0 of 18 | **8 of 16** |
-| determined | **18 of 19** | 16 of 19 |
-| median \|rho\| | **0.423** | 0.391 |
-| median \|frac_A - 0.5\| | 0.061 | **0.043** |
-| worst \|frac_A - 0.5\| | 0.198 | **0.117** |
-
-**15 of 16 chromosomes moved up EXACTLY ONE eigenvector** (3->2, 2->1, 4->3) -
-the signature of a single eigenvector having been spent on per-bin
-detectability, which is the same thing balancing removes from the region maps.
-
-On the 15 chromosomes determined in BOTH versions, |rho| is a wash: 8 up, 7
-down, mean 0.383 -> 0.391, median 0.422 -> 0.387. So balancing does not make
-the axis agree better with active chromatin; it changes WHICH eigenvector
-carries the compartment and evens out the A/B split.
-
-**The cost is coverage: chr8, chr14 and chr15 drop out entirely** (chr4 comes
-in, so 18 -> 16). This is NOT an eigenvector-budget problem - tested k = 6 and
-all three still fail with "no balanced eigenvector". The likely reading is that
-their old calls were the detectability vector, which correlates with active
-chromatin because detectability in GAM is partly biological (settled point 7);
-chr14 was "determined" on **PC4** at rho 0.527 before, which fits that reading.
-Balancing converts three confident-but-suspect calls into honest refusals.
-**If you disagree with that reading, `gam2b_balance_before_pca <- FALSE`
-restores v1 exactly.** The BED exporter now names excluded chromosomes rather
-than silently shipping a shorter genome, and shared-axis bin coverage fell
-90.5% -> 82.7%, which leaves `GAM_6`'s `stopifnot(ov > 0.80)` only 2.7 points
-of headroom.
-
-**The track is SHAPE ONLY.** Each genotype's score is median-centred and scaled
-to RMS 1 per chromosome. Deliberate: lambda1 falls ~20% in the cKO, but that is
-global (settled point 6), and leaving it in the track would repaint the
-retracted "compartments are weaker in the cKO" claim across the whole genome.
-Amplitude is kept in `rayleigh_WT` / `rayleigh_HP1gKO` / `lambda1_ratio` in the
-summary, where it reads as what it is. **This stage does not re-answer the
-strength question** - that is settled and null on two external axes.
-
-Still weak evidence: 7 of 19 usable, 16 of 19 determined. Better than the
-per-genotype axes, not good in absolute terms. Report the quality numbers
-with any compartment claim, as before.
-
-**`GAM_6`'s decompaction verdict now uses `shared_delta`.** The earlier table
-called Protocadherin "DECOMPACTS (short-range loss + toward A)" with the A-shift
-resting entirely on `pc1_delta`. `pc1_delta` is still computed and still in the
-table, labelled "not a sound comparison", so the two can be contrasted - it just
-no longer decides a verdict. The short-range-loss half was never affected.
-
-## "Protocadherin decompacts" is a matched-background claim, NOT a ranking
-
-`gam5_decompaction_verdict.tsv` says Protocadherin DECOMPACTS. That is a
-statement about its own chromatin stratum - the null matches on ChromHMM state,
-repeat-content quartile and detection-coverage tertile - and it is routinely
-misread as "Pcdh changes most", including in earlier write-ups here. It does not.
+`gam5_decompaction_verdict.tsv` says Protocadherin loses short-range contact
+(as do IAPEz-int and IAPLTR1a_Mm). The verdict used to be "DECOMPACTS" =
+short-range loss PLUS a shift toward A; the A half was removed with compartment
+calling, and with it Protocadherin stopped being the only set that stands out.
+It is a statement about its own chromatin stratum - the null matches on ChromHMM
+state, repeat-content quartile and detection-coverage tertile - and it is
+routinely misread as "Pcdh changes most". It does not.
 
 `gam5_target_genomewide_context.tsv` (GAM_6 section 4b) exists to stop that
-misreading and should be quoted beside the verdict. For Protocadherin, against
-same-width contiguous windows anywhere in the genome:
-
-| | Protocadherin |
-|---|---|
-| windows losing MORE short-range contact | **43.7%** |
-| windows more A-ward | 15.1% |
-| windows beating it on BOTH criteria | **5.9%** |
-
-So it is mid-pack for contact loss and in the top sixth for the A-shift, with
-roughly one window in seventeen beating it outright. Both readings are true;
-they answer different questions. MELTRON agrees with the narrow one - the Pcdh
-cluster scores BELOW its own size-matched null (D 0.224 vs 0.260, p = 0.66).
+misreading and should be quoted beside the verdict: for Protocadherin a little
+under half of same-width contiguous windows anywhere in the genome lose MORE
+short-range contact. Both readings are true; they answer different questions.
+MELTRON agrees with the narrow one - the Pcdh cluster scores BELOW its own
+size-matched null (D 0.224 vs 0.260, p = 0.66).
 
 **Gotcha that produced a wrong version of this table once:** `target_sets` holds
 ROW INDICES into `d` in its current order (row i == bins[i]). `setorder(d, ...)`
@@ -886,19 +718,17 @@ outstanding inconsistency in the GAM tree.
 **`results/rds/npmi_bin_features.rds`** (GAM_2), a named list:
 - `$features` data.table keyed `bin_id` (autosomes plus X/Y where available):
   `bin_id, chr, start, end`, then per genotype suffixed `_WT` / `_HP1gKO`:
-  `pc1, compartment (A/B), insulation, npmi_short, npmi_long, decay_slope,
-  n_valid`; plus `pc1_delta` (HP1gKO minus WT), `insulation_delta`,
-  `compartment_switch` (`A_A, A_B, B_A, B_B`).
-- `$insulation_windows`, `$saddle` (per genotype), `$meta`.
-- PC1 is oriented **per chromosome** so A (positive) is the WT H3K4me3-high side.
-  The sign is arbitrary per chromosome, so an unoriented PC1 makes WT vs KO
-  meaningless. No silent fallback if GAM_1's rds is absent: `stop()`.
+  `insulation, npmi_short, npmi_long, decay_slope, n_valid`; plus
+  `insulation_delta` (HP1gKO minus WT).
+- `$insulation_windows` (the non-primary window sizes), `$meta` (including the
+  genome-wide decay curve and `params`, whose `version` is checked by
+  `verify_GAM.R`).
 
 ## results/ is git-ignored and regenerable
 
 Every output, the `.rds` files included, is regenerable by `run_GAM.R`. The only
 committed files under `results/` are the hand-written `.md` files
-(`METHODS.md`, `COMPARTMENTS.md`, `BIN_BALANCING.md`, `LARGE_BLOCKS.md`). The input data (`NPMI_matrices/`, `Diff_contacts/`, `Hotspots/`,
+(`METHODS.md`, `LARGE_BLOCKS.md`). The input data (`NPMI_matrices/`, `Diff_contacts/`, `Hotspots/`,
 about 7.7 GB) is git-ignored too. `GAM_RESULTS=<dir>` writes a run elsewhere.
 
 ## Do not invent provenance

@@ -7,19 +7,11 @@
 # WHY THIS EXISTS
 #
 # Every correction made on 2026-10-18 was the same defect wearing a different
-# hat: a number written in PROSE disagreeing with the TABLE it cites.
-#
-#   - compartments_{WT,HP1gKO,diff}.bed were four hours older than the
-#     orientation table they summarise, and their track description quoted
-#     pre-fix statistics;
-#   - export_compartment_beds.R's header described an anti-correlated axis as
-#     something that ships, which GAM_2 now forbids with an assertion;
-#   - BIN_BALANCING.md section 5 said "every statistic in results/tables/" was
-#     untouched by balancing, which stopped being true two commits earlier;
-#   - CLAUDE.md carried pre-v8 quality numbers and "currently version 2";
-#   - make_report.R hard-coded "38 of 38" and "PC1 on only chr7" in prose, so
-#     re-running the report could not fix them, and the published page
-#     contradicted a table cited in its own paragraph.
+# hat: a number written in PROSE disagreeing with the TABLE it cites. BED tracks
+# hours older than the table they summarised, a methods note claiming "every
+# statistic" was untouched two commits after that stopped being true, and
+# make_report.R hard-coding "38 of 38" in prose so that re-running the report
+# could not fix it.
 #
 # None of these are caught by any stopifnot() in the pipeline, because each
 # stage was individually correct. The inconsistency only exists BETWEEN files.
@@ -42,15 +34,6 @@
 # 39/39 means every statistic WITH a table agrees with it - not that every
 # statistic in the prose is backed.
 #
-# One such number is load-bearing: the compartment-strength null (active-
-# chromatin axis mean delta -0.00018, 95% CI -0.00213 to +0.00186, p = 0.62;
-# TSS axis +0.00019, p = 0.74). It was settled in f5096fa on 2026-10-17 and
-# written into GAM/CLAUDE.md and make_report.R without a stage or a table, so
-# it does not regenerate from committed code - which the repo rule for
-# results/ forbids - and it is the ONE compartment claim the analysis still
-# makes. Not registered as a failing check, because the fix is to write the
-# stage, not to edit prose, and a permanently red check is a check people stop
-# reading. Tracked in results/COMPARTMENTS.md section 6.
 # ================================================================
 source("config.R")
 suppressPackageStartupMessages(library(data.table))
@@ -110,52 +93,6 @@ m_near <- function(tol) function(txt, v) {
     txt, gregexpr("-?[0-9]+\\.?[0-9]*", txt)))))
   nums <- nums[is.finite(nums)]
   length(nums) && min(abs(nums - v)) <= tol
-}
-
-O <- rd(file.path(tables_dir, "npmi_compartment_orientation.tsv"))
-if (!is.null(O)) {
-  Oa <- O[chr %in% gam_autosomes]
-  ori <- Oa[oriented == TRUE]
-  # n_all is AUTOSOMES x genotypes (38). nrow(O) would be 42 - it carries chrX
-  # and chrY, which never orient and which no document counts.
-  n_ori  <- nrow(ori); n_all <- nrow(Oa)
-  n_pc1  <- sum(ori$which_pc == 1, na.rm = TRUE)
-  both   <- ori[, .N, by = chr][N == 2, chr]
-  same   <- sum(vapply(both, function(c) {
-                  w <- ori[chr == c, which_pc]; length(unique(w)) == 1 }, TRUE))
-  med    <- median(abs(ori$rho_orient), na.rm = TRUE)
-
-  fact("compartment.oriented", n_ori, m_n_of_m(n_all),
-       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md"),
-       "oriented chromosome x genotype combinations", src = "npmi_compartment_orientation.tsv")
-  fact("compartment.pc1", n_pc1, m_n_of_m(n_ori),
-       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md",
-         "results/BIN_BALANCING.md"),
-       "combinations whose compartment is on PC1", src = "npmi_compartment_orientation.tsv")
-  fact("compartment.both_genotypes", length(both), m_n_of_m(length(gam_autosomes)),
-       c("CLAUDE.md", "make_report.R", "export_compartment_beds.R"),
-       "autosomes where BOTH genotypes orient", src = "npmi_compartment_orientation.tsv")
-  fact("compartment.same_pc", same, m_n_of_m(length(both)),
-       c("CLAUDE.md", "make_report.R", "export_compartment_beds.R"),
-       "of those, where both pick the same eigenvector", src = "npmi_compartment_orientation.tsv")
-  fact("compartment.median_rho", med, m_near(0.002),
-       c("CLAUDE.md", "make_report.R"),
-       "median |rho| of the per-genotype axes vs active chromatin", src = "npmi_compartment_orientation.tsv")
-}
-
-S <- rd(file.path(tables_dir, "gam2b_shared_axis_summary.tsv"))
-if (!is.null(S)) {
-  det <- S[determined == TRUE]
-  fact("shared.determined", nrow(det), m_n_of_m(nrow(S)),
-       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md", "../ABSTRACT.md"),
-       "autosomes with a shared axis", src = "gam2b_shared_axis_summary.tsv")
-  fact("shared.pc1", sum(det$which_pc == 1, na.rm = TRUE), m_n_of_m(nrow(det)),
-       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md",
-         "results/BIN_BALANCING.md", "../ABSTRACT.md"),
-       "shared axes carried by PC1", src = "gam2b_shared_axis_summary.tsv")
-  fact("shared.median_rho", median(abs(det$rho_ref), na.rm = TRUE), m_near(0.002),
-       c("CLAUDE.md", "make_report.R", "results/COMPARTMENTS.md", "../ABSTRACT.md"),
-       "median |rho| of the shared axis vs active chromatin", src = "gam2b_shared_axis_summary.tsv")
 }
 
 # --- the ChIP effect sizes the whole study is conditioned on ------------------
@@ -412,7 +349,7 @@ if (!is.null(MR) && all(c("w", "r") %in% names(MR))) {
 }
 
 message("\n== A. quoted statistics match the tables they cite ==")
-if (!length(facts)) skip("all fact checks", "no compartment tables on disk")
+if (!length(facts)) skip("all fact checks", "no tables on disk")
 for (f in facts) {
   miss <- character()
   for (fp in f$quoted_in) {
@@ -460,38 +397,21 @@ fact_srcs <- function()
 message("\n== B. derived files are newer than their inputs ==")
 mt <- function(p) if (file.exists(p)) file.mtime(p) else NA
 deps <- list(
-  list(out = file.path(bed_dir, "compartments_WT.bed"),
-       ins = file.path(rds_dir, "shared_axis_scores.rds")),
-  list(out = file.path(bed_dir, "compartments_HP1gKO.bed"),
-       ins = file.path(rds_dir, "shared_axis_scores.rds")),
-  list(out = file.path(bed_dir, "compartments_diff.bed"),
-       ins = file.path(rds_dir, "shared_axis_scores.rds")),
-  list(out = file.path(tables_dir, "gam2b_shared_axis_summary.tsv"),
-       ins = file.path(rds_dir, "gam_bins_annotated.rds")),
   # Derived, not hand-listed: the report must post-date every table any fact is
   # computed from, plus its own source.
   list(out = file.path(results_dir, "GAM_REPORT.html"),       ins = fact_srcs()),
   list(out = file.path(results_dir, "GAM_REPORT_artifact.html"), ins = fact_srcs()),
   # NOTE the name is misleading: gam6_block_characterisation.tsv is written by
-  # GAM_4_Large_Scale.R, not GAM_6. Listing a GAM_6 input here produced a false
-  # alarm on the first run of this check. It DOES now read the shared axis
-  # (2026-10-19: its compartment column moved from pc1_WT to shared_WT), so
-  # shared_axis_scores.rds is a genuine input and is listed.
+  # GAM_4_Large_Scale.R, not GAM_6.
   list(out = file.path(tables_dir, "gam6_block_characterisation.tsv"),
        ins = c(file.path(rds_dir, "gam_bins_annotated.rds"),
-               file.path(rds_dir, "npmi_bin_features.rds"),
-               file.path(rds_dir, "shared_axis_scores.rds"))),
-  # GAM_3's size-matched overlap moved onto the shared axis on the same day.
+               file.path(rds_dir, "npmi_bin_features.rds"))),
   list(out = file.path(tables_dir, "gam4_size_perm_overlap.tsv"),
        ins = c(file.path(rds_dir, "gam_bins_annotated.rds"),
-               file.path(rds_dir, "npmi_bin_features.rds"),
-               file.path(rds_dir, "shared_axis_scores.rds"))),
-  # GAM_6 is the stage that joins the shared axis's score_delta.
+               file.path(rds_dir, "npmi_bin_features.rds"))),
   list(out = file.path(tables_dir, "gam5_decompaction_verdict.tsv"),
-       ins = file.path(rds_dir, "shared_axis_scores.rds")),
-  list(out = file.path(tables_dir, "coupling_spearman.tsv"),
        ins = file.path(rds_dir, "npmi_bin_features.rds")),
-  list(out = file.path(tables_dir, "gam4_compartment_switch.tsv"),
+  list(out = file.path(tables_dir, "coupling_spearman.tsv"),
        ins = file.path(rds_dir, "npmi_bin_features.rds")))
 for (d in deps) {
   to <- mt(d$out)
@@ -515,20 +435,6 @@ for (d in deps) {
 # ---------------------------------------------------------------
 message("\n== C. cross-file invariants ==")
 
-# C1. Every oriented axis agrees with its orientation check. GAM_2 asserts this
-# before writing; re-checked here because a hand-edited table would slip past it.
-if (!is.null(O) && "rho_check" %in% names(O)) {
-  b <- O[oriented == TRUE & is.finite(rho_check) & rho_check < 0]
-  if (nrow(b)) {
-    bad("oriented axes all have rho_check > 0",
-        sprintf("%d row(s) anti-correlate: %s", nrow(b),
-                paste(b$chr, b$genotype, collapse = ", ")))
-  } else {
-    ok("oriented axes all have rho_check > 0",
-       sprintf("%d rows", sum(O$oriented, na.rm = TRUE)))
-  }
-} else skip("rho_check invariant", "column absent")
-
 # C2. Cache versions in the stored rds match the script that would write them.
 ver_in_script <- function(path, pat) {
   if (!file.exists(path)) return(NA_integer_)
@@ -539,12 +445,10 @@ ver_in_script <- function(path, pat) {
   as.integer(gsub("\\D", "", hit[1]))
 }
 for (v in list(
-  list(rds = file.path(rds_dir, "shared_axis_scores.rds"),
-       src = "GAM_2b_Shared_Axis.R", pat = "version\\s*=\\s*\\d+L", nm = "GAM_2b"),
   list(rds = file.path(rds_dir, "npmi_bin_features.rds"),
-       src = "GAM_2_NPMI_Compartments.R", pat = "version\\s*=\\s*\\d+L", nm = "GAM_2"))) {
+       src = "GAM_2_NPMI_Features.R", pat = "version\\s*=\\s*\\d+L", nm = "GAM_2"))) {
   if (!file.exists(v$rds)) { skip(sprintf("%s cache version", v$nm), "rds absent"); next }
-  # GAM_2b stores params at the top level; GAM_2 stores them under meta.
+  # GAM_2 stores params under meta.
   stored <- tryCatch({
     x <- readRDS(v$rds)
     if (!is.null(x$params$version)) x$params$version else x$meta$params$version
@@ -616,8 +520,8 @@ if (length(netbad)) {
 # gam10_/gam11_/gam13_*, GAM_6 writes gam9_/gam14_*, GAM_7 writes gam12_/gam15_*.
 # The stage files still carry the old labels in their completion messages for
 # the same reason. This is a live trap - it made the first version of the
-# freshness check above list gam6_block_characterisation.tsv as a GAM_6 output
-# depending on the shared axis, which GAM_4 never reads, and that produced a
+# freshness check above list gam6_block_characterisation.tsv as a GAM_6 output,
+# and that produced a
 # false alarm. Pinning the mapping here means the next person gets a failure
 # instead of a wrong assumption.
 writer_map <- list(
@@ -630,8 +534,7 @@ writer_map <- list(
   "gam11_sig_vs_h4k20_rho.tsv"      = "GAM_5_Heterochromatin.R",
   "gam14_pcdh_tad_summary.tsv"      = "GAM_6_Targets.R",
   "coupling_spearman.tsv"           = "GAM_3_Coupling.R",
-  "gam2c_melting_covariate_rho.tsv" = "GAM_2c_Meltron.R",
-  "gam2b_shared_axis_summary.tsv"   = "GAM_2b_Shared_Axis.R")
+  "gam2c_melting_covariate_rho.tsv" = "GAM_2c_Meltron.R")
 wrong_writer <- character()
 for (tb in names(writer_map)) {
   src <- writer_map[[tb]]
@@ -646,23 +549,6 @@ if (length(wrong_writer)) {
   ok("table prefixes map to the stage that writes them",
      sprintf("%d tables (prefix is a LEGACY section number, not the stage)",
              length(writer_map)))
-}
-
-# C4. The BED tracks must not silently cover fewer chromosomes than they claim.
-bedf <- file.path(bed_dir, "compartments_WT.bed")
-if (file.exists(bedf) && !is.null(S)) {
-  bchr <- unique(fread(bedf, skip = 1, header = FALSE)$V1)
-  dchr <- S[determined == TRUE, chr]
-  gap  <- setdiff(dchr, bchr)
-  if (length(gap)) {
-    bad("BED covers every chromosome with a shared axis",
-        sprintf("missing: %s", paste(gap, collapse = ", ")))
-  } else {
-    ok("BED covers every chromosome with a shared axis",
-       sprintf("%d chromosomes", length(bchr)))
-  }
-} else {
-  skip("BED chromosome coverage", "BED or summary absent")
 }
 
 message(sprintf("\n%s\n  %d passed, %d failed, %d skipped\n",

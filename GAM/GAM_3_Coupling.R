@@ -40,11 +40,12 @@
 #                  (-0.042 to +0.032).
 #   C (was GAM_4)  Contact density per ChIP compartment. Corroborates A
 #                  categorically - the three compartments are indistinguishable.
-#                  Its compartment-SWITCH half is not usable: the A/B axis is
-#                  weakly determined (CLAUDE.md).
+#                  ("Compartment" here = the ChIP mark-loss group, NOT A/B.
+#                  The A/B-switch half was removed on 2026-11-20 with all
+#                  compartment calling from NPMI.)
 #
 # WHERE THE POSITIVE RESULT IS: H4K20me3 loss tracks BASELINE architecture, not
-# contact CHANGE - pc1 +0.196, npmi_short -0.166 after coverage control.
+# contact CHANGE - npmi_short -0.166 after coverage control.
 # Insulation does NOT survive the control (-0.180 to -0.066); do not report it.
 #
 # STILL OWED, and why this is a structural merge and not a rewrite: the figures.
@@ -141,7 +142,7 @@ local({
     stopifnot(mm > 0.95)   # a botched id format gives ~0% - a "null" by accident
   } else {
     message("GAM_2 NPMI features not found (", gam2_rds, ") - skipping section 6. ",
-            "Run GAM_2 to enable the pc1/insulation/NPMI/decay couplings.")
+            "Run GAM_2 to enable the insulation/NPMI/decay couplings.")
   }
 
   # ----------------------------------------------------------------
@@ -734,14 +735,14 @@ local({
     message("\n== 6: NPMI-derived features ==")
     Fj <- copy(F2[match(A$bin_id, bin_id)])
     Fj[, bin_id := A$bin_id]
-    for (b in c("npmi_short", "npmi_long", "decay_slope", "pc1", "insulation")) {
+    for (b in c("npmi_short", "npmi_long", "decay_slope", "insulation")) {
       cw <- paste0(b, "_WT"); ck <- paste0(b, "_HP1gKO"); cd <- paste0(b, "_delta")
       if (all(c(cw, ck) %in% names(Fj)) && !(cd %in% names(Fj))) Fj[, (cd) := get(ck) - get(cw)]
     }
-    feat_all <- c("pc1_delta", "insulation_delta", "npmi_short_delta", "npmi_long_delta",
+    feat_all <- c("insulation_delta", "npmi_short_delta", "npmi_long_delta",
                   "decay_slope_delta",
                   unlist(lapply(c("WT", "HP1gKO"), function(g)
-                    paste0(c("pc1", "insulation", "npmi_short", "npmi_long", "decay_slope"), "_", g))))
+                    paste0(c("insulation", "npmi_short", "npmi_long", "decay_slope"), "_", g))))
     feats <- intersect(feat_all, names(Fj))
     if (length(setdiff(feat_all, feats)))
       message("  GAM_2 lacks: ", paste(setdiff(feat_all, feats), collapse = ", "))
@@ -775,22 +776,6 @@ local({
       theme_m + theme(panel.grid = element_blank(), axis.text.x = element_text(angle = 30, hjust = 1))
     save_fig(g_feat, "coupling_npmi_features", subdir = "coupling", width = 7, height = 6)
 
-    if ("compartment_switch" %in% names(Fj)) {
-      sw <- rbindlist(lapply(marks, function(m) {
-        d <- by_mark[[m]]; gm <- median(d$log2FoldChange, na.rm = TRUE)
-        d <- data.table(l2fc = d$log2FoldChange,
-                        sw = Fj$compartment_switch[match(d$bin_id, Fj$bin_id)])[!is.na(sw)]
-        d[, .(mark = m, n = .N, median_l2fc = median(l2fc, na.rm = TRUE),
-              centred = median(l2fc, na.rm = TRUE) - gm), by = .(switch = sw)]
-      }))
-      fwrite(sw, file.path(tables_dir, "coupling_compartment_switch.tsv"), sep = "\t")
-      sw[, mark := factor(mark, levels = marks)]
-      g_sw <- ggplot(sw, aes(switch, centred, fill = mark)) + geom_col(position = "dodge") +
-        geom_hline(yintercept = 0, linewidth = 0.3) + scale_fill_disc() +
-        labs(title = "Median mark change by A/B compartment switch (WT -> HP1gKO)",
-             x = "compartment switch", y = "median log2FC, centred on mark median", fill = NULL) + theme_m
-      save_fig(g_sw, "coupling_compartment_switch", subdir = "coupling", width = 8, height = 4.5)
-    }
   }
 
   # ---- Session summary ---------------------------------------------------------
@@ -930,14 +915,12 @@ local({
   have_feat <- file.exists(gam2_rds)
   if (have_feat) {
     g2 <- readRDS(gam2_rds)
-    want <- intersect(c("bin_id", "pc1_WT", "pc1_HP1gKO", "pc1_delta", "compartment_WT",
-                        "compartment_HP1gKO", "compartment_switch", "insulation_delta"),
-                      names(g2$features))
+    want <- intersect(c("bin_id", "insulation_delta"), names(g2$features))
     d <- merge(d, g2$features[, ..want], by = "bin_id", all.x = TRUE, sort = FALSE)
     # features also cover chrX/Y; the left join keeps only the autosomal GAM_1 grid
   } else {
-    message("GAM_4: ", gam2_rds, " not found - skipping the A/B-switch and insulation",
-            " sections (run GAM_2 first: cd GAM && Rscript GAM_2_NPMI_Compartments.R).")
+    message("GAM_4: ", gam2_rds, " not found - skipping the insulation",
+            " section (run GAM_2 first: cd GAM && Rscript GAM_2_NPMI_Features.R).")
   }
   grp_levels <- c("stable", "H4K20me3_only", "co_loss")
   grp_cols   <- setNames(disc_pal(3), grp_levels)
@@ -1015,8 +998,7 @@ local({
                       median_H4K20me3_l2fc = median(h4_l2fc, na.rm = TRUE),
                       frac_tad_boundary = mean(tad_boundary, na.rm = TRUE),
                       mean_repeat_content = mean(rep_cov, na.rm = TRUE)),
-                 if (have_feat) list(median_pc1_delta = median(pc1_delta, na.rm = TRUE),
-                                     median_insulation_delta = median(insulation_delta, na.rm = TRUE))),
+                 if (have_feat) list(median_insulation_delta = median(insulation_delta, na.rm = TRUE))),
              by = grp]
     out[, scheme := sc][]
   }), fill = TRUE)
@@ -1027,7 +1009,7 @@ local({
   # matched_effect().
   vs_matched <- rbindlist(lapply(names(schemes), function(sc) {
     g <- factor(d[[schemes[[sc]]]], levels = grp_levels)
-    mets <- c(metrics, "h4_l2fc", if (have_feat) c("pc1_delta", "insulation_delta"))
+    mets <- c(metrics, "h4_l2fc", if (have_feat) "insulation_delta")
     rbindlist(lapply(grp_levels, function(gp) {
       rbindlist(lapply(mets, function(m) {
         r <- matched_effect(which(g == gp), d[[m]], d$rep_cov)
@@ -1047,23 +1029,6 @@ local({
   d[, top_lost   := n_contacts_lost   >= quantile(n_contacts_lost,   0.9, na.rm = TRUE)]
   d[, top_gained := n_contacts_gained >= quantile(n_contacts_gained, 0.9, na.rm = TRUE)]
   flags <- c("top_lost", "top_gained", "tad_boundary")
-  # A/B crossing on the SHARED axis (GAM_2b), not on compartment_switch. The
-  # latter asks whether WT's own eigenvector called a bin A while the cKO's
-  # called it B, and those are different eigenvectors on 11 of 19 autosomes, so
-  # it is not one quantity. gam_shared_axis_bins() scores both genotypes on one
-  # phased axis per chromosome, where a sign change is a real crossing. Same
-  # definition as GAM_4 and GAM_6 use - see config.R, including why the
-  # genome-wide A->B and B->A totals are equal by construction and so these
-  # flags answer enrichment only. Section 3 below still censuses
-  # compartment_switch, under its own caveat, for the contrast.
-  sa_flags <- gam_shared_axis_bins("flags")
-  if (!is.null(sa_flags)) {
-    d <- merge(d, sa_flags, by = "bin_id", all.x = TRUE, sort = FALSE)
-    d[, `:=`(shared_AB = as.logical(shared_AB), shared_BA = as.logical(shared_BA))]
-    flags <- c(flags, "shared_AB", "shared_BA")
-    message(sprintf("  shared-axis A/B flags joined to %.1f%% of bins",
-                    100 * mean(!is.na(d$shared_AB))))
-  }
   perm_res <- rbindlist(lapply(names(schemes), function(sc) {
     g <- factor(d[[schemes[[sc]]]], levels = grp_levels)
     rbindlist(lapply(grp_levels, function(gp) {
@@ -1078,53 +1043,8 @@ local({
   perm_res[, p_adj_BH := p.adjust(perm_p, "BH"), by = scheme]
 
   # ================================================================
-  # 3. A/B switching: does the mark loss move chromatin between compartments?
+  # 3. (removed 2026-11-20: A/B switching, from compartments called on NPMI)
   # ================================================================
-  switch_tab <- NULL; cor_tab <- NULL
-  if (have_feat) {
-    # Report BOTH counts and the within-group fraction. Counts alone are dominated by
-    # group size (stable >> co_loss); fractions are what answer "does this group switch
-    # more than the others". The genome-wide row is the baseline to compare against.
-    switch_tab <- rbindlist(lapply(names(schemes), function(sc) {
-      x <- copy(d); x[, grp := factor(get(schemes[[sc]]), levels = grp_levels)]
-      x <- x[!is.na(compartment_switch)]
-      one <- function(xx, lab) {
-        ct <- xx[, .N, by = compartment_switch]
-        ct <- merge(data.table(compartment_switch = levels(d$compartment_switch)), ct,
-                    by = "compartment_switch", all.x = TRUE)
-        ct[is.na(N), N := 0L]
-        ct[, `:=`(group = lab, group_total = sum(N), fraction = N / sum(N))][]
-      }
-      out <- rbind(rbindlist(lapply(grp_levels, function(gp) one(x[grp == gp], gp))),
-                   one(x, "all_bins"))
-      out[, scheme := sc][]
-    }))
-    setcolorder(switch_tab, c("scheme", "group", "compartment_switch", "N", "group_total", "fraction"))
-
-    # PC1 shift vs H4K20me3 log2FC, genome-wide, per bin. Spearman: both are
-    # heavy-tailed and we want monotonic association, not linearity. If mark loss
-    # moves chromatin A->B, deeper H4K20me3 loss should go with a more NEGATIVE
-    # pc1_delta (A positive), i.e. a POSITIVE rho.
-    ok <- is.finite(d$pc1_delta) & is.finite(d$h4_l2fc)
-    ct <- suppressWarnings(cor.test(d$pc1_delta[ok], d$h4_l2fc[ok], method = "spearman"))
-    # NO P-VALUE. cor.test treats the bins as independent draws; they are not -
-    # the differential-contact track has autocorrelation r = 0.59 at 20 kb, and
-    # GAM/CLAUDE.md forbids exactly this. The reported p was 8.4e-27 on 117,274
-    # bins for rho = -0.031, which is a statement about n, not about an effect.
-    # The effect size is the number; the chromosome bootstrap elsewhere in this
-    # file is what carries the uncertainty.
-    cor_tab <- data.table(n_bins = sum(ok), spearman_rho = unname(ct$estimate))
-    # also within WT compartment: a genome-wide rho can be carried by A-vs-B baseline
-    # differences in both variables, so stratify
-    if ("compartment_WT" %in% names(d))
-      cor_tab <- rbind(cor_tab, rbindlist(lapply(c("A", "B"), function(cp) {
-        k <- ok & d$compartment_WT %in% cp
-        cc <- suppressWarnings(cor.test(d$pc1_delta[k], d$h4_l2fc[k], method = "spearman"))
-        data.table(n_bins = sum(k), spearman_rho = unname(cc$estimate),
-                   stratum = paste0("WT_", cp))   # no p: see the genome_wide row
-      })), fill = TRUE)
-    cor_tab[is.na(stratum), stratum := "genome_wide"]
-  }
 
   # ================================================================
   # 4. Insulation change per group, and at TAD boundaries
@@ -1168,20 +1088,16 @@ local({
   fwrite(summ,      file.path(tables_dir, "gam4_group_summary.tsv"),        sep = "\t")
   fwrite(vs_matched, file.path(tables_dir, "gam4_group_vs_matched_background.tsv"), sep = "\t")
   fwrite(perm_res,  file.path(tables_dir, "gam4_size_perm_overlap.tsv"),    sep = "\t")
-  if (!is.null(switch_tab)) fwrite(switch_tab, file.path(tables_dir, "gam4_compartment_switch.tsv"), sep = "\t")
-  if (!is.null(cor_tab))    fwrite(cor_tab,    file.path(tables_dir, "gam4_pc1_vs_H4K20me3.tsv"),   sep = "\t")
   if (!is.null(ins_tab))    fwrite(ins_tab,    file.path(tables_dir, "gam4_insulation_by_group.tsv"), sep = "\t")
 
   cat("\n=== GAM_4 per-group summary (", PRIMARY, " = primary; abs = sensitivity) ===\n", sep = "")
   print(summ, row.names = FALSE)
   cat("\n=== size-matched overlap (matched on repeat content) ===\n"); print(perm_res, row.names = FALSE)
-  if (!is.null(switch_tab)) { cat("\n=== A/B switch table ===\n"); print(switch_tab, row.names = FALSE) }
-  if (!is.null(cor_tab))    { cat("\n=== PC1 shift vs H4K20me3 log2FC ===\n"); print(cor_tab, row.names = FALSE) }
 
   # ================================================================
-  # Figures -> figures/compartments_vs_contacts
+  # Figures -> figures/mark_loss_groups
   # ================================================================
-  sub_dir <- "compartments_vs_contacts"
+  sub_dir <- "mark_loss_groups"
   long_c <- rbindlist(lapply(names(schemes), function(sc) {
     x <- d[, .(bin_id, grp = factor(get(schemes[[sc]]), levels = grp_levels),
                lost = n_contacts_lost, gained = n_contacts_gained)]
@@ -1216,46 +1132,6 @@ local({
          x = NULL, y = "log2 fold over matched null") +
     theme_m + theme(axis.text.x = element_text(angle = 30, hjust = 1))
   save_fig(g_perm, "size_perm_overlap", sub_dir, width = 8, height = 6)
-
-  if (!is.null(switch_tab)) {
-    st <- copy(switch_tab)[, `:=`(group = factor(group, levels = c(grp_levels, "all_bins")),
-                                  scheme = factor(scheme, levels = names(schemes)))]
-    g_sw <- ggplot(st, aes(group, fraction, fill = compartment_switch)) +
-      geom_col(width = 0.7) +
-      geom_text(aes(label = ifelse(fraction > 0.04, N, "")),
-                position = position_stack(vjust = 0.5), size = 3) +
-      facet_wrap(~scheme, nrow = 1) +
-      scale_fill_disc(name = "WT -> HP1gKO") +
-      labs(title = "A/B compartment switching per group",
-           subtitle = "bar = fraction of the group's bins; label = bin count (A positive = H3K4me3-high)",
-           x = NULL, y = "fraction of group") +
-      theme_m + theme(axis.text.x = element_text(angle = 30, hjust = 1))
-    save_fig(g_sw, "compartment_switch_fraction", sub_dir, width = 10, height = 4.5)
-
-    dd <- d[is.finite(pc1_delta) & is.finite(h4_l2fc)]
-    g_sc <- ggplot(dd, aes(h4_l2fc, pc1_delta)) +
-      geom_bin2d(bins = 80) + scale_fill_heat0(trans = "log10", name = "bins") +
-      geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
-      geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey55") +
-      labs(title = "PC1 shift vs H4K20me3 change, per bin",
-           subtitle = sprintf("Spearman rho = %.3f (n = %s); a positive rho = deeper loss goes with a shift toward B",
-                              cor_tab$spearman_rho[cor_tab$stratum == "genome_wide"],
-                              format(cor_tab$n_bins[cor_tab$stratum == "genome_wide"], big.mark = ",")),
-           x = "H4K20me3 log2FC (HP1gKO / WT)", y = "PC1 delta (HP1gKO - WT)") +
-      theme_m
-    save_fig(g_sc, "pc1_delta_vs_H4K20me3", sub_dir, width = 7, height = 5.5)
-
-    g_pc <- ggplot(d[!is.na(get(schemes[[PRIMARY]])) & is.finite(pc1_delta)],
-                   aes(factor(get(schemes[[PRIMARY]]), levels = grp_levels), pc1_delta,
-                       fill = factor(get(schemes[[PRIMARY]]), levels = grp_levels))) +
-      geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
-      geom_boxplot(outlier.size = 0.2, outlier.alpha = 0.15, linewidth = 0.3) +
-      scale_fill_manual(values = grp_cols, guide = "none") +
-      labs(title = "PC1 shift per group (median-centred groups)",
-           subtitle = "delta = HP1gKO - WT; positive = toward A", x = NULL, y = "PC1 delta") +
-      theme_m
-    save_fig(g_pc, "pc1_delta_by_group", sub_dir, width = 5.5, height = 4.5)
-  }
 
   if (!is.null(ins_tab)) {
     it <- d[!is.na(get(schemes[[PRIMARY]])) & is.finite(insulation_delta) & !is.na(tad_boundary)]

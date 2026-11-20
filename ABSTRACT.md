@@ -1,7 +1,7 @@
 # Abstract
 
 **HP1γ loss broadly depletes H4K20me3 and increases short-range heterochromatin
-self-association without detectable change in A/B compartmentalisation.**
+self-association.**
 
 *Draft of 2026-10-19. Every number here is quoted from a table in
 `ChIP/results/tables/` or `GAM/results/tables/`, which are the source of truth;
@@ -59,13 +59,10 @@ indistinguishable from background. GAM-derived insulation boundaries are
 CTCF-enriched (1.72×), validating the boundary calls independently of the
 remodelling result.
 
-**Two powered negatives.** Per-bin mark loss does not predict per-bin contact
+**A powered negative.** Per-bin mark loss does not predict per-bin contact
 change (|ρ| ≤ 0.021 for every mark × direction, n ≈ 120,000), although a ~250×
 mismatch between the scale of the mark domains and that of the contact bins
-limits what this can exclude. Compartment strength is unchanged on two axes
-external to both contact matrices (active-chromatin axis mean Δ −0.00018, 95% CI
-−0.00213 to +0.00186, p = 0.62; TSS-density axis p = 0.74) — but see the
-provenance note below before relying on those two numbers.
+limits what this can exclude.
 
 **Conclusion.** HP1γ loss has **two separable architectural consequences**, not
 one, and they act on different chromatin. H3K9me3 domains gain self-association
@@ -80,7 +77,6 @@ ones, while those that *gain* are indistinguishable from background. The large
 one-directional blocks are where this is visible — chr11:2.7–23.3 Mb (LINE
 1.21×, cLAD 1.16×, 74.6% quiescent, 6.6% H3K9me3) and chr16:73.1–87.1 Mb (LINE
 1.29×, SINE 0.43×, cLAD 1.78×, 88.8% quiescent, 3.3% H3K9me3) both lose heavily.
-Neither effect is compartment-scale reorganisation.
 
 An earlier version of this conclusion read "a short-range gain in heterochromatin
 self-association over LAD/LINE-rich quiescent domains", which welded the two
@@ -92,34 +88,14 @@ domains are made of; only H3K9me3, 9% of bins, gains past 0.2 Mb.
 
 ## What this abstract deliberately does not claim
 
-**No per-genotype A/B comparison.** The A/B axis is weakly determined in this
-dataset: against an independent active-chromatin ruler the best eigenvector
-reaches median |ρ| 0.39, and the axis is determined on only **16 of 19**
-autosomes — chr8, chr14 and chr15 have no usable axis at all. Removing per-bin detectability before the decomposition fixed
-*which* eigenvector carries the compartment (PC1 on 0 of 18 → 8 of 16) but did
-not improve agreement with active chromatin (0.42 → 0.39; 8 chromosomes up, 7
-down), so the ceiling is the data rather than a remaining parameter choice.
-Worse, a cKO/WT strength ratio computed along an eigen-derived axis takes the
-value 0.540, 0.786 or 1.207 depending only on whether the axis came from WT, the
-average, or the cKO — the axis choice sets the answer. An earlier claim that
-compartments are less defined in the cKO was retracted for exactly this reason.
-
-**What survives is the negative result**, because the two external-axis tests
-project both genotypes onto ChIP-derived and TSS-derived rulers and use no
-eigenvector at all. Both are null across all 19 autosomes with a tight CI.
-Compartment figures elsewhere in the repo are kept for the structure they show,
-not for a differential claim. Full record: `GAM/results/COMPARTMENTS.md`.
-
-**The compartment-strength null is not currently regenerable, and that is a
-problem.** It was computed on 2026-10-17 and the result was written into prose
-(`GAM/CLAUDE.md`, `GAM/make_report.R`) without being persisted as a stage or a
-table. No file in `results/tables/` contains it, no committed script produces
-it, and `verify_GAM.R` therefore cannot check it — so the single compartment
-claim this abstract does make is the one piece of the analysis that breaks the
-repo's own rule that everything in `results/` regenerates from committed code.
-The numbers are quoted here as they stand in the commit that settled the
-question (`f5096fa`), not re-derived. Until a stage emits them, treat them as
-provisional.
+**No A/B compartments.** Compartments were called by eigendecomposition of the
+NPMI matrices, and that was removed on 2026-11-20. NPMI is already a normalised
+quantity, so its eigenvectors do not recover compartments (the leading one was
+per-bin detectability), and the collaborating lab confirmed it is the wrong
+input. Every compartment result went with it: the per-genotype and shared axes,
+the switch counts, the compartment-strength null, and the retracted claim that
+compartments are less defined in the cKO. This abstract makes no compartment
+claim, positive or negative.
 
 **Open provenance questions** are listed in `GAM/results/METHODS.md`; the one
 that bears on this abstract is Q9, an external TAD annotation showing no CTCF

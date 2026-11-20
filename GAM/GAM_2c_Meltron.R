@@ -40,9 +40,7 @@
 #     That needs a positive quantity. NPMI is already a log-scale quantity
 #     (pointwise mutual information) and goes negative, so log2 of it is
 #     undefined wherever the square mean is at or below zero. We subtract the
-#     chromosome mean at that square size instead. This is the same decision, for
-#     the same reason, that GAM_2 makes for observed-minus-expected and that
-#     CLAUDE.md records as settled point 8 - and it is why a melting score from
+#     chromosome mean at that square size instead - and it is why a melting score from
 #     this pipeline must not be quoted against a published one as though the
 #     underlying scale were the same. The SIGN and the RANKING are comparable;
 #     the magnitude is not.

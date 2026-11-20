@@ -11,7 +11,7 @@ it**; this file deliberately does not duplicate it.
 | Path | Assay | Status |
 |------|-------|--------|
 | `ChIP/` | Multiplexed ChIP-seq (MINUTE), 5 histone marks over called peaks | **Active** — 7 stages, documented in `ChIP/CLAUDE.md` |
-| `GAM/` | Genome Architecture Mapping, 20 kb NPMI | **Active** — 9 numbered stages (`GAM_1`–`GAM_7`, plus `GAM_2b`/`GAM_2c`), `run_GAM.R`, `make_report.R`, `verify_GAM.R`, and utilities; documented in `GAM/CLAUDE.md` |
+| `GAM/` | Genome Architecture Mapping, 20 kb NPMI | **Active** — 9 numbered stages (`GAM_1`–`GAM_8`, plus `GAM_2c`), `run_GAM.R`, `make_report.R`, `verify_GAM.R`, and utilities; documented in `GAM/CLAUDE.md` |
 | `shared/` | Cross-assay helpers (`common.R`: seqname flips, `mm39_bins()`, GAM bin-id parsing; `setup.R`) | **Exists** — sourced by both assays' `config.R` |
 | `scRNAseq/` | Single-cell RNA-seq | Planned — directory does not exist yet |
 
@@ -57,11 +57,11 @@ drawn from the palette. Figures save as both `.png` and `.pdf` via `save_fig()` 
 **Results trees are git-ignored in full and must stay fully regenerable** from the
 committed code plus the externally-hosted raw data. Nothing in `results/` is a
 source of truth except the hand-written `.md` files at its top level, which
-**are** committed. Currently six, and each is named individually in the
+**are** committed. Currently five, and each is named individually in the
 `.gitignore` except-list:
 
 - `ChIP/results/` — `EXECUTIVE_SUMMARY.md`, `METHODS.md`, `COMPARTMENT_CUTOFFS.md`
-- `GAM/results/` — `METHODS.md`, `COMPARTMENTS.md`, `BIN_BALANCING.md`
+- `GAM/results/` — `METHODS.md`, `LARGE_BLOCKS.md`
 
 **Add a new one to that list in the same commit that creates it.**
 `BIN_BALANCING.md` was silently git-ignored for a commit because the GAM

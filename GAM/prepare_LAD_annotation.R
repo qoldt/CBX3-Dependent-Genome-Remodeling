@@ -3,10 +3,9 @@
 # ----------------------------------------------------------------
 #     cd GAM && Rscript prepare_LAD_annotation.R
 #
-# WHY. Our own A/B compartment axis is weakly determined (only 11 of 38
-# chromosome x genotype axes reach |rho| > 0.4), and it is selected against our
-# own ChIP marks, which makes any mark-vs-compartment statement partly circular.
-# A published LAD annotation is external to both genotypes and to all five
+# WHY. A/B compartments are not called from the NPMI matrices (NPMI is
+# normalised and its eigenvectors do not recover them - GAM/CLAUDE.md). A
+# published LAD annotation is external to both genotypes and to all five
 # marks, so it is a cleaner axis for "is this peripheral heterochromatin".
 #
 # SOURCE. Peric-Hupkes et al. 2010, GEO GSE17051 - LaminB1 DamID across mouse

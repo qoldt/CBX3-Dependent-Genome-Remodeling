@@ -67,9 +67,9 @@ merged upstream, so the effective n is 2 vs 2 — matching the ChIP side.
   cKO are **gained**. All downstream columns are named from the KO's point of view.
 - **Integration.** ChIP signal and DESeq2 statistics are projected onto the same
   20 kb autosomal grid, with the ChIP compartments (median-centred labels
-  primary), repeat content, ChromHMM state and TAD boundaries per bin. PC1
-  compartments, insulation and contact decay come from the NPMI matrices, with PC1
-  oriented per chromosome to the H3K4me3-high side.
+  primary), repeat content, ChromHMM state and TAD boundaries per bin.
+  Insulation and contact decay come from the NPMI matrices. A/B compartments are
+  not called: NPMI is normalised and its eigenvectors do not recover them.
 - **Key analytical choices.** The delivered files carry no replicate dimension, so
   no p-value is attached to a contact; GAM-side statistics use size- or
   composition-matched permutation nulls on the bin side. Matrices are processed

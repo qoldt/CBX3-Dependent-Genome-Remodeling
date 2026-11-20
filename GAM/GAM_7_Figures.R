@@ -2866,7 +2866,7 @@ local({
     writeLines(c("## Caveats carried from the pipeline", "",
       "- GAM is 2 biological replicates per genotype, already merged, so there is no within-genotype variance; every claim here is an effect size against a matched or bootstrap null, never a per-contact p-value.",
       "- Per-bin ChIP log2FC at 20 kb is noise-dominated (per-bin sd 0.14-0.16 for the broad marks). Chromosome-level medians are sound; do not read local structure off a single bin.",
-      "- The A/B compartment axis is weakly determined on most chromosomes and is not used here.",
+      "- No A/B compartments: NPMI is normalised, and an eigendecomposition of it does not recover them.",
       ""), con)
     close(con)
     msg("wrote %s", f)

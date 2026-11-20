@@ -7,16 +7,17 @@
 # derepressed. Previously GAM_5, GAM_9 and GAM_14.
 #
 #   A (was GAM_5)   All four clustered families and the young repeats, against
-#                   composition-matched background bins. Protocadherin was the
-#                   only set with a decompaction signature.
+#                   composition-matched background bins. Three sets lose
+#                   short-range contact against it: Protocadherin, IAPEz-int
+#                   and IAPLTR1a_Mm (gam5_decompaction_verdict.tsv).
 #   B (was GAM_9)   Protocadherin at native 20 kb from the contact PAIRS, because
-#                   A tested 29 bins with genome-wide parameters and half its
-#                   verdict leaned on chr18's compartment axis, which is unusable.
+#                   A tested 29 bins with genome-wide parameters.
 #   C (was GAM_14)  The cluster is approximately one TAD, so: how does that TAD
 #                   talk to OTHER TADs? Separation-matched permutation over every
 #                   other chr18 TAD, under two independent TAD partitions.
 #
-# READ A AND C TOGETHER. A found protocadherin uniquely decompacted; C finds the
+# READ A AND C TOGETHER. A found protocadherin losing short-range contact
+# against matched bins; C finds the
 # Pcdh TAD indistinguishable from other chr18 TADs, intra or distal, under both
 # partitions (p 0.67-0.88). Those are compatible - A compared against matched
 # background BINS genome-wide, C against neighbouring TADs on the same
@@ -47,49 +48,22 @@ local({
          "\nRun it first:   cd GAM && Rscript GAM_1_Bins_and_Signal.R", call. = FALSE)
   if (!file.exists(gam2_rds))
     stop("GAM_2 output not found:\n  ", gam2_rds,
-         "\nRun it first:   cd GAM && Rscript GAM_2_NPMI_Compartments.R", call. = FALSE)
+         "\nRun it first:   cd GAM && Rscript GAM_2_NPMI_Features.R", call. = FALSE)
   g1 <- readRDS(gam1_rds); g2 <- readRDS(gam2_rds)
 
   bins <- g1$bins
   d <- copy(as.data.table(g1$annot))
   stopifnot(identical(d$bin_id, mcols(bins)$bin_id) || setequal(d$bin_id, mcols(bins)$bin_id))
   feat <- as.data.table(g2$features)
-  # 3D features: pc1_delta / insulation_delta already exist; short- and long-range NPMI
+  # 3D features: insulation_delta already exists; short- and long-range NPMI
   # deltas are derived here (HP1gKO - WT, canonical labels - never "cKO").
   for (v in c("npmi_short", "npmi_long", "decay_slope"))
     if (all(paste0(v, c("_WT", "_HP1gKO")) %in% names(feat)))
       feat[, (paste0(v, "_delta")) := get(paste0(v, "_HP1gKO")) - get(paste0(v, "_WT"))]
-  keep <- intersect(c("bin_id", "pc1_delta", "insulation_delta", "npmi_short_delta",
+  keep <- intersect(c("bin_id", "insulation_delta", "npmi_short_delta",
                       "npmi_long_delta", "decay_slope_delta",
                       "n_valid_WT", "n_valid_HP1gKO"), names(feat))
   d <- merge(d, feat[, ..keep], by = "bin_id", all.x = TRUE, sort = FALSE)
-  # SHARED-AXIS compartment delta from GAM_2b, if it has been run. pc1_delta is
-  # the difference between each genotype's OWN selected eigenvector, and the two
-  # genotypes select the same eigenvector on only 8 of 19 autosomes, so it
-  # subtracts two different objects (CLAUDE.md settled point 2). shared_delta is
-  # the same quantity measured on one axis common to both. Both are carried so
-  # the contrast is visible; the verdict below uses the shared one.
-  local({
-    f <- file.path(rds_dir, "shared_axis_scores.rds")
-    if (!file.exists(f)) {
-      warning("GAM_2b output not found - the decompaction verdict will fall back to ",
-              "pc1_delta, which is not a sound comparison.\n  Run: Rscript GAM_2b_Shared_Axis.R",
-              call. = FALSE)
-      return(invisible(NULL))
-    }
-    # Scores AND the binary A/B flags. The flags replace switch_AB / switch_BA /
-    # in_A_WT, which came from compartment_switch, i.e. WT's eigenvector compared
-    # with the cKO's - two different directions on 11 of 19 autosomes. On one
-    # shared axis a sign change is a real crossing. See gam_shared_axis_bins()
-    # in config.R for the one caveat: the per-chromosome median-centring pins the
-    # genome-wide A->B and B->A totals equal, so these support an enrichment
-    # question only, never a net-direction claim.
-    sa <- gam_shared_axis_bins(c("scores", "flags"))
-    d <<- merge(d, sa, by = "bin_id", all.x = TRUE, sort = FALSE)
-    ov <- mean(!is.na(d$shared_delta))
-    message(sprintf("  shared-axis delta joined to %.1f%% of bins", 100 * ov))
-    stopifnot(ov > 0.80)
-  })
   setkey(d, NULL)
   d <- d[match(mcols(bins)$bin_id, bin_id)]     # restore GRanges order: row i == bins[i]
   stopifnot(identical(d$bin_id, mcols(bins)$bin_id))
@@ -257,13 +231,9 @@ local({
   d[, net_remodel := gained_log1p - lost_log1p]        # >0 : more contacts gained than lost
   d[, top_lost   := as.numeric(n_contacts_lost   >= quantile(n_contacts_lost,   0.9, na.rm = TRUE))]
   d[, top_gained := as.numeric(n_contacts_gained >= quantile(n_contacts_gained, 0.9, na.rm = TRUE))]
-  # in_A_shared_WT / shared_AB / shared_BA now arrive with the shared-axis join
-  # above. The per-genotype equivalents (compartment_WT == "A",
-  # compartment_switch == "A_B") are deliberately NOT built here any more.
   metric_cols <- intersect(c("lost_log1p", "gained_log1p", "net_remodel", "top_lost", "top_gained",
-                             "pc1_delta", "shared_delta", "npmi_short_delta", "npmi_long_delta",
-                             "decay_slope_delta",
-                             "insulation_delta", "in_A_shared_WT", "shared_AB", "shared_BA"),
+                             "npmi_short_delta", "npmi_long_delta",
+                             "decay_slope_delta", "insulation_delta"),
                            names(d))
   M <- as.matrix(d[, ..metric_cols])
 
@@ -300,12 +270,12 @@ local({
   fwrite(data.table(set = names(target_sets), type = target_type, n_bins = lengths(target_sets)),
          file.path(tables_dir, "gam5_target_sets.tsv"), sep = "\t")
 
-  # size_perm() cross-check for the two binary headline flags. size_perm() matches on ONE
+  # size_perm() cross-check for the binary headline flag. size_perm() matches on ONE
   # numeric covariate (it was written for width), so this matches on repeat content only;
   # it is the coarser of the two nulls and is here to show the stratified result is not
   # an artefact of the stratification. A tiny jitter breaks the ties at 0.
   sp <- rbindlist(lapply(names(target_sets), function(s) {
-    rbindlist(lapply(intersect(c("top_lost", "shared_AB"), names(d)), function(fl) {
+    rbindlist(lapply(intersect("top_lost", names(d)), function(fl) {
       ok <- is.finite(d[[fl]]) & is.finite(d$rep_cov)
       qi <- cumsum(ok)[target_sets[[s]][ok[target_sets[[s]]]]]
       set.seed(42); cj <- d$rep_cov[ok] + runif(sum(ok), 0, 1e-6)
@@ -319,32 +289,19 @@ local({
   # ================================================================
   # 4. Headline: do the derepressed clusters DECOMPACT?
   # ================================================================
-  # Decompaction = short-range contacts LOST (npmi_short_delta below matched) AND
-  # compartment shift toward A, each BH < 0.05. A mixed or null outcome is
-  # reported as such - this is a test, not a label.
+  # Short-range contacts LOST: npmi_short_delta below matched, BH < 0.05. A
+  # mixed or null outcome is reported as such - this is a test, not a label.
   #
-  # THE A-SHIFT IS MEASURED ON THE SHARED AXIS (GAM_2b), not on pc1_delta.
-  # pc1_delta differences each genotype's own selected eigenvector, and they
-  # select the same one on 8 of 19 autosomes, so it is a difference of two
-  # different objects. pc1_delta is kept in the table beside it, labelled, so the
-  # two can be compared - but it no longer decides a verdict. An earlier version
-  # of this table called Protocadherin "DECOMPACTS (short-range loss + toward A)"
-  # with the A-shift resting on pc1_delta alone.
-  axis_metric <- if ("shared_delta" %in% res$metric) "shared_delta" else "pc1_delta"
-  if (axis_metric == "pc1_delta")
-    warning("decompaction verdict is using pc1_delta: run GAM_2b_Shared_Axis.R",
-            call. = FALSE)
-  hl <- dcast(res[metric %in% c("npmi_short_delta", "pc1_delta", "shared_delta",
-                                "net_remodel")],
+  # This used to require a compartment shift toward A as well ("DECOMPACTS =
+  # short-range loss + toward A"). The A/B half was removed on 2026-11-20 with
+  # all compartment calling from NPMI (CLAUDE.md), so the verdict now states only
+  # what the contact data measure: whether the set loses short-range contact.
+  hl <- dcast(res[metric %in% c("npmi_short_delta", "net_remodel")],
               set + type ~ metric, value.var = c("diff", "p_adj_BH"))
-  dcol <- paste0("diff_", axis_metric); pcol <- paste0("p_adj_BH_", axis_metric)
-  if (all(c("diff_npmi_short_delta", dcol) %in% names(hl))) {
-    hl[, axis_used := axis_metric]
+  if ("diff_npmi_short_delta" %in% names(hl)) {
     hl[, loses_short_range := diff_npmi_short_delta < 0 & p_adj_BH_npmi_short_delta < 0.05]
-    hl[, shifts_toward_A   := get(dcol) > 0 & get(pcol) < 0.05]
-    hl[, verdict := fifelse(loses_short_range & shifts_toward_A, "DECOMPACTS (short-range loss + toward A)",
-                    fifelse(loses_short_range, "loses short-range contacts, no A shift",
-                    fifelse(shifts_toward_A, "shifts toward A, no short-range loss", "no decompaction signal")))]
+    hl[, verdict := fifelse(loses_short_range, "loses short-range contacts",
+                            "no short-range loss")]
   }
   # ================================================================
   # 4b. GENOME-WIDE CONTEXT - what the matched-background test does NOT say
@@ -359,17 +316,17 @@ local({
   # So both numbers are produced, and the verdict table is not allowed to be read
   # alone. For each set: its percentile among CONTIGUOUS windows of the same bin
   # count anywhere in the genome, and the share of such windows that beat it on
-  # BOTH verdict criteria at once.
+  # verdict criterion (short-range loss).
   ctx <- local({
-    vmet <- c("npmi_short_delta", axis_metric)
-    if (!all(vmet %in% names(d))) return(NULL)
+    vmet <- "npmi_short_delta"
+    if (!vmet %in% names(d)) return(NULL)
     # WORK ON A COPY, AND NEVER REORDER `d`. target_sets hold ROW INDICES into
     # d's current order (row i == bins[i]), so sorting d in place silently
     # repoints every target set at the wrong bins - and d is still used by the
     # sections below this one. The first version of this block did exactly that
-    # and reported Protocadherin's mean shared_delta as -0.019 when the value
+    # and reported a Protocadherin mean of -0.019 for a quantity whose value
     # over its actual bins is +0.802.
-    ds <- copy(d)[, .(chr, start, m1 = get(vmet[1]), m2 = get(vmet[2]))]
+    ds <- copy(d)[, .(chr, start, m1 = get(vmet))]
     setorder(ds, chr, start)
     # running mean over k consecutive bins, NA-aware, per chromosome
     runmean <- function(x, k) {
@@ -383,45 +340,36 @@ local({
       # against - that is the repeat families, which are scattered genome-wide
       # and are not a locus anyone points at on a region plot anyway.
       if (k < 3L || k > ds[, .N, by = chr][, max(N)]) return(NULL)
-      obs <- vapply(vmet, function(v) mean(d[[v]][idx], na.rm = TRUE), 0)
-      W <- ds[, { if (.N < k) list() else
-                  .(a = runmean(m1, k), b = runmean(m2, k)) }, by = chr]
-      if (!all(c("a", "b") %in% names(W))) return(NULL)
-      W <- W[is.finite(a) & is.finite(b)]
+      obs <- mean(d[[vmet]][idx], na.rm = TRUE)
+      W <- ds[, { if (.N < k) list() else .(a = runmean(m1, k)) }, by = chr]
+      if (!"a" %in% names(W)) return(NULL)
+      W <- W[is.finite(a)]
       if (!nrow(W)) return(NULL)
-      # decompaction = short-range LOSS (lower a) and shift toward A (higher b)
-      # Every column is phrased as "what share of the genome is MORE extreme in
-      # the decompaction direction", so a small number always means exceptional
-      # and there is no sign convention to remember.
+      # Phrased as "what share of the genome LOSES MORE short-range contact",
+      # so a small number always means exceptional.
       data.table(set = nm, n_bins = k, width_kb = k * gam_binsize / 1000,
                  n_windows = nrow(W),
-                 obs_short = obs[[1]],
-                 pct_genome_losing_more = 100 * mean(W$a <= obs[[1]]),
-                 obs_axis  = obs[[2]],
-                 pct_genome_more_A_ward = 100 * mean(W$b >= obs[[2]]),
-                 pct_genome_beating_both =
-                   100 * mean(W$a <= obs[[1]] & W$b >= obs[[2]]))
+                 obs_short = obs,
+                 pct_genome_losing_more = 100 * mean(W$a <= obs))
     }))
   })
   if (!is.null(ctx) && nrow(ctx)) {
     fwrite(ctx, file.path(tables_dir, "gam5_target_genomewide_context.tsv"), sep = "\t")
     cat("\n=== GENOME-WIDE CONTEXT (the matched test above does NOT say 'most') ===\n")
     cat("Share of same-width contiguous windows ANYWHERE in the genome that are more\n",
-        "extreme than this set, in the decompaction direction. Small = exceptional.\n\n", sep = "")
+        "extreme than this set (losing more short-range contact). Small = exceptional.\n\n", sep = "")
     print(ctx[, .(set, width_kb,
-                  losing_more_pct = round(pct_genome_losing_more, 1),
-                  more_A_ward_pct = round(pct_genome_more_A_ward, 1),
-                  beating_both_pct = round(pct_genome_beating_both, 2))],
+                  losing_more_pct = round(pct_genome_losing_more, 1))],
           row.names = FALSE)
     cat("\nA set can clear the matched-background test and still be ordinary here:",
         "the two\nask different questions. Quote both.\n")
   }
 
   fwrite(hl, file.path(tables_dir, "gam5_decompaction_verdict.tsv"), sep = "\t")
-  cat("\n=== HEADLINE: do the derepressed clusters decompact? (vs matched background) ===\n")
+  cat("\n=== HEADLINE: do the derepressed clusters lose short-range contact? (vs matched background) ===\n")
   print(hl, row.names = FALSE)
   cat("\nPer-set effects (obs - matched mean; naive_diff = the confounded all-bin contrast):\n")
-  print(res[metric %in% c("lost_log1p", "gained_log1p", "pc1_delta", "npmi_short_delta"),
+  print(res[metric %in% c("lost_log1p", "gained_log1p", "npmi_short_delta"),
             .(set, metric, n_target_bins, diff = round(diff, 4), z = round(z, 2),
               perm_p, p_adj_BH = round(p_adj_BH, 4), naive_diff = round(naive_diff, 4))],
         row.names = FALSE)
@@ -430,35 +378,24 @@ local({
   # 5. Figures -> figures/hush_contacts
   # ================================================================
   sub_dir <- "hush_contacts"
-  shown <- c(metric_cols[metric_cols %in% c("lost_log1p", "gained_log1p", "net_remodel", "pc1_delta",
-                                            "npmi_short_delta", "npmi_long_delta", "insulation_delta",
-                                            "shared_AB", "shared_BA")])
+  shown <- c(metric_cols[metric_cols %in% c("lost_log1p", "gained_log1p", "net_remodel",
+                                            "npmi_short_delta", "npmi_long_delta", "insulation_delta")])
   # PLAIN-LANGUAGE COLUMN LABELS. The raw metric names said nothing about what was
   # measured or which direction is which, and the heatmap is the figure most likely
   # to be read without the script open. Each label states the quantity and, where
   # the sign is not obvious, what a positive value means. Grouped into facets by
-  # what the column is derived FROM, because the four groups do not have equal
-  # standing - see the compartment caveat in the caption.
+  # what the column is derived FROM.
   lab <- c(
     lost_log1p       = "contacts lost\nlog1p(count)",
     gained_log1p     = "contacts gained\nlog1p(count)",
     net_remodel      = "net remodelling\ngained - lost",
     npmi_short_delta = "short-range NPMI\n+ = more contact",
     npmi_long_delta  = "long-range NPMI\n+ = more contact",
-    insulation_delta = "insulation\n+ = weaker boundary",
-    pc1_delta        = "per-genotype PC1 delta\n(not a sound comparison)",
-    shared_delta     = "shared compartment axis\n+ = toward A",
-    in_A_shared_WT   = "A in WT on the\nshared axis",
-    shared_AB        = "crosses A to B\non the shared axis",
-    shared_BA        = "crosses B to A\non the shared axis")
+    insulation_delta = "insulation\n+ = weaker boundary")
   grp <- c(lost_log1p = "differential contacts", gained_log1p = "differential contacts",
            net_remodel = "differential contacts",
            npmi_short_delta = "contact density (NPMI)", npmi_long_delta = "contact density (NPMI)",
-           insulation_delta = "boundary",
-           pc1_delta = "compartment call (see caveat)", shared_delta = "compartment axis",
-           in_A_shared_WT = "compartment axis",
-           shared_AB = "compartment axis",
-           shared_BA = "compartment axis")
+           insulation_delta = "boundary")
   pd <- res[metric %in% shown]
   nb <- unique(res[, .(set, n_target_bins)])
   pd <- merge(pd, nb, by = c("set", "n_target_bins"))
@@ -466,7 +403,7 @@ local({
             col  = factor(lab[as.character(metric)], levels = lab[shown]),
             grp  = factor(grp[as.character(metric)],
                           levels = c("differential contacts", "contact density (NPMI)",
-                                     "boundary", "compartment call (see caveat)")))]
+                                     "boundary")))]
   pd[, set_lab := sprintf("%s  (%s bins)", set, format(n_target_bins, big.mark = ","))]
   pd[, set_lab := factor(set_lab, levels = unique(set_lab[order(set)]))]
   g_z <- ggplot(pd, aes(col, set_lab, fill = pmax(pmin(z, 6), -6))) +
@@ -495,8 +432,6 @@ local({
                            "than\nmatched background. * = BH-adjusted permutation p < 0.05."),
          caption = paste0(
            "DIRECTION. 'lost' = the contact was stronger in WT (selWT); all deltas are cKO minus WT.\n",
-           "CAVEAT ON THE COMPARTMENT COLUMNS. They derive from the A/B compartment axis, which is weakly determined on most chromosomes ",
-           "(see\nGAM/CLAUDE.md) - read them as provisional. The differential-contact and NPMI columns do not depend on it.\n",
            "Background matching and the permutation scheme are documented in GAM_6_Targets.R; the unmatched contrast is in gam5_target_vs_matched_background.tsv."),
          x = NULL, y = NULL) +
     theme_m + theme(axis.text.x = element_text(size = 7, lineheight = 0.9),
@@ -505,19 +440,6 @@ local({
                     plot.subtitle = element_text(size = 8.5, lineheight = 1.15),
                     panel.grid = element_blank())
   save_fig(g_z, "target_vs_matched_z", sub_dir, width = 12.5, height = 7.5)
-
-  if (all(c("diff_npmi_short_delta", dcol) %in% names(hl))) {
-    g_q <- ggplot(hl, aes(.data[[dcol]], diff_npmi_short_delta, colour = type, label = set)) +
-      geom_hline(yintercept = 0, linewidth = 0.3, colour = "grey55") +
-      geom_vline(xintercept = 0, linewidth = 0.3, colour = "grey55") +
-      geom_point(size = 3) + geom_text(vjust = -0.9, size = 3, show.legend = FALSE) +
-      scale_colour_disc(name = NULL) +
-      labs(title = "Decompaction test: A shift vs short-range contact change",
-           subtitle = "decompaction = bottom-right (PC1 toward A, short-range NPMI down); both axes vs matched background",
-           x = "PC1 delta, target - matched", y = "short-range NPMI delta, target - matched") +
-      theme_m
-    save_fig(g_q, "decompaction_quadrant", sub_dir, width = 7, height = 5)
-  }
 
   # Raw distributions: targets vs one matched draw vs all bins - shows what matching removed.
   set.seed(7)

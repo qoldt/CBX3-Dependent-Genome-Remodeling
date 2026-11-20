@@ -49,8 +49,6 @@ GAM/Hotspots/
 # XML included) are all written by code and must not be committed.
 GAM/results/*
 !GAM/results/METHODS.md
-!GAM/results/BIN_BALANCING.md
-!GAM/results/COMPARTMENTS.md
 !GAM/results/LARGE_BLOCKS.md
 GAM/results_*/
 

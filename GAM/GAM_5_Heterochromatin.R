@@ -983,7 +983,7 @@ if (run_section("C")) local({
       scale_fill_manual(values = c(cLAD = "#53426b", ciLAD = "#cbbddc"), name = NULL) +
       labs(title = "Heterochromatin domains against constitutive LADs",
            # cLAD/ciLAD are external to both genotypes and to all five marks, so
-           # unlike our own PC1 they cannot be circular - that is why they are here.
+           # so they cannot be circular - that is why they are here.
            subtitle = paste0("cLAD/ciLAD (Peric-Hupkes 2010) are the cell-type-invariant core, NOT a neuronal ",
                              "annotation."),
            x = NULL, y = "% of domain bp") +

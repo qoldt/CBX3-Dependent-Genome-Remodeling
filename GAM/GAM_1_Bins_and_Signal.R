@@ -98,7 +98,7 @@ for (mark in mark_levels) {
   count_tables[[mark]] <- m
 }
 
-# --- 3. UN-ROUNDED per-bin signal (plotting / PC1 orientation / saddles) ------
+# --- 3. UN-ROUNDED per-bin signal (plotting) ------------------------------------
 # Same logic as mean_coverage_by_peak() in ChIP/config.R: rounding to integers
 # collapses coverage onto a coarse lattice, so $signal is taken from the raw
 # matrices. Columns follow the sample sheet; one column per sample, all marks.

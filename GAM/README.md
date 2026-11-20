@@ -108,10 +108,8 @@ config.R                          parameters, path builders, loaders (edit this 
 GAM_1_Bins_and_Signal.R           ChIP signal/stats + annotation on the 20 kb grid
   │   writes results/rds/gam_bins_annotated.rds
   ▼
-GAM_2_NPMI_Compartments.R         NPMI -> PC1 compartments, insulation, decay
+GAM_2_NPMI_Features.R             NPMI -> insulation, distance bands, decay
   │   writes results/rds/npmi_bin_features.rds
-  ├─▶ GAM_2b_Shared_Axis.R      one A/B axis, both genotypes scored on it
-  │     writes results/rds/shared_axis_scores.rds  (GAM_6 joins score_delta)
   ├─▶ GAM_2c_Meltron.R          MELTRON melting / condensation
   │     writes results/rds/meltron_{is,scores}.rds
   ├─▶ GAM_3_Coupling.R
@@ -124,8 +122,7 @@ GAM_2_NPMI_Compartments.R         NPMI -> PC1 compartments, insulation, decay
 | Stage | Inputs | Outputs |
 |-------|--------|---------|
 | **GAM_1** `Bins_and_Signal` | ChIP bigWigs (`MINUTE_DATA`), the ChIP annotated `.rds` (`require_chip_rds()`), Hotspots, repeat/TAD/ChromHMM annotation | `rds/gam_bins_annotated.rds`: the 123,133-bin autosomal grid with per-bin ChIP DESeq2 stats and signal, per-bin differential contact counts (`n_contacts_lost`/`n_contacts_gained`), repeat fractions, ChromHMM coverage, TAD boundary, TSS count, and ChIP compartment labels (`compartment_abs`, `compartment_centred`) |
-| **GAM_2** `NPMI_Compartments` | NPMI matrices (both genotypes, autosomes + chrX/chrY), GAM_1 rds | `rds/npmi_bin_features.rds`: per bin and genotype PC1, A/B compartment, insulation, short/long-range NPMI, decay slope, valid-cell count; PC1/insulation deltas and A/B switch class; saddle matrices |
-| **GAM_2b** `Shared_Axis` | NPMI matrices, GAM_1 rds | ONE compartment axis from the averaged correlation matrix, with both genotypes scored on it. Replaces `pc1_delta` for any WT-vs-cKO comparison: the two genotypes select the same eigenvector on only 8 of 19 autosomes. Better determined than either genotype's own axis on 16 of 19. Writes `rds/shared_axis_scores.rds`, `gam2b_*`, and four IGV bedGraphs |
+| **GAM_2** `NPMI_Features` | NPMI matrices (both genotypes, autosomes + chrX/chrY) | `rds/npmi_bin_features.rds`: per bin and genotype insulation, short/long-range NPMI, decay slope, valid-cell count; insulation delta; the genome-wide decay curve. No A/B compartments - see `CLAUDE.md` |
 | **GAM_2c** `Meltron` | NPMI matrices, GAM_1 hotspot tables | the Pombo lab's melting / condensation measure, ported. Insulation-score distributions over 11 square sizes (240-1040 kb) compared between genotypes by Kolmogorov-Smirnov. Reports the KS statistic D as the effect size and an empirical p from size-matched random regions; the published -log10(p) score saturates on this data. Writes `rds/meltron_*.rds`, `gam2c_*`, and the melting bedGraph |
 | **GAM_3** `Coupling` | GAM_1 + GAM_2 rds | does contact remodelling coincide with the mark loss? Three framings in one file: per-bin Spearman (a powered null), a local recount from the pairs that retracts its scale premise, and contact density per ChIP compartment. Writes `coupling_*`, `gam7_*`, `gam4_*` |
 | **GAM_4** `Large_Scale` | GAM_1 + GAM_2 rds | the 10-25 Mb one-directional blocks (41.6% of the genome) and the block x block contact budget. Writes `gam6_*`, `gam8_*` |
@@ -133,9 +130,9 @@ GAM_2_NPMI_Compartments.R         NPMI -> PC1 compartments, insulation, decay
 | **GAM_6** `Targets` | GAM_1 + GAM_2 rds, GAM_4 tables | HUSH/CBX3 target families and repeats against matched background, protocadherin at native resolution, and the Pcdh TAD against every other chr18 TAD under two TAD partitions. Writes `gam5_*`, `gam9_*`, `gam14_*` |
 | **GAM_7** `Figures` | GAM_1 + GAM_2 rds, NPMI, `meltron_is.rds` (slide mode) | region plots (contact map, differential contacts, hotspot calls, CTCF, LADs, five marks, genes) and per-chromosome characterisation. `GAM7_SLIDE=1` adds a 16:9 variant that drops the raw maps and adds the WT / cKO / difference insulation-score strips. Writes `regions/`, `chromosomes/`, `gam15_*` |
 
-GAM_1, GAM_2, GAM_2b, GAM_2c, GAM_5 and GAM_7 are sustained all-core jobs (they
+GAM_1, GAM_2, GAM_2c, GAM_5 and GAM_7 are sustained all-core jobs (they
 re-read the NPMI matrices); GAM_3, GAM_4 and GAM_6 need mainly the `.rds` files
-and can be re-run independently. GAM_2b and GAM_2c take a `GAM2B_CHROMS` /
+and can be re-run independently. GAM_2 and GAM_2c take a `GAM_2_CHROMS` /
 `GAM2C_CHROMS` environment variable to spot-run a few chromosomes, and GAM_2c
 caches its insulation scores (`GAM2C_FORCE=1` to recompute).
 
@@ -146,8 +143,7 @@ them to mm39; `prepare_CTCF_annotation.R` does the same for ENCODE CTCF peaks
 sorted CA1**, see the script header). Both write into `ChIP/data/annotation/`,
 which is git-ignored, so the scripts are the committed artifact rather than the
 BEDs. The two `.rds` schemas are summarised in
-[`CLAUDE.md`](CLAUDE.md). PC1 is oriented per chromosome so that A (positive) is
-the H3K4me3-high side, which is why GAM_2 depends on GAM_1.
+[`CLAUDE.md`](CLAUDE.md).
 
 ---
 

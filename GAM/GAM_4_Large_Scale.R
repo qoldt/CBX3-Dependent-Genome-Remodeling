@@ -47,26 +47,13 @@ local({
   has_g2 <- file.exists(g2)
   if (has_g2) {
     f <- readRDS(g2)$features
-    keep <- intersect(c("bin_id","pc1_WT","pc1_HP1gKO","npmi_short_WT","npmi_short_HP1gKO",
+    keep <- intersect(c("bin_id","npmi_short_WT","npmi_short_HP1gKO",
                         "npmi_long_WT","npmi_long_HP1gKO","n_valid_WT","n_valid_HP1gKO",
                         "insulation_WT","insulation_HP1gKO"), names(f))
     a <- merge(a, f[, ..keep], by = "bin_id", all.x = TRUE)
     setorder(a, chr, start)
   } else message("GAM_2 output absent - skipping the NPMI-based columns")
 
-  # The SHARED A/B axis (GAM_2b), which is what the block characterisation below
-  # compares. It used pc1_WT until 2026-10-19; pc1_WT is WT's own selected
-  # eigenvector, which is a different eigenvector on different chromosomes and
-  # undetermined on 11 of 19, so a median pooled over chromosomes mixed
-  # directions. gam_shared_axis_bins() is one axis per chromosome, phased once
-  # against active chromatin, and is the same object GAM_3 and GAM_6 use.
-  sa <- gam_shared_axis_bins("scores")
-  if (!is.null(sa)) {
-    a <- merge(a, sa, by = "bin_id", all.x = TRUE)
-    setorder(a, chr, start)
-    message(sprintf("  shared A/B axis joined to %.1f%% of bins",
-                    100 * mean(!is.na(a$shared_WT))))
-  }
 
   # --- the signed direction statistic ------------------------------------------
   # KO-ORIENTED, like every other signed quantity in this repo: positive = MORE
@@ -134,27 +121,8 @@ local({
   bi <- a[!is.na(dirn)][run %in% blk$run]
   a[run %in% blk$run, block := dirn]
   #
-  # READ shared_delta IN THIS TABLE WITH CARE - it is partly circular, and
-  # shared_WT is not.
-  #
-  # The shared-axis score is s_g = C_g %*% a, so a region's score magnitude
-  # moves with how much contact it has. The blocks here are DEFINED by net
-  # contact direction, which means a lost block's |score| mechanically shrinks
-  # toward 0 - and since lost blocks are B-like in WT (shared_WT -0.206,
-  # i.e. negative), shrinking toward 0 reads as "toward A". The observed
-  # shared_delta (+0.072 lost, -0.080 gained) is exactly what that artefact
-  # predicts, so it is NOT independent evidence of a compartment shift.
-  #
-  # shared_WT is the WT level on one fixed axis and carries no KO-vs-WT contact
-  # change, so it is clean: lost blocks really are the more B-like half of the
-  # genome in WT, which is the same statement the LAD / LINE / quiescent
-  # enrichment of lost hotspot domains makes independently.
-  #
-  # The contrast worth knowing: GAM_6's KRAB-ZFP shift is toward B while that
-  # set GAINS contact relative to matched bins, so there the mechanical
-  # direction is the OPPOSITE of the observed one and cannot explain it.
   cmp_cols <- c(paste0("l2fc_", marks_here), "frac_LINE", "frac_SINE", "frac_LTR",
-                intersect(c("shared_WT","shared_delta","npmi_short_WT","npmi_long_WT",
+                intersect(c("npmi_short_WT","npmi_long_WT",
                             "insulation_WT"), names(a)))
   cmp <- rbindlist(lapply(cmp_cols, function(v) {
     L <- a[block == "lost",   get(v)]; G <- a[block == "gained", get(v)]

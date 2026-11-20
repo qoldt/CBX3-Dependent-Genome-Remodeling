@@ -12,8 +12,8 @@
 #   1 chip_H4K20me3_log2FC.bedgraph  the ChIP effect   (the mark that moves)
 #   2 gam_contacts_lost.bedgraph     the GAM effect    (differential contacts)
 #   3 gam_hotspot_domains.bed        called domains    (the adjusted variant)
-#   4 gam_pc1_WT.bedgraph            architecture      (compartment axis, WT)
-#   5 chip_compartments.bed          the ChIP groups   (colour-coded)
+#   4 gam_melting_score.bedgraph     MELTRON           (from GAM_2c)
+#   5 chip_compartments.bed          the ChIP mark-loss groups (NOT A/B)
 #
 # Everything is mm39 with UCSC seqnames, which is what IGV expects. bedGraph
 # coordinates are 0-based half-open, matching $annot$start/$end as stored, so no
@@ -82,20 +82,9 @@ if (file.exists(dom_f)) {
             'visibility=dense color=200,90,40 useScore=1'))
 } else message("  (no hotspot domain table - run GAM_1)")
 
-# --- 4. Architecture: the SHARED A/B axis ------------------------------------
-# GAM_2b writes gam_shared_axis.bedgraph and the two per-genotype scores
-# directly, so nothing is rebuilt here - this only reports whether they exist.
-#
-# The per-genotype PC1 track that used to live here has been RETIRED from the
-# session. It showed one genotype's own selected eigenvector, and the two
-# genotypes select the same eigenvector on only 8 of 19 autosomes, so putting
-# WT's axis on screen invited a WT-vs-cKO comparison that is not defined. The
-# shared axis is one ruler both genotypes are scored against, and it is better
-# determined on 16 of 19 autosomes. gam_pc1_WT.bedgraph is still written by
-# GAM_2's own outputs if you want it; it is simply not in the session.
-sa <- file.path(igv_dir, "gam_shared_axis.bedgraph")
-message(if (file.exists(sa)) "  gam_shared_axis.bedgraph  (from GAM_2b)"
-        else "  (no shared axis - run GAM_2b_Shared_Axis.R)")
+# --- 4. MELTRON melting track (written by GAM_2c) -----------------------------
+# No A/B compartment track: compartment calling from NPMI was removed on
+# 2026-11-20 (CLAUDE.md "A/B compartments are not called").
 ms <- file.path(igv_dir, "gam_melting_score.bedgraph")
 message(if (file.exists(ms)) "  gam_melting_score.bedgraph  (from GAM_2c)"
         else "  (no melting track - run GAM_2c_Meltron.R)")
@@ -132,7 +121,6 @@ if (file.exists(blk_src)) {
 # Relative paths, so the folder can be moved or sent as a unit.
 files <- c("gam_large_blocks.bed", "chip_H4K20me3_log2FC.bedgraph",
            "gam_contacts_lost.bedgraph", "gam_hotspot_domains.bed",
-           "gam_shared_axis.bedgraph", "gam_shared_score_delta.bedgraph",
            "gam_melting_score.bedgraph", "chip_compartments.bed")
 files <- files[file.exists(file.path(igv_dir, files))]
 writeLines(c(
@@ -154,22 +142,16 @@ writeLines(c(
   "| H4K20me3 log2FC | the ChIP effect, per 20 kb bin, KO vs WT |",
   "| GAM contacts lost | differential contacts stronger in WT (lost in the KO) |",
   "| Hotspot domains | called remodelled domains, adjusted variant |",
-  "| GAM shared A/B axis | one compartment axis both genotypes are scored on |",
-  "| GAM A/B score delta | cKO minus WT on that axis; shape only |",
   "| MELTRON signed KS D | + = contact density lost (melting), - = condensing |",
-  "| ChIP compartments | stable / H4K20me3_only / co_loss |",
+  "| ChIP compartments | mark-loss groups stable / H4K20me3_only / co_loss (not A/B) |",
   "| GAM large blocks | 10-25 Mb one-directional territory (red lost, blue gained) |",
   "",
   "Default locus is the whole of chr11, which shows the dominant feature most",
   "clearly: contacts are lost across essentially all of 0-25 Mb and gained",
   "across 55-110 Mb. That large-block structure covers 41.6% of the genome.",
   "",
-  "The compartment track is the SHARED axis from GAM_2b, not a per-genotype PC1.",
-  "Each genotype selects its own eigenvector, and they pick the same one on only",
-  "8 of 19 autosomes, so a WT-PC1-vs-cKO-PC1 comparison is not defined. The",
-  "shared axis is better determined than either genotype's own on 16 of 19",
-  "autosomes, but it still only reaches |rho| > 0.4 against active chromatin on",
-  "10 of 19 - read it as weak evidence, and see `../../CLAUDE.md` first.",
+  "There is no A/B compartment track: NPMI is a normalised quantity and an",
+  "eigendecomposition of it does not recover compartments.",
   "",
   "The melting track is the signed Kolmogorov-Smirnov statistic D, NOT the",
   "published -log10(p) melting score. On this data that score saturates and",

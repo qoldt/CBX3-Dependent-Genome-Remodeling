@@ -37,8 +37,10 @@ pipeline, `../ChIP/`) are projected onto the 20 kb autosomal GAM grid. Seqnames
 are flipped between NCBI (ChIP peaks) and UCSC (GAM) with `to_ucsc()`/`to_ncbi()`.
 Differential contact direction is expressed from the KO's point of view (`selWT`
 = lost, `selcKO` = gained). Chromatin compartments from ChIP use the MINUTE_3
-cutoffs, with the median-centred variant as primary. PC1 compartments from NPMI
-are oriented per chromosome so that A is the H3K4me3-high side.
+cutoffs, with the median-centred variant as primary ("compartment" there means
+the ChIP mark-loss group, not A/B). A/B compartments are NOT called: NPMI is a
+normalised quantity and its eigenvectors do not recover them; compartment calling
+was removed on 2026-11-20 after the collaborating lab confirmed this.
 
 No GAM results have been generated at the time of writing.
 
