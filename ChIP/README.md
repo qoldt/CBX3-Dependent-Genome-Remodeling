@@ -300,8 +300,10 @@ are always identical.
 Per mark, `MINUTE_1`:
 
 1. **Regions** — the consensus/master peak BED for that mark (from `Peak
-   Calling/`). H3K9me3 and H4K20me3 share one **2 kb-merged** peak set
-   (`2000bp_merge_H3K9me3_H4K20me3.bed`).
+   Calling/`). H3K9me2, H3K9me3 and H4K20me3 share one **2 kb-merged** peak set
+   (`2000bp_merge_H3K9me3_H4K20me3.bed`). H3K9me2 moved onto it on 2026-11-20:
+   MACS3 models H3K9me2 poorly, and its former set
+   (`merged_H3K9me2_masterPeak.bed`) has no committed recipe.
 2. **Quantify** — `wigglescout::bw_loci()` reads each of the 11 scaled bigWigs
    (6 WT + 5 HP1gKO) over every peak, giving a peaks × samples matrix. `bw_loci`
    returns the **mean coverage** per interval (i.e. length-normalized), which is

@@ -168,3 +168,9 @@ bigWigs + annotation are hosted on Google Drive and download into repo-relative
 
 - Upstream helpers (`MergePeaks_to_masterPeak.R`) — produce/precompute inputs,
   not run by `run_MINUTE.R`.
+- `export_pooled_bigwigs.R` — mean of the analysed libraries per mark x genotype,
+  50 bp bins, into `results/igv/pooled/` for the GAM IGV session. Nothing reads it.
+- **Peak-file provenance is mostly unrecorded** - only the unused
+  `master_peaks_consensus/` sets have a recipe. Read the "Peak / region sets"
+  section of `results/METHODS.md` before quoting a peak-level number. H3K9me2 is
+  quantified over the shared H3K9me3/H4K20me3 regions since 2026-11-20.

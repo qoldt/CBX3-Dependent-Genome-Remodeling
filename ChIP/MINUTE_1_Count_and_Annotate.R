@@ -37,7 +37,11 @@ for (mark in marks) {
   if (file.exists(cached)) {
     cdt <- data.table::fread(cached)
     have <- names(cdt)[-1]
-    if (all(names(bigwigs) %in% have) && nrow(cdt) == length(peaks)) {
+    # Compare the peak IDS, not just the count: a different peak file with the
+    # same number of regions would otherwise reuse counts from the old one.
+    want_ids <- paste0(seqnames(peaks), ":", start(peaks), "-", end(peaks))
+    if (all(names(bigwigs) %in% have) && nrow(cdt) == length(peaks) &&
+        identical(as.character(cdt[[1]]), want_ids)) {
       cat(" - Reusing cached counts:", cached,
           sprintf("(%d of %d samples)\n", length(bigwigs), length(have)))
       cdf <- as.data.frame(cdt[, names(bigwigs), with = FALSE])

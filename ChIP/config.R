@@ -153,7 +153,12 @@ marks <- unique(as.character(samples$mark))   # preserves sample-sheet order
 # --- Associated peak files per mark (under data/peaks) ---
 regions <- list(
   "H3K4me3"  = file.path(peaks_dir, "master_peaks_consensus/H3K4me3_consensus_masterPeak.bed"),
-  "H3K9me2"  = file.path(peaks_dir, "merged_H3K9me2_masterPeak.bed"),
+  # H3K9me2 is quantified over the shared H3K9me3/H4K20me3 regions, not its own
+  # peaks (changed 2026-11-20). MACS3 models H3K9me2 poorly - no per-replicate
+  # call set looks right over the signal - and merged_H3K9me2_masterPeak.bed
+  # (38,787 narrow regions, median 323 bp, 17 Mb) has no committed recipe and
+  # does not derive from any call set on disk. See results/METHODS.md.
+  "H3K9me2"  = file.path(peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed"),
   "H3K9me3"  = file.path(peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed"),
   "H4K20me3" = file.path(peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed"),
   "H3K36me3" = file.path(peaks_dir, "merged_H3K36me3_masterPeak.bed")

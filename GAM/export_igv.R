@@ -3,7 +3,7 @@
 # ----------------------------------------------------------------
 #   cd GAM && Rscript export_igv.R
 #
-# Writes results/igv/ : five tracks plus a session file that loads them in a
+# Writes results/igv/ : the GAM tracks, pooled ChIP signal and peak sets, plus a session file that loads them in a
 # sensible order. Deliberately minimal - one representative of each KIND of
 # data, not every mark, genotype, direction and variant. The point is a view
 # you can open and read, not a complete dump; the rest is in the .rds and the
@@ -117,12 +117,62 @@ if (file.exists(blk_src)) {
   message("  gam_large_blocks.bed  (copied from GAM_6)")
 } else message("  (no large-block bed - run GAM_4_Large_Scale.R)")
 
+# --- 7. ChIP: pooled signal per mark x genotype, and the peak sets ------------
+# The pooled bigWigs are written by ../ChIP/export_pooled_bigwigs.R (mean of the
+# analysed libraries, 50 bp bins) and are referenced in place rather than
+# copied: they are ~0.15-0.4 GB each. The session uses a relative path, so the
+# repo layout must stay as it is for IGV to find them.
+#
+# Peak sets are copied with UCSC seqnames, because the ChIP BEDs are NCBI ("1")
+# and the rest of the session is UCSC. Two kinds, named so they cannot be
+# confused: `regions_*` are the region sets the ChIP analysis QUANTIFIES (from
+# ChIP/config.R $regions - H3K9me2, H3K9me3 and H4K20me3 all share the 2 kb
+# merge since 2026-11-20); `consensus_*` are MergePeaks_to_masterPeak.R's
+# >=2-replicate MACS3 sets, shown for reference and not used by the analysis.
+chip_marks <- c("H3K4me3", "H3K9me2", "H3K9me3", "H4K20me3", "H3K36me3")
+pooled_rel <- file.path("..", "..", "..", "ChIP", "results", "igv", "pooled")
+pooled <- unlist(lapply(chip_marks, function(mk)
+  file.path(pooled_rel, sprintf("%s_%s_pooled.bw", mk, c("WT", "HP1gKO")))))
+names(pooled) <- unlist(lapply(chip_marks, function(mk) paste(mk, c("WT", "HP1gKO"))))
+pooled <- pooled[file.exists(file.path(igv_dir, pooled))]
+message(sprintf("  %d pooled ChIP bigWigs referenced%s", length(pooled),
+                if (!length(pooled)) " (none - run ../ChIP/export_pooled_bigwigs.R)" else ""))
+
+peak_dir <- file.path(igv_dir, "peaks")
+dir.create(peak_dir, showWarnings = FALSE)
+peak_sets <- c(
+  regions_H3K9me2_H3K9me3_H4K20me3 = file.path(chip_peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed"),
+  regions_H3K4me3  = file.path(chip_peaks_dir, "master_peaks_consensus/H3K4me3_consensus_masterPeak.bed"),
+  regions_H3K36me3 = file.path(chip_peaks_dir, "merged_H3K36me3_masterPeak.bed"),
+  consensus_H3K9me2  = file.path(chip_peaks_dir, "master_peaks_consensus/H3K9me2_consensus_masterPeak.bed"),
+  consensus_H3K9me3  = file.path(chip_peaks_dir, "master_peaks_consensus/H3K9me3_consensus_masterPeak.bed"),
+  consensus_H4K20me3 = file.path(chip_peaks_dir, "master_peaks_consensus/H4K20me3_consensus_masterPeak.bed"),
+  consensus_H3K36me3 = file.path(chip_peaks_dir, "master_peaks_consensus/H3K36me3_consensus_masterPeak.bed"),
+  # the H3K9me2 set used until 2026-11-20 - no committed recipe; kept so the
+  # change can be looked at
+  retired_H3K9me2_merged = file.path(chip_peaks_dir, "merged_H3K9me2_masterPeak.bed"))
+peak_files <- character()
+for (nm in names(peak_sets)) {
+  f <- peak_sets[[nm]]
+  if (!file.exists(f)) { message("  (missing peak set: ", f, ")"); next }
+  pk <- fread(f, header = FALSE, select = 1:3)
+  pk[, V1 := ifelse(grepl("^chr", V1), V1, paste0("chr", V1))]
+  pk[V1 == "chrMT", V1 := "chrM"]
+  out <- file.path("peaks", paste0(nm, ".bed"))
+  wr(pk, out, sprintf('track name="%s" description="%s" visibility=dense', nm,
+                      if (startsWith(nm, "regions_")) "quantified by the ChIP analysis"
+                      else if (startsWith(nm, "consensus_")) "MACS3 >=2-replicate consensus, reference only"
+                      else "former H3K9me2 regions, not used since 2026-11-20"))
+  peak_files <- c(peak_files, out)
+}
+
 # --- session file ------------------------------------------------------------
 # Relative paths, so the folder can be moved or sent as a unit.
 files <- c("gam_large_blocks.bed", "chip_H4K20me3_log2FC.bedgraph",
            "gam_contacts_lost.bedgraph", "gam_hotspot_domains.bed",
            "gam_melting_score.bedgraph", "chip_compartments.bed")
 files <- files[file.exists(file.path(igv_dir, files))]
+files <- c(files, unname(pooled), peak_files)
 writeLines(c(
   '<?xml version="1.0" encoding="UTF-8" standalone="no"?>',
   '<Session genome="mm39" locus="chr11:1-110000000" version="8">',
@@ -145,6 +195,10 @@ writeLines(c(
   "| MELTRON signed KS D | + = contact density lost (melting), - = condensing |",
   "| ChIP compartments | mark-loss groups stable / H4K20me3_only / co_loss (not A/B) |",
   "| GAM large blocks | 10-25 Mb one-directional territory (red lost, blue gained) |",
+  "| `<mark>_<genotype>_pooled.bw` | mean ChIP signal of the analysed libraries, 50 bp bins (from `ChIP/export_pooled_bigwigs.R`, referenced in place) |",
+  "| `peaks/regions_*` | the region sets the ChIP analysis quantifies; H3K9me2/H3K9me3/H4K20me3 share one |",
+  "| `peaks/consensus_*` | MACS3 >=2-replicate consensus peaks, reference only |",
+  "| `peaks/retired_H3K9me2_merged` | the H3K9me2 regions used until 2026-11-20 |",
   "",
   "Default locus is the whole of chr11, which shows the dominant feature most",
   "clearly: contacts are lost across essentially all of 0-25 Mb and gained",

@@ -38,7 +38,11 @@ combined_sig <- do.call(rbind, lapply(names(annotated_results), function(mark) {
 # Keep only significant peaks (thresholds defined in config.R)
 combined_sig <- combined_sig[is_significant(combined_sig), ]
 
-combined_sig <- combined_sig[unique(combined_sig$peak_id),]
+# One row per peak, first occurrence. NOT combined_sig[unique(peak_id), ]: that
+# indexes by ROW NAME, and once two marks share a peak set (H3K9me2 moved onto
+# the H3K9me3/H4K20me3 regions on 2026-11-20) rbind() gives the repeats suffixed
+# row names, so the lookup returns NA rows and IRanges() below fails.
+combined_sig <- combined_sig[!duplicated(combined_sig$peak_id), ]
 
 # Build GRanges
 sig_gr <- GRanges(
