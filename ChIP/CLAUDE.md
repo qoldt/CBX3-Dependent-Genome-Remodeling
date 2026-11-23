@@ -24,9 +24,12 @@ family-exon signal persisted by **stage 5**.
 
 ```
 setup.R                                 # dependency manifest + installer (single source of truth
-  │                                     # for packages); config.R calls it, so a fresh clone
+  │                                     # for packages); utils.R calls it, so a fresh clone
   │                                     # self-installs on the first run
-config.R + samples.tsv                  # parameters + sample sheet (single sources of truth)
+config.R + samples.tsv                  # values + sample sheet (single sources of truth)
+utils.R                                 # libraries, sample loading, loaders, helpers;
+  │                                     # sourced on config.R's last line
+PARAMETERS.md                           # why each non-obvious value was chosen
   │
 MINUTE_1_Count_and_Annotate.R           # bigWig signal -> counts -> DESeq2 -> annotate
   │  writes: results/rds/annotated_results_..._2000bp_merged.rds  (handoff)
@@ -63,27 +66,41 @@ because gene bodies and promoters are not in the peak-based counts.
 ## Where parameters live — edit `config.R` / `samples.tsv` only
 
 `config.R` is sourced by every stage and by `run_MINUTE.R`. It is the **single
-source of truth** for parameters; stage scripts must not redefine them. It holds:
+source of truth** for values; stage scripts must not redefine them. Since
+2026-11-23 it holds **values only** (split verified: every object identical
+before and after, apart from four leaked loop temporaries):
 
 - Roots: `MINUTE_DATA` env var → `bigwig_dir` / `annot_dir`; repo-relative
-  `peaks_dir`, `results_dir` (+ `counts_dir`/`rds_dir`/`tables_dir`/`fig_dir`/`bed_dir`)
-- Loads **`samples.tsv`** into `samples` (sample_id, mark, genotype, replicate,
-  bigwig) and derives `marks` + `get_bigwig_files(mark)`
-- `regions` — mark → input peak BED
-- `loadRepeatBED()` / `load_annotation()` — repeat + TAD annotation
-- **`sig_thresholds` + `is_significant()`** — the significance definition
-  (`|log2FC| > lfc & pvalue < p`, per mark), shared by every stage that needs a
-  "significant" set, so those sets are guaranteed identical.
-- Shared plotting constants + helpers: `geno_colors`, `repeat_palette`,
-  `theme_m`, `mark_levels`, and `hyper_row()` (one hypergeometric enrichment
-  row) — used across stages.
+  `peaks_dir`, `samples_tsv`, `results_dir` (+ `counts_dir`/`rds_dir`/`tables_dir`/
+  `fig_dir`/`bed_dir`), the `annotated_rds` handoff
+- `exclude_samples` (from `MINUTE_EXCLUDE`)
+- `regions` — mark → input peak BED; annotation BED paths
+- **`sig_thresholds`** — the significance definition (`|log2FC| > lfc & pvalue < p`,
+  per mark)
+- `gene_families` + `family_exon_rule`
+
+`utils.R` (sourced on `config.R`'s last line, so stages still only
+`source("config.R")`) holds the code: library loading, the output-folder
+creation, building `samples` + `marks` from `samples.tsv` minus the exclusions,
+`get_bigwig_files()`, **`is_significant()`** (shared by every stage that needs a
+"significant" set, so those sets are guaranteed identical), the ChromHMM
+helpers, `mean_coverage_by_peak()`, `loadRepeatBED()` / `load_annotation()` and
+`family_exons()`. The reasoning behind non-obvious values is in
+`PARAMETERS.md`. **Keep that split:** a new value goes in `config.R` with at most
+a two-line comment, a new function in `utils.R`, a long rationale in
+`PARAMETERS.md`.
+
+`../shared/common.R` (sourced by `utils.R`) holds what both assays share:
+`geno_colors`, `repeat_palette`, `theme_m`, `mark_levels`, `hyper_row()`,
+`save_fig()` / `save_base_fig()`, and:
+
 - `ht_raster_device` — device ComplexHeatmap uses to rasterise heatmap bodies
   over 2000 rows. Pass it to every `Heatmap()`. Its own default forces
   `type = "cairo"` when `capabilities("cairo")` is TRUE, which on macOS without
   XQuartz is TRUE while cairo cannot load — the temp image is never written and
   the read-back fails. `ragg`'s `agg_png` needs no cairo/X11.
 - **Colour palettes** — all figure colours come from the [`ltc`](https://github.com/loukesio/ltc-color-palettes)
-  package (`install.packages("ltc")`), and are defined in `config.R` only:
+  package (`install.packages("ltc")`), and are defined in `shared/common.R` only:
   - **discrete / categorical → `gaby`** (5 colours). Use `scale_fill_gaby()` /
     `scale_colour_gaby()`, or index `gaby_cols` for a named vector. `gaby_pal(n)`
     interpolates past 5 (only the chromosome strip in MINUTE_2 needs that).

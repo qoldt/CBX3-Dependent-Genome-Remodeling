@@ -99,7 +99,7 @@ for (mark in mark_levels) {
 }
 
 # --- 3. UN-ROUNDED per-bin signal (plotting) ------------------------------------
-# Same logic as mean_coverage_by_peak() in ChIP/config.R: rounding to integers
+# Same logic as mean_coverage_by_peak() in ChIP/utils.R: rounding to integers
 # collapses coverage onto a coarse lattice, so $signal is taken from the raw
 # matrices. Columns follow the sample sheet; one column per sample, all marks.
 signal <- do.call(cbind, unname(count_tables))
@@ -193,7 +193,7 @@ colnames(frac_rep) <- paste0("frac_", colnames(frac_rep))
 
 # ChromHMM: merge overlapping segments within a state first (the file has a few
 # overlapping same-state segments that would otherwise double-count), as
-# ChIP/config.R load_chromHMM(); then coverage fraction per state per bin.
+# ChIP/utils.R load_chromHMM(); then coverage fraction per state per bin.
 hmm <- import(file.path(annot_dir, "ChromHMM_18state_CortexP0_mm39.bed"), format = "bed")
 hmm$state <- as.character(hmm$name)
 suppressWarnings(seqlevelsStyle(hmm) <- "UCSC")

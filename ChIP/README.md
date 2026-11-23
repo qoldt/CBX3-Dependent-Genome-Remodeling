@@ -40,7 +40,9 @@ and run the R pipeline below.
 ## Overview
 
 ```
-config.R                         ← all parameters + the sample sheet load (edit this only)
+config.R                         ← input files, output tree, parameters (edit this only)
+utils.R                          ← libraries, sample loading, loaders, helpers (sourced by config.R)
+PARAMETERS.md                    ← why each non-obvious parameter value was chosen
 samples.tsv                      ← one row per bigWig: sample_id, mark, genotype, replicate
   │
   ▼
@@ -82,7 +84,7 @@ persists (and self-consumes) `cluster_analysis_inputs.rds` for the cluster
 characterisation. Stage 6 reads the family-exon signal persisted by **stage 5** and
 external KAP1 BEDs (see *Annotation* below); it self-skips if those BEDs are absent.
 Shared constants/helpers (`geno_colors`, `theme_m`, `mark_levels`, `hyper_row()`) live
-in `config.R`.
+in `../shared/common.R`; ChIP-specific helpers in `utils.R`.
 
 ---
 
@@ -90,7 +92,8 @@ in `config.R`.
 
 ```
 ChIP/
-  config.R  run_MINUTE.R  MINUTE_1..6.R      # code
+  config.R  utils.R  run_MINUTE.R  MINUTE_1..7.R   # code (config.R = values only)
+  PARAMETERS.md                               # why each parameter value was chosen
   samples.tsv                                 # sample sheet (single source of truth)
   data/
     peaks/             # consensus/master peak BEDs             (committed)
@@ -112,7 +115,7 @@ elsewhere (e.g. an external mount).
 ## Requirements
 
 R (≥ 4.2). **Packages install themselves on the first run** — `config.R` sources
-`setup.R`, which holds the dependency manifest and installs anything missing
+`utils.R`, which sources `setup.R`, which holds the dependency manifest and installs anything missing
 (creating a user library first if there isn't a writable one, the usual snag on a
 fresh macOS R install). So on a clean machine this is the whole setup:
 
@@ -130,7 +133,7 @@ Set `MINUTE_AUTO_INSTALL=0` to disable the auto-install; missing packages then
 raise an error listing them instead of installing silently.
 
 The manifest lives in `setup.R` (`minute_deps`) and is the single source of truth
-— add a package there whenever you add a `library()` to `config.R`:
+— add a package there whenever you add a `library()` to `utils.R`:
 
 **CRAN:** `data.table`, `dplyr`, `ggplot2`, `ggrepel`, `circlize`, `ltc`, `ragg`
 
@@ -165,7 +168,7 @@ Confirmed working on R 4.6.1 / Bioconductor 3.23 / `wigglescout` 0.21.2
 > a temp image and reads it back — and forces `type = "cairo"` whenever
 > `capabilities("cairo")` is TRUE. On a CRAN macOS build that flag is TRUE while
 > `cairo.so` cannot actually load (it links to `/opt/X11/lib`, i.e. XQuartz), so
-> the write fails with only a warning and the read-back dies. `config.R` picks
+> the write fails with only a warning and the read-back dies. `shared/common.R` picks
 > `ragg`'s `agg_png` instead (`ht_raster_device`), which needs no cairo or X11.
 > Installing XQuartz also fixes it, but is not required.
 
@@ -262,7 +265,7 @@ Rscript MINUTE_2_Global_Changes.R
 
 ## Configuration
 
-**All parameters live in `config.R`; all samples live in `samples.tsv`.** Between
+**All parameters live in `config.R`; all samples live in `samples.tsv`** (functions in `utils.R`, rationale in `PARAMETERS.md`). Between
 them they define:
 
 - Roots/paths (`$MINUTE_DATA`, `data/peaks`, `results/…`, the handoff `.rds`)
@@ -484,7 +487,7 @@ figures/
 
 The table below lists figures by base name; each exists as `<subfolder>/<name>.{png,pdf}`.
 The helpers `save_fig()` (ggplot) and `save_base_fig()` (ComplexHeatmap) in
-`config.R` write both formats.
+`../shared/common.R` write both formats.
 
 | File | Produced by | Contents |
 |------|-------------|----------|

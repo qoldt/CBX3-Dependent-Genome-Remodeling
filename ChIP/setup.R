@@ -5,7 +5,7 @@
 # they live in shared/setup.R. This shim keeps the documented entry points
 # working unchanged from the ChIP/ directory:
 #     Rscript setup.R        install/repair dependencies
-#     source("setup.R")      definitions only (what config.R does)
+#     source("setup.R")      definitions only (what utils.R does)
 # ================================================================
 source("../shared/setup.R")
 

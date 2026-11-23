@@ -178,7 +178,7 @@ for (chip in names(deseq_results)) {
 
 ### LOAD ANNOTATIONS
 
-# --- Load Repeat + TAD annotation (shared loader from config.R) ---
+# --- Load Repeat + TAD annotation (shared loader from utils.R) ---
 ann     <- load_annotation()
 line_gr <- ann$line
 sine_gr <- ann$sine

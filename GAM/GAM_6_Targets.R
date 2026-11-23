@@ -71,8 +71,8 @@ local({
   # ================================================================
   # 1. Gene-family bins
   # ================================================================
-  # The four families are defined in ChIP/config.R (gene_families, family_exon_rule,
-  # family_exons()). We CANNOT source ChIP/config.R: it redefines results_dir/fig_dir/
+  # The four families are defined in ChIP/config.R (gene_families, family_exon_rule)
+  # and ChIP/utils.R (family_exons()). We CANNOT source ChIP/config.R: it redefines results_dir/fig_dir/
   # tables_dir and would silently redirect every GAM output into ChIP/results. So we
   # take the exon GRanges MINUTE_5 already persisted - the identical objects the ChIP
   # result was computed on, which is the whole point (no second definition of "a
@@ -85,7 +85,7 @@ local({
     message("Gene families: using MINUTE_5's persisted exons (", fam_rds, ")")
   } else {
     message("Gene families: ", fam_rds, " absent - rebuilding with a LOCAL copy of ",
-            "ChIP/config.R::family_exons(). Run ChIP MINUTE_5 to use the canonical set.")
+            "ChIP/utils.R::family_exons(). Run ChIP MINUTE_5 to use the canonical set.")
     local_gene_families <- list(Protocadherin = "^Pcdh(a|b|g)", `KRAB-ZFP` = "^Zfp",
                                 Vomeronasal = "^Vmn", Olfactory = "^(Olfr|Or[0-9])")
     local_exon_rule <- list(Protocadherin = "first", `KRAB-ZFP` = "last",

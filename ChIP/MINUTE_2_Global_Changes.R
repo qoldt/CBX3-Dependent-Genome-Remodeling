@@ -245,7 +245,7 @@ ht <- Heatmap(
   column_title_gp = gpar(fontsize = 10),
   row_title = "Significant Peaks",
   heatmap_legend_param = list(title = "Signal (Z-score)"),
-  # >2000 rows, so ComplexHeatmap rasterises the body; config.R picks a device
+  # >2000 rows, so ComplexHeatmap rasterises the body; shared/common.R picks a device
   # that does not depend on cairo/XQuartz (see ht_raster_device there).
   raster_device = ht_raster_device
 )
@@ -850,7 +850,7 @@ save_fig(g_diag, "log2FC_distribution_by_mark", "change_plots", width = 8, heigh
 # from the flat right-hand tail (p > 0.5); pi0 near 1 means "almost nothing is
 # individually detectable" - which is the honest summary for H3K9me3/H4K20me3.
 # NB replicates are nested (technical, not biological), so these p-values are
-# anticonservative to begin with - see the note in config.R.
+# anticonservative to begin with - see PARAMETERS.md "Sample exclusion".
 pval_df <- diag_df[is.finite(diag_df$pvalue), ]
 pval_summary <- do.call(rbind, lapply(levels(pval_df$ChIP), function(m) {
   p <- pval_df$pvalue[pval_df$ChIP == m]

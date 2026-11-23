@@ -163,7 +163,7 @@ draw_fam_hm <- function(mat, cols, ttl, name, w) {
                 row_title_gp = gpar(fontsize = 9), column_title_gp = gpar(fontsize = 10),
                 heatmap_legend_param = list(title = "row z-score"),
                 # only matters if this ever exceeds ComplexHeatmap's 2000-row
-                # auto-raster threshold; see ht_raster_device in config.R
+                # auto-raster threshold; see ht_raster_device in shared/common.R
                 raster_device = ht_raster_device)
   save_base_fig(function() draw(ht, column_title = ttl), name, "gene_families",
                 width = w, height = 11, dpi = 200)
