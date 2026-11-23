@@ -25,7 +25,7 @@ source("config.R")
 # compartment cutoffs all come from config.R - the single source of truth. In
 # particular gam_load_samples() applies the SAME default HP1gKO-rep2 exclusion
 # as the ChIP side, which is what keeps these per-bin log2FC comparable to the
-# published peak-level numbers. config.R also documents why we must NOT
+# published peak-level numbers. config.R / PARAMETERS.md document why we must NOT
 # source("../ChIP/config.R") here (it would redirect every GAM output into
 # ChIP/results).
 samples      <- gam_load_samples()

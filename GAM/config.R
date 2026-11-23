@@ -1,382 +1,108 @@
 # ================================================================
-# GAM pipeline - shared configuration & parameters
+# GAM pipeline - configuration: input files, output tree, parameters
 # ----------------------------------------------------------------
-# Sourced by every GAM_* stage and by run_GAM.R.
-# SINGLE SOURCE OF TRUTH for GAM parameters - edit values here only;
-# the stage scripts must not redefine them.
+# Sourced by every GAM_* stage and by run_GAM.R. SINGLE SOURCE OF TRUTH for
+# values - edit them here only; stage scripts must not redefine them.
 #
-# Cross-assay pieces (colour palettes, figure savers, hyper_row, size_perm,
-# seqname flips, mm39_bins, GAM bin-id parsing) live in ../shared/common.R.
+#   config.R        values only (this file)
+#   utils.R         libraries, path builders, loaders, helper functions
+#                   (sourced at the bottom, so stages need only config.R)
+#   PARAMETERS.md   why each non-obvious value is set the way it is
 #
-# Run the pipeline FROM the GAM/ directory (the folder holding this file):
-#     cd GAM && Rscript run_GAM.R
-#
-# I/O layout
-#   Inputs (read-only, NOT committed - ~7.7 GB, see README):
-#     $GAM_DATA/NPMI_matrices/{WT,cKO}_at20Kb/   dense square NPMI matrices
-#     $GAM_DATA/Diff_contacts/                   .bg2 differential contact pairs
-#     $GAM_DATA/Hotspots/                        per-bin differential contact counts
-#   Input from the ChIP assay (produced by ChIP/run_MINUTE.R):
-#     ../ChIP/results/rds/annotated_results_*.rds
-#   Outputs (generated, git-ignored in full - all regenerable by run_GAM.R):
-#     results/counts/  results/rds/  results/tables/  results/figures/  results/bed/
+# Run FROM the GAM/ directory:   cd GAM && Rscript run_GAM.R
 # ================================================================
 
-# --- Dependencies + cross-assay helpers --------------------------
-source("../shared/setup.R")
-# GAM-only dependency: every GAM input is gzipped, and data.table::fread()
-# delegates .gz decompression to R.utils. Without it every loader below fails
-# with "fread() requires 'R.utils'". The ChIP assay reads plain BEDs/bigWigs, so
-# this belongs to GAM rather than the shared manifest.
-minute_add_deps(cran = c("R.utils", "hexbin", "patchwork"))
-minute_ensure_deps()
-source("../shared/common.R")
+# ---- Input data (read-only, NOT committed - ~7.7 GB, see README) ----
+# GAM_DATA defaults to this folder; set it to use a copy elsewhere.
+gam_data    <- path.expand(Sys.getenv("GAM_DATA", unset = "."))
+npmi_dir    <- file.path(gam_data, "NPMI_matrices")   # {WT,cKO}_at20Kb/ dense NPMI
+diff_dir    <- file.path(gam_data, "Diff_contacts")   # .bg2 differential contact pairs
+hotspot_dir <- file.path(gam_data, "Hotspots")        # per-bin differential counts
 
-# GAM-SPECIFIC libraries. The core set (GenomicRanges, GenomeInfoDb,
-# rtracklayer, data.table, ggplot2, circlize, ltc) comes from shared/common.R.
-suppressPackageStartupMessages({
-  library(TxDb.Mmusculus.UCSC.mm39.knownGene)
-  library(org.Mm.eg.db)
-  library(AnnotationDbi)
-  library(wigglescout)   # bw_loci(): ChIP signal over the GAM bin grid
-  library(DESeq2)
-  library(dplyr)
-  library(parallel)
-  library(ComplexHeatmap)
-})
-
-# --- Roots -------------------------------------------------------
-# The GAM data ships inside this folder, so GAM_DATA defaults to "." . Set it to
-# use a copy staged elsewhere (e.g. an external mount):
-#     GAM_DATA=/Volumes/store/GAM Rscript run_GAM.R
-gam_data   <- path.expand(Sys.getenv("GAM_DATA", unset = "."))
-npmi_dir   <- file.path(gam_data, "NPMI_matrices")
-diff_dir   <- file.path(gam_data, "Diff_contacts")
-hotspot_dir<- file.path(gam_data, "Hotspots")
-
-# results_dir is overridable so a sensitivity run can be written to a SEPARATE
-# tree without disturbing the committed run:
-#     GAM_RESULTS=results_alt Rscript run_GAM.R
+# ---- Output tree (git-ignored, regenerable) -----------------------
+# GAM_RESULTS=results_alt writes a sensitivity run to a separate tree.
 results_dir <- path.expand(Sys.getenv("GAM_RESULTS", unset = "results"))
 counts_dir  <- file.path(results_dir, "counts")
 rds_dir     <- file.path(results_dir, "rds")
 tables_dir  <- file.path(results_dir, "tables")
 fig_dir     <- file.path(results_dir, "figures")   # save_fig() reads this by name
 bed_dir     <- file.path(results_dir, "bed")
-for (d in c(counts_dir, rds_dir, tables_dir, fig_dir, bed_dir)) {
-  if (!dir.exists(d)) dir.create(d, recursive = TRUE, showWarnings = FALSE)
-}
 
-# --- GAM parameters: these MATCH THE FILENAMES on disk -----------
-# Changing one here changes which files the path builders below resolve to, so a
-# re-run at a different sigma / z / NPMI cutoff is a config edit, not a code edit.
-gam_binsize        <- 20000L     # segregation_at20000
-gam_sigma          <- "2.6"      # sigma.2.6
-gam_seg_date       <- "2026-02-23"
-gam_seg_prefix     <- "HP1g_mm39"
-gam_z              <- 2          # z2       - differential contact z-score cutoff
-gam_npmi           <- 0.1        # npmi0.1  - minimum NPMI in the selected genotype
-gam_maxdist_label  <- "inf"      # maxdistinf
-gam_hotspot_maxdist<- 5e6        # dist0-5000000 - window for the hotspot counts
+# ---- GAM file parameters: these MATCH THE FILENAMES on disk -------
+# Changing one changes which files the path builders resolve to; it recomputes
+# nothing. The significance cutoffs are baked in upstream, not chosen here.
+gam_binsize         <- 20000L        # segregation_at20000
+gam_sigma           <- "2.6"         # sigma.2.6
+gam_seg_date        <- "2026-02-23"
+gam_seg_prefix      <- "HP1g_mm39"
+gam_z               <- 2             # z2      - differential contact z-score cutoff
+gam_npmi            <- 0.1           # npmi0.1 - minimum NPMI in the selected genotype
+gam_maxdist_label   <- "inf"         # maxdistinf
+gam_hotspot_maxdist <- 5e6           # dist0-5000000 - window for the hotspot counts
 
-# --- Genotype labels: THE ONE PLACE THE BRIDGE LIVES -------------
-# Canonical repo-wide labels are WT / HP1gKO (see ../CLAUDE.md). The GAM files
-# say "cKO" for HP1gKO. Everything downstream of this file uses the canonical
-# name; only the path builders below ever see "cKO".
-#
-# GOTCHA: the NPMI filenames are IDENTICAL between the two genotype folders -
-# genotype is encoded ONLY by the directory name (WT_at20Kb / cKO_at20Kb). A
-# matrix file copied out of its folder has lost its genotype, so never resolve
-# one by basename.
+# ---- Genotype labels: the one place "cKO" appears ------------------
+# Canonical repo-wide is WT / HP1gKO; the GAM files say cKO. Genotype is encoded
+# ONLY by the directory name - the NPMI file names are identical in both.
 gam_genotypes <- c(WT = "WT", HP1gKO = "cKO")
 
-# --- Chromosomes -------------------------------------------------
-# The differential products (Diff_contacts, Hotspots) are AUTOSOME-ONLY.
-# The NPMI matrices additionally carry chrX and chrY. Keep cross-assay
-# integration on the autosomes; X/Y are available for NPMI-only analyses.
+# ---- Direction of the differential calls: READ BEFORE USING -------
+# selWT  = contact stronger in WT  = LOST   in HP1gKO
+# selcKO = contact stronger in cKO = GAINED in HP1gKO
+# Getting this backwards inverts the headline result.
+gam_sel <- c(lost = "selWT", gained = "selcKO")
+
+# ---- Chromosomes --------------------------------------------------
+# Diff_contacts and Hotspots are autosome-only; NPMI also has chrX and chrY.
 gam_autosomes   <- paste0("chr", 1:19)
 gam_npmi_chroms <- c(gam_autosomes, "chrX", "chrY")
 
-# --- Direction semantics: READ THIS BEFORE USING THE DIFF FILES --
-# The upstream caller labels each significant differential contact by the
-# genotype in which it is SELECTED (i.e. stronger):
-#     selWT  -> contact stronger in WT   -> LOST   in HP1gKO
-#     selcKO -> contact stronger in cKO  -> GAINED in HP1gKO
-# Because the whole study is framed as "what does losing HP1g do?", every
-# downstream column is named from the KO's point of view: n_contacts_lost /
-# n_contacts_gained. This mapping is the single most reversible mistake in the
-# GAM integration - getting it backwards inverts the headline result.
-gam_sel <- c(lost = "selWT", gained = "selcKO")
-
-# --- Path builders -----------------------------------------------
-npmi_file <- function(genotype, chr) {
-  genotype <- match.arg(genotype, names(gam_genotypes))
-  file.path(npmi_dir, paste0(gam_genotypes[[genotype]], "_at", gam_binsize / 1000, "Kb"),
-            sprintf("%s.segregation_at%d.%s.passed_qc.curated.sigma.%s.NPMI.%s.squared.txt.gz",
-                    gam_seg_prefix, gam_binsize, gam_seg_date, gam_sigma, chr))
-}
-diff_file <- function(chr, sel) {
-  sel <- if (sel %in% names(gam_sel)) gam_sel[[sel]] else sel
-  file.path(diff_dir, sprintf("significant_WT_vs_cKO_%s_%s_maxdist%s_z%s_npmi%s.bg2.gz",
-                              chr, sel, gam_maxdist_label, gam_z, gam_npmi))
-}
-hotspot_file <- function(chr, sel) {
-  sel <- if (sel %in% names(gam_sel)) gam_sel[[sel]] else sel
-  file.path(hotspot_dir,
-            sprintf("significant_WT_vs_cKO_%s_%s_maxdist%s_z%s_npmi%s_dist0-%d.bg.gz",
-                    chr, sel, gam_maxdist_label, gam_z, gam_npmi, as.integer(gam_hotspot_maxdist)))
-}
-
-# --- Handoff from the ChIP assay ---------------------------------
-# Produced by ChIP/run_MINUTE.R (stage 1). Override the ChIP results tree with
-# CHIP_RESULTS if the ChIP run was written elsewhere (MINUTE_RESULTS=...).
+# ---- Inputs from the ChIP assay -----------------------------------
+# Not via source("../ChIP/config.R"): it defines results_dir / fig_dir / ... by
+# the same names and would redirect every GAM output into ChIP/results. These
+# MUST track ChIP/config.R (same MINUTE_DATA root, sample sheet, exclusion).
 chip_results_dir <- path.expand(Sys.getenv("CHIP_RESULTS", unset = "../ChIP/results"))
-chip_rds <- file.path(chip_results_dir, "rds",
-                      "annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds")
-
-require_chip_rds <- function() {
-  if (!file.exists(chip_rds))
-    stop("ChIP handoff not found:\n  ", chip_rds,
-         "\nThe GAM stages need the annotated peak-level results from the ChIP",
-         " pipeline.\nRun it first:   cd ../ChIP && Rscript run_MINUTE.R",
-         "\nOr point CHIP_RESULTS at an existing ChIP results tree.", call. = FALSE)
-  chip_rds
-}
-
-# --- ChIP inputs that GAM re-quantifies --------------------------
-# GAM_1 puts ChIP signal on the GAM bin grid, so it needs the ChIP bigWigs, the
-# ChIP annotation BEDs and the ChIP sample sheet.
-#
-# WHY NOT source("../ChIP/config.R"): both configs define results_dir /
-# counts_dir / rds_dir / fig_dir / tables_dir by the SAME names, so sourcing the
-# ChIP one here would silently redirect every GAM output into ChIP/results (and
-# re-attach the whole ChIP library set). The few things GAM needs are therefore
-# re-derived below, and they MUST track ChIP/config.R: same MINUTE_DATA root,
-# same sample sheet, same default exclusion.
-minute_data <- path.expand(Sys.getenv("MINUTE_DATA", unset = "../ChIP/data"))
-bigwig_dir  <- file.path(minute_data, "bigwig")
-annot_dir   <- file.path(minute_data, "annotation")
+chip_rds         <- file.path(chip_results_dir, "rds",
+                              "annotated_results_H3K9me3_H4K20me3_2000bp_merged.rds")
+minute_data      <- path.expand(Sys.getenv("MINUTE_DATA", unset = "../ChIP/data"))
+bigwig_dir       <- file.path(minute_data, "bigwig")
+annot_dir        <- file.path(minute_data, "annotation")
 chip_samples_tsv <- "../ChIP/samples.tsv"
-# The consensus peak BEDs are committed in the ChIP tree (small), unlike the
-# bigWigs and annotation. GAM_10 reads the merged H3K9me3/H4K20me3 set from here
-# to define heterochromatin domains.
-chip_peaks_dir <- "../ChIP/data/peaks"
-het_domain_bed <- file.path(chip_peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed")
+# Samples excluded by default: HP1gKO rep2, as on the ChIP side
+# (MINUTE_EXCLUDE=none keeps all; read by gam_load_samples()).
+chip_peaks_dir   <- "../ChIP/data/peaks"
+het_domain_bed   <- file.path(chip_peaks_dir, "2000bp_merge_H3K9me3_H4K20me3.bed")
 
-# Lamina-associated domains, Peric-Hupkes 2010 (GSE17051), lifted mm9 -> mm39 by
-# prepare_LAD_annotation.R. CONSTITUTIVE sets: cLAD is LAD in all four profiled
-# cell types, ciLAD is LAD in none. They are deliberately NOT neuronal - they are
-# the cell-type-invariant core, which is what makes them an axis independent of
-# our own marks and of either genotype. Per-cell-type (NPC, astrocyte) calls
-# exist in the same GEO entry if cell-type specificity ever matters.
-lad_bed   <- file.path(annot_dir, "cLAD_mm39.bed")
-cilad_bed <- file.path(annot_dir, "ciLAD_mm39.bed")
-load_lads <- function() {
-  if (!file.exists(lad_bed) || !file.exists(cilad_bed))
-    stop("LAD BEDs missing - run: Rscript prepare_LAD_annotation.R", call. = FALSE)
-  # One GRanges carrying a `class` column, not a list: every consumer so far
-  # wants to overlap both sets against the same bins and keep the label.
-  a <- rtracklayer::import(lad_bed);   a$class <- "cLAD"
-  b <- rtracklayer::import(cilad_bed); b$class <- "ciLAD"
-  g <- c(a, b)
-  g$class <- factor(g$class, levels = c("cLAD", "ciLAD"))
-  g
-}
+# ---- External annotation (in annot_dir) ---------------------------
+# Provenance and why these sets: PARAMETERS.md "Annotation".
+lad_bed          <- file.path(annot_dir, "cLAD_mm39.bed")    # constitutive LAD, Peric-Hupkes 2010
+cilad_bed        <- file.path(annot_dir, "ciLAD_mm39.bed")   # constitutive inter-LAD
+ctcf_hip_bed     <- file.path(annot_dir, "CTCF_hippocampus_mm39.bed")  # ENCODE, BULK tissue
+ctcf_ctx_bed     <- file.path(annot_dir, "CTCF_cortex_mm39.bed")       # ENCODE, BULK tissue
+tad_boundary_bed <- file.path(annot_dir, "TAD_boundaries_mm39.bed")    # published boundaries
 
-# --- CTCF peaks ---------------------------------------------------------------
-# ENCODE conservative IDR thresholded peaks, lifted mm10 -> mm39 by
-# prepare_CTCF_annotation.R. The third, orthogonal line of evidence on where a
-# boundary is: the two TAD partitions below are a published boundary set and our
-# own insulation minima, neither of which is an independent measurement of the
-# architectural protein itself.
-#
-# BULK TISSUE, NOT SORTED CA1. ENCSR877MSN is layer of hippocampus and
-# ENCSR644VYX is left cerebral cortex, both whole tissue from adult B6CASTF1/J.
-# No CA1-pyramidal-specific CTCF ChIP-seq is public. CTCF occupancy is largely
-# cell-type-invariant, which is what makes bulk usable, but label it bulk
-# wherever it appears - it is NOT a CA1 track. Both tissues are carried because
-# together they match the two assays: GAM is CA1 pyramidal cells (hippocampus),
-# the ChIP is Emx1-Cre cortex + hippocampus.
-ctcf_hip_bed <- file.path(annot_dir, "CTCF_hippocampus_mm39.bed")
-ctcf_ctx_bed <- file.path(annot_dir, "CTCF_cortex_mm39.bed")
-load_ctcf <- function() {
-  if (!file.exists(ctcf_hip_bed) || !file.exists(ctcf_ctx_bed))
-    stop("CTCF BEDs missing - run: Rscript prepare_CTCF_annotation.R", call. = FALSE)
-  # One GRanges carrying a `tissue` column, not a list - same shape as
-  # load_lads(), because every consumer wants to overlap both against the same
-  # bins and keep the label. Levels fixed so drop = FALSE scales keep both keys.
-  a <- rtracklayer::import(ctcf_hip_bed); a$tissue <- "hippocampus"
-  b <- rtracklayer::import(ctcf_ctx_bed); b$tissue <- "cortex"
-  g <- c(a, b)
-  g$tissue <- factor(g$tissue, levels = c("hippocampus", "cortex"))
-  g
-}
+# ---- ChIP quantification on the GAM grid (GAM_1) -------------------
+gam_count_scale <- 10      # x coverage before rounding for DESeq2; cancels in log2FC
+gam_cores <- as.integer(Sys.getenv("GAM_CORES", unset = max(1, parallel::detectCores() - 1)))
 
-# --- TAD partitions -----------------------------------------------------------
-# Two independent partitions, kept side by side on purpose. Any "this locus talks
-# to distal TADs differently" claim depends on where the boundaries are, so a
-# result that only holds under one partition is a result about the partition.
-#
-#   EXTERNAL  published boundaries, fixed across genotypes. Non-circular, but a
-#             different cell type and blind to anything the KO does.
-#   OWN       insulation minima from our own GAM, per genotype. Self-consistent
-#             with the contact data and free to move between genotypes, but it is
-#             our own call, so it cannot also be evidence about boundary strength.
-tad_boundary_bed <- file.path(annot_dir, "TAD_boundaries_mm39.bed")
+# ChIP mark-loss groups (stable / H4K20me3_only / co_loss): MINUTE_3's cutoffs
+# VERBATIM - do not retune here. Absolute, so not shift-invariant; the
+# median-centred variant is primary downstream.
+H4_LOST_CUT <- -0.5        # H4K20me3 log2FC below this = "H4K20me3-lost"
+K9_LOSS_CUT <- -0.3        # H3K9me3  log2FC below this = "H3K9me3-loss"
+UNCH_CUT    <-  0.15       # |log2FC| below this = "unchanged"
 
-# Intervals are the spans BETWEEN consecutive boundaries. The deposited
-# boundaries are ~150 kb wide, so a TAD runs from the end of one to the start of
-# the next; the boundary bodies themselves belong to neither TAD.
-load_tads_external <- function(chroms = gam_autosomes) {
-  if (!file.exists(tad_boundary_bed))
-    stop("missing TAD boundaries: ", tad_boundary_bed, call. = FALSE)
-  b <- data.table::fread(tad_boundary_bed, header = FALSE, select = 1:3,
-                         col.names = c("chr", "start", "end"))
-  b[, chr := ifelse(grepl("^chr", chr), chr, paste0("chr", chr))]
-  b <- b[chr %in% chroms]
-  data.table::setorder(b, chr, start)
-  out <- b[, {
-    s <- end[-.N]; e <- start[-1]
-    .(start = s, end = e)
-  }, by = chr]
-  out <- out[end > start]
-  out[, tad_id := sprintf("%s:%d-%d", chr, start, end)]
-  out[]
-}
-
-# Insulation here is mean NPMI ACROSS the boundary at bin i (GAM_2), so a LOW
-# value means few cross-boundary contacts, i.e. a strong boundary - boundaries
-# are local MINIMA. Prominence is measured in local sd so one threshold works on
-# chromosomes with different contact density.
+# ---- Own TAD calls from insulation minima (call_tads_insulation) ---
 gam_tad_insul <- list(smooth_bins = 5L, win = 10L, prominence = 0.5, min_bins = 10L)
 
-call_tads_insulation <- function(genotype = c("WT", "HP1gKO"),
-                                 chroms = gam_autosomes,
-                                 pars = gam_tad_insul) {
-  genotype <- match.arg(genotype)
-  f <- file.path(results_dir, "rds", "npmi_bin_features.rds")
-  if (!file.exists(f)) stop("run GAM_2 first: ", f, call. = FALSE)
-  ft <- data.table::as.data.table(readRDS(f)$features)
-  col <- paste0("insulation_", genotype)
-  ft <- ft[chr %in% chroms, .(chr, start, end, v = get(col))]
-  data.table::setorder(ft, chr, start)
-  bd <- ft[, {
-    y <- v
-    g <- is.finite(y)
-    num <- as.numeric(stats::filter(ifelse(g, y, 0), rep(1, pars$smooth_bins), sides = 2))
-    den <- as.numeric(stats::filter(g * 1, rep(1, pars$smooth_bins), sides = 2))
-    sm  <- ifelse(is.finite(den) & den > 0, num / den, NA_real_)
-    n <- length(sm); idx <- seq_len(n)
-    isMin <- vapply(idx, function(i) {
-      w <- seq(max(1L, i - pars$win), min(n, i + pars$win))
-      is.finite(sm[i]) && sum(is.finite(sm[w])) > pars$win &&
-        sm[i] <= min(sm[w], na.rm = TRUE)
-    }, logical(1))
-    sdv <- stats::sd(sm, na.rm = TRUE)
-    prom <- vapply(idx, function(i) {
-      w <- seq(max(1L, i - pars$win), min(n, i + pars$win))
-      if (!is.finite(sm[i]) || !is.finite(sdv) || sdv <= 0) return(NA_real_)
-      (max(sm[w], na.rm = TRUE) - sm[i]) / sdv
-    }, numeric(1))
-    keep <- which(isMin & is.finite(prom) & prom >= pars$prominence)
-    # enforce a minimum separation, keeping the deeper minimum of a close pair
-    if (length(keep) > 1) {
-      ord <- keep[order(sm[keep])]
-      taken <- integer(0)
-      for (i in ord) if (!any(abs(i - taken) < pars$min_bins)) taken <- c(taken, i)
-      keep <- sort(taken)
-    }
-    .(bidx = keep, bstart = start[keep], bend = end[keep])
-  }, by = chr]
-  # boundaries -> intervals between them
-  out <- bd[, { s <- bend[-.N]; e <- bstart[-1]; .(start = s, end = e) }, by = chr]
-  out <- out[end > start]
-  out[, tad_id := sprintf("%s:%d-%d", chr, start, end)]
-  out[]
-}
-
-# --- Heterochromatin domains, merged -------------------------------------------
-# het_domain_bed is 126,197 fragments of MEAN WIDTH 3.5 kb (444 Mb total). It is a
-# merged PEAK set, not a domain set: GAM_10 reduce()s it and keeps whatever single
-# fragment happens to exceed a width cut, which is not the same thing as a domain.
-# Gap-merging first is what turns it into one. Parameters are swept in GAM_13 -
-# these are the chosen values, and every domain-level result is reported against
-# the unmerged set too, as the hotspot domains already are.
-# CHOSEN FROM THE SWEEP IN GAM_13. The fragments percolate: genome coverage runs
-# 1.3% (gap 0) -> 4.5% (10 kb) -> 17.5% (20 kb) -> 64.8% (50 kb) at min_width
-# 100 kb, because once the gap exceeds the typical spacing between peaks
-# everything fuses into chromosome-length blocks. 10 kb sits below that
-# transition and yields 331 domains over 110 Mb, median 160 kb - genuinely large
-# domains rather than the whole genome.
-#
-# Worth stating plainly: this BED contains very little large-domain structure.
-# At gap 0 only 33 Mb sits in pieces >= 100 kb, so the 444 Mb it covers is almost
-# entirely sub-50 kb peaks. GAM_10's "domains >= 100 kb" were whichever single
-# fragments happened to be long, not merged domains.
+# ---- Heterochromatin domains (merge_het_domains) ------------------
+# Chosen from the GAM_13 sweep: 10 kb sits below the gap at which fragments
+# fuse into chromosome-length blocks. PARAMETERS.md "Heterochromatin domains".
 gam_het_merge <- list(gap = 10000L, min_width = 100000L)
 
-merge_het_domains <- function(gap = gam_het_merge$gap,
-                              min_width = gam_het_merge$min_width,
-                              chroms = gam_autosomes) {
-  if (!file.exists(het_domain_bed)) stop("missing ", het_domain_bed, call. = FALSE)
-  dm <- data.table::fread(het_domain_bed, header = FALSE, select = 1:3,
-                          col.names = c("chr", "start", "end"))
-  dm[, chr := ifelse(grepl("^chr", chr), chr, paste0("chr", chr))]
-  dm <- dm[chr %in% chroms]
-  g <- GenomicRanges::reduce(
-         GenomicRanges::GRanges(dm$chr, IRanges::IRanges(dm$start + 1, dm$end)),
-         min.gapwidth = gap, ignore.strand = TRUE)
-  g <- g[GenomicRanges::width(g) >= min_width]
-  g
-}
-
-# ==============================================================================
-# CHROMATIN CLASSES - TWO LEVELS, ONE DEFINITION                    (2026-10-19)
-# ==============================================================================
-# Replaces the old binary is_het / eu_eu split, which called everything that was
-# not an H3K9me3/H4K20me3 peak "euchromatin". That was wrong twice over: it put
-# Polycomb (facultative heterochromatin) in the euchromatin bucket, and the
-# bucket was 85% ChromHMM-quiescent, i.e. unmarked chromatin, not euchromatin.
-# Only about one bin in nine of the old "euchromatin" was actually active.
-#
-#   LEVEL 1  euchromatin | heterochromatin        - the headline contrast
-#   LEVEL 2  TSS, Enhancer, Tx | Polycomb, H3K9me3, Quiescent
-#
-# Level 2 nests exactly inside level 1, so any level-1 number is the pooled
-# level-2 numbers and the two can never disagree.
-#
-# STATE -> LEVEL 2 MAPPING, AND WHY IT IS NOT JUST THE STATE NAMES
-# ----------------------------------------------------------------
-# Mostly the 18-state cortex P0 model's own names are taken at face value. Three
-# groups are assigned against their name, because our own WT ChIP contradicts it
-# and the group is large enough for that to matter. Mean WT signal in bins where
-# the state covers >= 20% of the bin (genome-wide mean is ~1.0-1.5 for each):
-#
-#   state     bins    H3K4me3  H3K36me3  H3K9me3  H4K20me3   assigned
-#   Het       1372       0.70      0.79     4.49      3.54    H3K9me3
-#   Quies3    5331       0.39      0.68     3.03      2.45    H3K9me3   <- not quiescent
-#   Quies2    9983       0.60      0.77     2.37      1.89    H3K9me3   <- not quiescent
-#   Quies    94902       0.97      0.81     1.05      1.15    Quiescent
-#   QuiesG   22198       3.10      1.72     0.66      0.85    Tx        <- not quiescent
-#
-# Quies2 and Quies3 carry H3K9me3 at 2.4-3.0x, against 1.05x for Quies proper -
-# they are H3K9me3 heterochromatin wearing a quiescent label. QuiesG runs the
-# other way: H3K4me3 3.10 and H3K9me3 DEPLETED at 0.66, which is gene-associated
-# chromatin. Leaving these three under "Quiescent" would have put 15,314 bins of
-# real heterochromatin and 22,198 bins of gene-adjacent chromatin in the wrong
-# level-1 class.
-#
-# Four small states are kept on their names although our marks disagree -
-# TssBiv (H3K9me3 2.16) and EnhPr (H3K9me3 3.54) look heterochromatic, EnhPois
-# and EnhLo are quiet. All four are under 150 bins at >= 20% coverage, so
-# reassigning them would be fitting the map to a few hundred bins. Recorded so
-# the inconsistency is a known choice rather than an oversight.
-#
-# WE DO NOT MEASURE H3K27me3. The Polycomb class rests entirely on this external
-# segmentation, whose training marks are not recorded (METHODS open question).
-# Our own data can only confirm what Polycomb is NOT: ReprPC/ReprPCWk bins carry
-# the LOWEST H3K9me3 (0.37) and H4K20me3 (0.43) of any class, below active
-# chromatin, so they are certainly not constitutive heterochromatin.
+# ---- Chromatin classes (gam_chromatin_classes) --------------------
+# LEVEL 1 euchromatin | heterochromatin; LEVEL 2 nests inside it. Three states
+# are assigned against their ChromHMM name because our own WT ChIP contradicts
+# it (Quies2/Quies3 -> H3K9me3, QuiesG -> Tx): PARAMETERS.md "Chromatin classes".
 gam_chromatin_state_map <- c(
   # --- euchromatin ---
   Tss = "TSS", TssFlnk = "TSS",
@@ -387,390 +113,29 @@ gam_chromatin_state_map <- c(
   TssBiv = "Polycomb", ReprPC = "Polycomb", ReprPCWk = "Polycomb",
   Het = "H3K9me3", Quies2 = "H3K9me3", Quies3 = "H3K9me3",
   Quies = "Quiescent", Quies4 = "Quiescent")
-
 gam_chromatin_level1 <- c(TSS = "euchromatin", Enhancer = "euchromatin", Tx = "euchromatin",
                           Polycomb = "heterochromatin", H3K9me3 = "heterochromatin",
                           Quiescent = "heterochromatin")
 gam_class2_levels <- c("TSS", "Enhancer", "Tx", "Polycomb", "H3K9me3", "Quiescent")
 gam_class1_levels <- c("euchromatin", "heterochromatin")
+gam_het_peak_cut  <- 0.5   # bin peak coverage >= this -> H3K9me3, whatever ChromHMM says
 
-# A bin whose H3K9me3/H4K20me3 PEAK coverage reaches this is called H3K9me3
-# heterochromatin whatever ChromHMM says. This override is not a hedge - it is
-# the better-evidenced call. 8,266 bins that ChromHMM puts in plain Quies carry
-# mean WT H3K9me3 of 3.94 against 0.88 for the Quies bins without a peak, a
-# 4.5x separation measured in this tissue. ChromHMM's own Het state is only
-# 0.92% of the genome against our 7.2%, so it under-calls badly here and is
-# folded in rather than relied on.
-gam_het_peak_cut <- 0.5
-
-# Returns one row per input bin: bin_id, het_frac, class2, class1.
-# `annot` must be the gam_bins_annotated.rds $annot table (hmm_* coverage
-# columns plus chr/start/end/bin_id). Pure function of its input, so every
-# stage that calls it gets the same partition - which is the whole point of it
-# living here rather than being rebuilt in each stage, as is_het was.
-gam_chromatin_classes <- function(annot, peak_cut = gam_het_peak_cut) {
-  a <- data.table::as.data.table(annot)
-  stopifnot(all(c("bin_id", "chr", "start", "end") %in% names(a)))
-  hm <- grep("^hmm_", names(a), value = TRUE)
-  st <- sub("^hmm_", "", hm)
-  unmapped <- setdiff(st, names(gam_chromatin_state_map))
-  if (length(unmapped))
-    stop("ChromHMM states with no level-2 assignment: ", paste(unmapped, collapse = ", "),
-         "\n  Add them to gam_chromatin_state_map in config.R.", call. = FALSE)
-
-  # Coverage of each level-2 group = sum of its states' coverage fractions.
-  grp <- gam_chromatin_state_map[st]
-  M <- as.matrix(a[, ..hm])
-  G <- vapply(gam_class2_levels, function(g) {
-    k <- which(grp == g)
-    if (!length(k)) rep(0, nrow(M)) else rowSums(M[, k, drop = FALSE], na.rm = TRUE)
-  }, numeric(nrow(M)))
-
-  # Peak-based H3K9me3 coverage, the same geometry GAM_5 used for is_het.
-  dm <- data.table::fread(het_domain_bed, header = FALSE, select = 1:3,
-                          col.names = c("chr", "start", "end"))
-  dm[, chr := ifelse(grepl("^chr", chr), chr, paste0("chr", chr))]
-  dm <- dm[chr %in% unique(a$chr)]
-  red <- GenomicRanges::reduce(
-           GenomicRanges::GRanges(dm$chr, IRanges::IRanges(dm$start + 1, dm$end)),
-           ignore.strand = TRUE)
-  b <- GenomicRanges::GRanges(a$chr, IRanges::IRanges(a$start + 1, a$end))
-  h <- GenomicRanges::findOverlaps(b, red, ignore.strand = TRUE)
-  w <- GenomicRanges::width(GenomicRanges::pintersect(
-         b[S4Vectors::queryHits(h)], red[S4Vectors::subjectHits(h)], ignore.strand = TRUE))
-  v <- numeric(length(b))
-  agg <- tapply(w, S4Vectors::queryHits(h), sum)
-  v[as.integer(names(agg))] <- as.numeric(agg)
-  het_frac <- pmin(v / GenomicRanges::width(b), 1)
-
-  cls2 <- gam_class2_levels[max.col(G, ties.method = "first")]
-  # A bin with no ChromHMM coverage at all has no dominant group; max.col would
-  # hand it column 1 (TSS) on a row of zeros, which would invent active
-  # chromatin out of missing annotation.
-  cls2[rowSums(G, na.rm = TRUE) <= 0] <- NA_character_
-  cls2[het_frac >= peak_cut] <- "H3K9me3"
-
-  out <- data.table::data.table(
-    bin_id   = a$bin_id,
-    het_frac = het_frac,
-    class2   = factor(cls2, levels = gam_class2_levels),
-    class1   = factor(unname(gam_chromatin_level1[cls2]), levels = gam_class1_levels))
-  # A seqname-style mismatch zeroes the peak overlap and every other failure
-  # mode here empties a class, so assert rather than warn (repo rule).
-  stopifnot(sum(out$class2 == "H3K9me3", na.rm = TRUE) > 1000,
-            sum(out$class1 == "euchromatin", na.rm = TRUE) > 1000)
-  out[]
-}
-
-# --- Distance bands for every contact-by-separation analysis -----------------
-# One definition, because these were copied into GAM_5 (twice), GAM_7 (twice)
-# and make_report.R, and a band set that disagrees between two tables is the
-# kind of thing no stopifnot catches.
-#
-# The top band was ">10Mb" until 2026-10-19, open-ended over 10-195 Mb. That
-# pooled 364 M possible pairs, and NEARLY HALF of them were beyond 50 Mb, so
-# anything happening at 10-25 Mb was swamped by the very long range. Splitting
-# at 50 Mb divides it almost evenly: 189 M pairs in 10-50 Mb against 174 M
-# beyond 50 Mb.
-#
-# READ THE >50Mb BAND PER CHROMOSOME WITH CARE. It is open-ended, so it means a
-# different separation on every chromosome: chr19 (61 Mb) can only contribute
-# 50-61 Mb and has 0.16 M pairs, while chr1 (195 Mb) contributes 50-195 Mb with
-# 26 M - a 160-fold spread. Pooled genome-wide that is fine; as one column of a
-# per-chromosome figure it is not comparable across rows, and chr19 is
-# effectively unpowered there. The same was true of the old ">10Mb", less
-# visibly.
+# ---- Distance bands for every contact-by-separation analysis ------
+# The >50Mb band is open-ended, so it is not comparable across chromosomes.
 gam_band_edges <- c(0, 2e5, 1e6, 5e6, 1e7, 5e7, Inf)
 gam_band_names <- c("<0.2Mb", "0.2-1Mb", "1-5Mb", "5-10Mb", "10-50Mb", ">50Mb")
 
-# Colours for the six level-2 classes. From the shared discrete palette, not
-# raw hex, per the repo rule - with the deliberate grey exception for
-# Quiescent, which is the "unmarked / not-a-category" class the greys exist
-# for. One definition so the region track and the exported BED cannot drift.
-gam_class2_colours <- local({
-  cats <- c("TSS", "Enhancer", "Tx", "Polycomb", "H3K9me3")
-  p <- tryCatch(disc_pal(length(cats)), error = function(e) NULL)
-  if (is.null(p)) p <- c("#B2182B", "#EF8A62", "#4D9221", "#762A83", "#2166AC")
-  c(stats::setNames(p, cats), Quiescent = "grey80")
-})
+# ---- Hotspot domains (gam_hotspot_domains) ------------------------
+#   q quantile counted as hot | smooth_bins running mean (5 = 100 kb)
+#   gap sub-threshold bins absorbed | min_bins minimum domain size
+gam_hotspot_params     <- list(q = 0.90, smooth_bins = 5L, gap = 1L, min_bins = 5L)
+gam_hotspot_params_raw <- list(q = 0.90, smooth_bins = 1L, gap = 0L, min_bins = 1L)  # unsmoothed variant
 
-# Writes the level-2 chromatin partition as an itemRgb BED for IGV. Merges
-# adjacent bins of the same class so the file is runs, not 123,133 single bins.
-write_chromatin_state_bed <- function(annot, path) {
-  cc <- gam_chromatin_classes(annot)
-  a <- data.table::as.data.table(annot)[, .(bin_id, chr, start, end)]
-  a <- merge(a, cc[, .(bin_id, class2)], by = "bin_id")
-  a <- a[!is.na(class2)]
-  data.table::setorder(a, chr, start)
-  # rleid over (chr, class) collapses runs; a gap in bins does not merge because
-  # the runs are then written with their own start/end.
-  a[, run := data.table::rleid(chr, class2)]
-  r <- a[, .(chr = chr[1], start = min(start), end = max(end),
-             name = as.character(class2[1])), by = run]
-  rgb <- grDevices::col2rgb(gam_class2_colours[r$name])
-  r[, `:=`(score = 0L, strand = ".", ts = start, te = end,
-           itemRgb = paste(rgb[1, ], rgb[2, ], rgb[3, ], sep = ","))]
-  writeLines(paste0('track name="GAM chromatin states (level 2)" ',
-                    'description="TSS/Enhancer/Tx = euchromatin; ',
-                    'Polycomb/H3K9me3/Quiescent = heterochromatin" itemRgb=On'), path)
-  data.table::fwrite(r[, .(chr, start, end, name, score, strand, ts, te, itemRgb)],
-                     path, sep = "\t", col.names = FALSE, append = TRUE, quote = FALSE)
-  invisible(r)
-}
-
-# --- Sample sheet + exclusion (mirrors ChIP/config.R) ------------
-# DEFAULT: HP1gKO rep2 is EXCLUDED, exactly as on the ChIP side - it is the
-# highest-signal library in all five marks and discordant with rep3, its own
-# technical twin, so it is treated as a technical failure. Keeping the same
-# default is what makes the per-bin log2FC comparable to the published
-# peak-level numbers; MINUTE_EXCLUDE=none reproduces the all-library run.
-# Syntax: comma-separated sample_ids and/or <genotype>:<replicate> pairs.
-gam_load_samples <- function() {
-  sm <- as.data.frame(data.table::fread(chip_samples_tsv))
-  ex <- trimws(strsplit(Sys.getenv("MINUTE_EXCLUDE", unset = "HP1gKO:2"), ",")[[1]])
-  if (identical(tolower(ex), "none")) ex <- character(0)
-  ex <- ex[nzchar(ex)]
-  excluded <- character(0)
-  if (length(ex)) {
-    pairs <- grepl(":", ex, fixed = TRUE)
-    drop  <- sm$sample_id %in% ex[!pairs]
-    for (q in ex[pairs]) {
-      gr <- strsplit(q, ":", fixed = TRUE)[[1]]
-      drop <- drop | (as.character(sm$genotype) == gr[1] &
-                      as.character(sm$replicate) == gr[2])
-    }
-    excluded <- sm$sample_id[drop]
-    message("Excluding ", sum(drop), " sample(s): ", paste(excluded, collapse = ", "))
-    sm <- sm[!drop, , drop = FALSE]
-  }
-  sm$genotype    <- factor(sm$genotype, levels = c("WT", "HP1gKO"))
-  sm$bigwig_path <- file.path(bigwig_dir, sm$bigwig)
-  attr(sm, "excluded_ids") <- excluded
-  sm
-}
-
-# --- Quantification parameters -----------------------------------
-# COUNT_SCALE: DESeq2 needs integers, but mean coverage over a 20 kb bin is
-# often below 1, so plain rounding would collapse most bins onto 0/1. Scaling by
-# 10 before rounding preserves the gradation; the factor cancels in log2FC, and
-# baseMean is divided back out so it stays on the coverage scale. Same value and
-# reasoning as ChIP/MINUTE_7_H3K36me3_Genes.R.
-gam_count_scale <- 10
-
-# Cores for the per-sample bigWig reads. Leaves one core free; GAM_1 is a
-# sustained all-core job on a laptop, so lower this (GAM_CORES=4) when running
-# it alongside anything else.
-gam_cores <- as.integer(Sys.getenv("GAM_CORES", unset = max(1, parallel::detectCores() - 1)))
-
-# --- Compartment cutoffs: MINUTE_3's, VERBATIM -------------------
-# Do not retune these here. They define the stable / H4K20me3_only / co_loss
-# groups, and the whole point of reusing them is that the GAM bins are labelled
-# by the SAME rule as the ChIP peaks. Note they are ABSOLUTE and therefore not
-# shift-invariant against a genome-wide loss, which is why every GAM stage
-# treats the median-CENTRED variant as primary (ChIP/results/COMPARTMENT_CUTOFFS.md).
-H4_LOST_CUT <- -0.5    # H4K20me3 log2FC below this = "H4K20me3-lost"
-K9_LOSS_CUT <- -0.3    # H3K9me3  log2FC below this = "H3K9me3-loss"
-UNCH_CUT    <-  0.15   # |log2FC| below this = "unchanged"
-
-# --- The shared coordinate system --------------------------------
-# The 20 kb grid that BOTH assays are projected onto. mm39_bins() comes from
-# shared/common.R; UCSC seqnames, autosomes by default (matching the GAM
-# differential products). This is the join key for the whole integration.
-gam_bins <- function(chroms = gam_autosomes) mm39_bins(gam_binsize, chroms)
-
-# --- Loader: per-bin differential contact counts (BOTH directions) ----------
-# Reads all Hotspots files and returns ONE table on the GAM bin grid:
-#   chr, start, end, n_contacts_lost, n_contacts_gained
-# Coordinates are the file's own (0-based half-open, BED-like) - converted to
-# 1-based GRanges only via parse_gam_bin()/makeGRangesFromDataFrame downstream.
-#
-# IMPORTANT: these files are DENSE, not a significant-vs-not hit list - ~115k
-# bins per direction is essentially every mappable 20 kb autosomal bin. The
-# signal is the COUNT MAGNITUDE (observed range 1-162), so treat it as a
-# continuous per-bin contact-remodelling density. Bins absent from a file have
-# no significant differential contacts, so they are filled with 0, not NA.
-load_hotspots <- function(chroms = gam_autosomes) {
-  one <- function(sel) {
-    rbindlist(lapply(chroms, function(ch) {
-      f <- hotspot_file(ch, sel)
-      if (!file.exists(f)) stop("missing hotspot file: ", f)
-      dt <- fread(f, col.names = c("chr", "start", "end", "count"))
-      dt
-    }))
-  }
-  lost   <- one("lost")[,   .(chr, start, end, n_contacts_lost   = count)]
-  gained <- one("gained")[, .(chr, start, end, n_contacts_gained = count)]
-  out <- merge(lost, gained, by = c("chr", "start", "end"), all = TRUE)
-  out[is.na(n_contacts_lost),   n_contacts_lost   := 0L]
-  out[is.na(n_contacts_gained), n_contacts_gained := 0L]
-  setorder(out, chr, start)
-  out[]
-}
-
-# --- Hotspot DOMAINS: the second analysis level -----------------------------
-# The hotspot counts are a dense, SMOOTH track, not a sparse hit list, so there
-# are two legitimate units and they answer different questions:
-#
-#   per-bin count  - the continuous covariate. Highest resolution, no threshold
-#                    chosen, right for correlation/coupling (GAM_3). Neighbouring
-#                    bins are NOT independent (measured autocorrelation r = 0.59
-#                    at 20 kb, 0.40 at 100 kb, 0.26 at 500 kb), so any CI over
-#                    bins must resample chromosomes, not bins.
-#   domain         - the independent unit. Right for enrichment/overlap tests and
-#                    for "how much territory remodels", because counting adjacent
-#                    bins as independent observations pseudo-replicates - the same
-#                    reason chromHMM_size_weighted() permutes region labels rather
-#                    than base pairs.
-#
-# WHY SMOOTH BEFORE THRESHOLDING. Thresholding the raw track fragments it: at the
-# 90th percentile the median run is 1 bin and only 22% of hotspot bins fall in
-# domains >= 100 kb, because a single bin dipping below the cutoff splits a real
-# domain in two. Absorbing sub-threshold gaps fixes some of that (gap<=2 -> 62%)
-# but chains through long quiet stretches if pushed (gap<=3 produces a 3.6 Mb
-# "domain"), and the gap size is arbitrary. A 100 kb (5-bin) running mean first
-# gives median 4 bins and 80% of hotspot bins in >= 100 kb domains without that
-# pathology. 100 kb is chosen to match the autocorrelation structure: still
-# r ~ 0.40, so averaging over it is justified, whereas a 500 kb window (r ~ 0.26)
-# would fuse genuinely separate domains.
-#
-# Defaults are deliberately explicit so a sensitivity run is a parameter change:
-#   q           quantile of the smoothed track that counts as "hot"
-#   smooth_bins running-mean width in bins (5 = 100 kb)
-#   gap         sub-threshold bins absorbed between hot runs (1 = 20 kb)
-#   min_bins    minimum domain size kept (5 = 100 kb)
-# --- Large contact-direction blocks -------------------------------------------
-# A SECOND, much coarser scale than gam_hotspot_params. The hotspot domains are
-# 0.1-2 Mb; eyeballing the tracks shows one-directional territory at 10-20 Mb -
-# e.g. chr11 is almost entirely contact-LOSING over 0-20 Mb and almost entirely
-# contact-GAINING over 56-108 Mb. A caller with a 100 kb floor and a q90 cutoff
-# cannot see that: it fragments a 16 Mb block into dozens of small domains and
-# reports them as unrelated.
-#
-# These blocks are called on the signed NET direction,
-#     net = log2((gained + 1) / (lost + 1)),
-# rather than on either density alone, because the feature is the IMBALANCE: a
-# block can be busy in both directions and still be unremarkable. net > 0 means
-# contacts are preferentially GAINED in the cKO, net < 0 lost.
-#
-# This was log2(lost/gained) until 2026-10-18 - the collaborators' WT-minus-KO
-# sign, and the only signed quantity in the repo pointing the opposite way to
-# the rule above. It made the genome-wide block figure shade lost blocks red
-# while every contact map uses red for gained. mean_net in
-# gam6_large_blocks.tsv changes sign from that date; dirn does not, being a
-# label rather than a number.
-#
-# Verified NOT to be a coverage artifact before building on it: the correlation
-# between net and the WT-minus-KO count of valid NPMI cells is +0.005 at 4 Mb
-# and +0.025 per bin, i.e. nothing. Blocks are not where data is missing.
-gam_block_smooth_bins <- 101L    # ~2 Mb running mean; blocks are a Mb-scale feature
+# ---- Large contact-direction blocks (GAM_4) -----------------------
+# Called on net = log2((gained + 1) / (lost + 1)); net > 0 = gained in the cKO.
+gam_block_smooth_bins <- 101L    # ~2 Mb running mean
 gam_block_net_cut     <- 0.5     # |net| above this counts as one-directional (~1.4x)
 gam_block_min_mb      <- 4       # minimum block size to report
 
-gam_hotspot_params <- list(q = 0.90, smooth_bins = 5L, gap = 1L, min_bins = 5L)
-
-# UNADJUSTED variant, carried alongside the smoothed one so that every
-# domain-level result can be reported both ways. This is threshold-and-nothing-
-# else: no smoothing, strict adjacency, no size floor. It is the conservative
-# reading - it makes no assumption that a sub-threshold bin inside a run belongs
-# to the domain - at the cost of fragmenting real domains into singletons (at
-# q90, median run length 1 bin, 78% of hotspot bins in runs under 100 kb).
-#
-# Keeping both is the same instinct as reporting enrichments per-region AND
-# size-weighted on the ChIP side: where the two agree the conclusion does not
-# rest on the smoothing choice, and where they disagree that disagreement is
-# itself the finding and belongs in the write-up.
-#
-# Note the truly unadjusted view is the per-bin count itself, which the pipeline
-# always retains as n_contacts_lost / n_contacts_gained and uses as the primary
-# continuous covariate. This variant is about DOMAIN construction only.
-gam_hotspot_params_raw <- list(q = 0.90, smooth_bins = 1L, gap = 0L, min_bins = 1L)
-
-# Returns a list: $bin (per-bin domain_id + smoothed value + hot flag, in input
-# order) and $domains (one row per kept domain). Input must be sorted by chr,start.
-gam_hotspot_domains <- function(counts, chr, start, end,
-                                q           = gam_hotspot_params$q,
-                                smooth_bins = gam_hotspot_params$smooth_bins,
-                                gap         = gam_hotspot_params$gap,
-                                min_bins    = gam_hotspot_params$min_bins) {
-  dt <- data.table::data.table(i = seq_along(counts), chr = as.character(chr),
-                               start = start, end = end, n = as.numeric(counts))
-  # Running mean WITHIN each chromosome - smoothing across a chromosome boundary
-  # would invent signal where there is a discontinuity.
-  dt[, sm := {
-    if (smooth_bins <= 1L) n else {
-      v <- as.numeric(stats::filter(n, rep(1 / smooth_bins, smooth_bins), sides = 2))
-      ifelse(is.na(v), n, v)      # edges keep their raw value
-    }
-  }, by = chr]
-  cut_at <- stats::quantile(dt$sm, q, na.rm = TRUE)
-  dt[, hot := sm >= cut_at]
-
-  # Absorb short sub-threshold gaps, then label contiguous runs per chromosome.
-  dt[, dom := {
-    h <- hot
-    if (gap > 0L && length(h) > 2L) {
-      r <- rle(h); L <- r$lengths; V <- r$values; k <- 2L
-      while (k < length(V)) {
-        if (!V[k] && L[k] <= gap && V[k - 1L] && V[k + 1L]) {
-          L[k - 1L] <- L[k - 1L] + L[k] + L[k + 1L]
-          V <- V[-c(k, k + 1L)]; L <- L[-c(k, k + 1L)]
-        } else k <- k + 1L
-      }
-      h <- rep(V, L)
-    }
-    rr <- rle(h)
-    id <- rep(NA_integer_, length(h))
-    ends <- cumsum(rr$lengths); begs <- ends - rr$lengths + 1L
-    w <- which(rr$values)
-    if (length(w)) for (j in seq_along(w)) id[begs[w[j]]:ends[w[j]]] <- j
-    id
-  }, by = chr]
-  dt[!is.na(dom), dom_key := paste0(chr, ":", dom)]
-
-  # NOTE the name: this must NOT be called `dom`, because dt already has a `dom`
-  # COLUMN and data.table evaluates the filter below inside dt's scope - the
-  # column would shadow this table and `dom$dom_key` would hit an integer vector.
-  domtab <- dt[!is.na(dom), .(chr = chr[1], start = min(start), end = max(end),
-                              n_bins = .N, mean_count = mean(n), max_count = max(n),
-                              sum_count = sum(n)), by = dom_key]
-  domtab <- domtab[n_bins >= min_bins]
-  domtab[, width_kb := (end - start) / 1000]
-  # Drop membership for domains that failed the size filter, so the per-bin
-  # domain_id and the $domains table can never disagree.
-  keep_keys <- domtab$dom_key
-  dt[!dom_key %in% keep_keys, dom_key := NA_character_]
-  data.table::setorder(dt, i)
-  list(bin = dt[, .(domain_id = dom_key, smoothed = sm, hot)],
-       domains = domtab[order(chr, start)],
-       params = list(q = q, cutoff = cut_at, smooth_bins = smooth_bins,
-                     gap = gap, min_bins = min_bins))
-}
-
-# --- Loader: differential contact PAIRS for one chromosome/direction --------
-# ~25.6M pairs genome-wide per direction, so this is deliberately per-chromosome
-# and never loads everything at once. `sel` is "lost"/"gained" (canonical) or a
-# raw "selWT"/"selcKO". Columns are the file's own; see the README for the full
-# list (set1_npmi/set2_npmi are WT/cKO NPMI, deltaz is the z-score difference).
-load_diff_contacts <- function(chr, sel, select = NULL) {
-  f <- diff_file(chr, sel)
-  if (!file.exists(f)) stop("missing differential contact file: ", f)
-  fread(f, select = select)
-}
-
-# --- Loader: one dense NPMI matrix -------------------------------------------
-# Returns a numeric matrix with GAM bin-id dimnames ("chr19:0-20000"), which
-# parse_gam_bin() turns into a GRanges. ONE CHROMOSOME AT A TIME, on purpose:
-# chr1 is ~9.7k x 9.7k, about 760 MB as doubles, so holding both genotypes for a
-# large chromosome at once is how this stage runs the machine out of memory.
-# Diagonal/unmappable cells are NA in the source and stay NA here.
-load_npmi <- function(genotype, chr) {
-  f <- npmi_file(genotype, chr)
-  if (!file.exists(f)) stop("missing NPMI matrix: ", f)
-  dt <- fread(f, header = TRUE)
-  ids <- as.character(dt[[1]])
-  m <- as.matrix(dt[, -1, with = FALSE])
-  rownames(m) <- ids
-  if (!identical(colnames(m), ids))
-    warning("NPMI matrix ", basename(f), ": row and column ids differ in order")
-  m
-}
+# ---- Code ----------------------------------------------------------
+source("utils.R")

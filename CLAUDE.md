@@ -12,7 +12,7 @@ it**; this file deliberately does not duplicate it.
 |------|-------|--------|
 | `ChIP/` | Multiplexed ChIP-seq (MINUTE), 5 histone marks over called peaks | **Active** — 7 stages, documented in `ChIP/CLAUDE.md` |
 | `GAM/` | Genome Architecture Mapping, 20 kb NPMI | **Active** — 9 numbered stages (`GAM_1`–`GAM_8`, plus `GAM_2c`), `run_GAM.R`, `make_report.R`, `verify_GAM.R`, and utilities; documented in `GAM/CLAUDE.md` |
-| `shared/` | Cross-assay helpers (`common.R`: seqname flips, `mm39_bins()`, GAM bin-id parsing; `setup.R`) | **Exists** — sourced by both assays' `config.R` |
+| `shared/` | Cross-assay helpers (`common.R`: seqname flips, `mm39_bins()`, GAM bin-id parsing; `setup.R`) | **Exists** — sourced by `ChIP/config.R` and `GAM/utils.R` |
 | `scRNAseq/` | Single-cell RNA-seq | Planned — directory does not exist yet |
 
 The headline result the other assays are being integrated against: HP1γ loss
@@ -40,7 +40,9 @@ join must assert its overlap rate with `stopifnot()`, not a warning.
 **Each assay folder has one `config.R` that is the single source of truth** for
 that assay's parameters, paths, thresholds and sample sheet. Stage scripts source
 it and must not redefine its values. To change a cutoff, edit `config.R`; to
-change samples, edit the sample sheet.
+change samples, edit the sample sheet. In `GAM/` the config holds values only:
+functions are in `utils.R` (sourced from the config's last line) and the
+reasoning behind values in `PARAMETERS.md`.
 
 **Stages are numbered, thematic, and independently runnable** after the stage that
 writes their input. Each reads its inputs from disk rather than relying on

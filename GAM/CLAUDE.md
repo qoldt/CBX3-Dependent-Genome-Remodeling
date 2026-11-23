@@ -10,7 +10,9 @@ provenance: `results/METHODS.md`.
 Run from the **`GAM/` directory** (no `setwd()`):
 
 ```
-config.R                      parameters, path builders, loaders (single source of truth)
+config.R                      input files, output tree, parameters (single source of truth)
+utils.R                       libraries, path builders, loaders, helpers - sourced by config.R
+PARAMETERS.md                 why each non-obvious parameter value was chosen
 GAM_1_Bins_and_Signal.R       ChIP signal/stats + annotation on the 20 kb grid     (heavy)
   │  writes results/rds/gam_bins_annotated.rds
 GAM_2_NPMI_Features.R         NPMI -> insulation / distance bands / decay          (heavy)
@@ -59,14 +61,22 @@ GAM_1/GAM_2 provide, and join on `bin_id`.
 
 ## Single source of truth
 
-`config.R` holds every parameter, the genotype bridge, path builders and loaders.
+`config.R` holds every value: input paths, the output tree, the genotype bridge and
+every parameter. Code that uses those values - path builders, loaders, helper
+functions, library loading - is in `utils.R`, which `config.R` sources on its last
+line, so stages still only `source("config.R")`. The reasoning behind
+non-obvious values is in `PARAMETERS.md`; change a value and its section there in
+the same commit. **Keep that split:** a new parameter goes in `config.R` with at
+most a two-line comment, a new function in `utils.R`, a long rationale in
+`PARAMETERS.md`. (Split on 2026-11-23; all 110 objects were verified identical
+before and after.)
 **Stages must not redefine them** (no local bin size, z cutoff, file paths or raw
 `fread()` of a data file). To change sigma/z/NPMI, edit `config.R`; the path
 builders then resolve to different files. Cross-assay helpers (`save_fig`,
 `size_perm`, `hyper_row`, `to_ucsc`/`to_ncbi`, `mm39_bins`, `gam_bin_id`,
 `parse_gam_bin`, palettes) live in `../shared/common.R`. If a stage needs a
 parameter or helper that does not exist, add it to the right file rather than
-inlining it. GAM-only dependency: `R.utils` (for gzipped `fread`).
+inlining it. GAM-only dependency: `R.utils` (for gzipped `fread`, registered in `utils.R`).
 
 ## Gotchas that silently corrupt results
 

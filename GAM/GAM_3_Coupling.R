@@ -104,7 +104,7 @@ local({
   # fail loudly instead (same reasoning as the zero-overlap asserts elsewhere).
   stopifnot(sum(A$n_contacts_lost) > 0, sum(A$n_contacts_gained) > 0)
 
-  # KO-ORIENTED, matching config.R:468 and GAM_4. This file was last touched
+  # KO-ORIENTED, matching gam_block_* in config.R and GAM_4. This file was last touched
   # 2026-10-17 and was MISSED when the convention was flipped on 2026-10-18, so
   # it shipped the collaborators' WT-minus-KO sign while everything else used
   # ours. The symptom was two opposite numbers for one quantity on one page of

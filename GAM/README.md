@@ -103,7 +103,9 @@ headline result.
 ## Pipeline
 
 ```
-config.R                          parameters, path builders, loaders (edit this only)
+config.R                          input files, output tree, parameters (edit this only)
+utils.R                           libraries, path builders, loaders, helpers (sourced by config.R)
+PARAMETERS.md                     why each non-obvious parameter value was chosen
   │
 GAM_1_Bins_and_Signal.R           ChIP signal/stats + annotation on the 20 kb grid
   │   writes results/rds/gam_bins_annotated.rds
@@ -152,7 +154,7 @@ BEDs. The two `.rds` schemas are summarised in
 R (>= 4.2). Packages install themselves on first run via `../shared/setup.R`
 (set `MINUTE_AUTO_INSTALL=0` to disable and get an error instead). GAM adds one
 dependency of its own, **`R.utils`** (`data.table::fread` needs it to read the
-gzipped inputs); `config.R` registers it.
+gzipped inputs); `utils.R` registers it.
 
 The ChIP pipeline must have been run first:
 
@@ -185,11 +187,11 @@ Rscript GAM_3_Coupling.R
 
 ## Configuration
 
-**All parameters live in `config.R`**: bin size, sigma, segregation date, z and
+**All parameters live in `config.R`** (functions in `utils.R`, rationale in `PARAMETERS.md`): bin size, sigma, segregation date, z and
 NPMI cutoffs, hotspot window (5 Mb), the genotype bridge (`WT`/`HP1gKO` to
-`WT`/`cKO`), chromosome sets, the `lost`/`gained` mapping, path builders
+`WT`/`cKO`), chromosome sets and the `lost`/`gained` mapping. The path builders
 (`npmi_file`, `diff_file`, `hotspot_file`) and loaders (`load_hotspots`,
-`load_diff_contacts`, `load_npmi`). Stages must not redefine them.
+`load_diff_contacts`, `load_npmi`) are in `utils.R`. Stages must not redefine them.
 
 ---
 

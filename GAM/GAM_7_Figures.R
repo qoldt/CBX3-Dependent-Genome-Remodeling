@@ -1150,7 +1150,7 @@ local({
     # accepted by this function and never used.
     #
     # Drawn as discrete blocks so it reads as a call. The repo also has a second,
-    # smoothed definition (gam_hotspot_domains() in config.R: q90 + gap merging,
+    # smoothed definition (gam_hotspot_domains() in utils.R: q90 + gap merging,
     # used by GAM_1 to emit domains); that one is deliberately NOT what is drawn
     # here, because these panels are showing the collaborators' own track under
     # the collaborators' own cutoff. Whichever is meant has to be said out loud.
@@ -1230,7 +1230,7 @@ local({
     # CHROMATIN STATE, level 2. Same geometry as the LAD ribbon below it, so the
     # two read as a pair: which compartment-scale domain a position is in, and
     # what chromatin it is made of. Colours come from gam_class2_colours in
-    # config.R, which the exported BED uses too.
+    # utils.R, which the exported BED uses too.
     p_state <- if (!tracks || !("class2" %in% names(A))) NULL else {
       sd <- A[chr == chrom & end > from & start < to & !is.na(class2),
               .(s = pmax(start, from) / 1e6, e = pmin(end, to) / 1e6,
